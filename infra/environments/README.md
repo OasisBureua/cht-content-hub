@@ -1,11 +1,11 @@
 # infra/environments/
 
-Per-environment IaC composition.
+Per-environment Terraform composition.
 
-| Environment | Purpose | Data layer | Compute |
+| Environment | Producer DB | Compute | Notes |
 |---|---|---|---|
-| `dev/` | Per-developer experimentation. Cost-optimized. | Small RDS Postgres (not Aurora). | Single-task ECS or local Docker for the FastAPI surface. |
-| `staging/` | Pre-prod verification. Mirrors prod shape. | Aurora cluster (single region OK). | Same shape as prod, smaller capacity. |
-| `prod/` | Live traffic. | Aurora Global with primary in `us-east-1`, reader in second region. | Multi-AZ Fargate with autoscaling. |
+| `dev/` | RDS Postgres single-AZ (`db.t3.small` or similar) | ECS Fargate, single task | Cost-optimized. Aurora overkill for dev. |
+| `staging/` | Aurora cluster, single region (`us-east-1`) | ECS Fargate, smaller capacity than prod | Mirrors prod shape for pre-prod verification. |
+| `prod/` | Aurora Global — writer `us-east-1`, reader `us-east-2` | Multi-AZ Fargate with autoscaling | Production traffic. DR via reader region. |
 
-Each environment subdirectory composes modules from `../modules/` with environment-specific values (sizing, region, capacity, retention policies).
+Each environment subdirectory composes modules from `../modules/` with environment-specific values.

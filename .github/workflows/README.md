@@ -1,11 +1,21 @@
 # .github/workflows/
 
-CI/CD pipelines.
+CI/CD pipelines. Following the pattern proven by `cht-platform-tool`.
 
-Pending initial pipeline scope confirmation. Likely shape:
+Likely shape:
 
-1. `ci.yml` — runs on every PR: lint (ruff, mypy), unit tests, IaC validation
-2. `deploy-staging.yml` — runs on merge to `develop`: deploys to staging environment
-3. `deploy-prod.yml` — runs on merge to `main` or release tag: deploys to prod (with manual approval gate)
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `pr-validation.yml` | Pull requests | Lint (ruff, mypy), unit tests, Terraform validate, Terraform plan against dev |
+| `deploy-dev.yml` | Push to `feature/**` or `develop` | Deploy to dev environment |
+| `deploy-staging.yml` | Push to `staging` branch | Deploy to staging environment |
+| `deploy-prod.yml` | Push to `release/**` or `v*` tags, manual | Deploy to prod (with manual approval gate) |
+| `rollback.yml` | Manual | Roll back ECS services and disable EventBridge rules |
 
-Workflows will use OIDC for AWS authentication (no long-lived access keys committed).
+## Authentication
+
+GitHub Actions assumes the IAM role `GitHubActions-CHT-ContentHub` via OIDC. No long-lived AWS keys stored in GitHub Secrets. Bootstrap pattern mirrors `cht-platform-tool/infrastructure/aws-github-oidc-setup.sh`.
+
+## Environments
+
+GitHub Environment secrets per `dev`, `staging`, `prod`. Branch protection rules gate deploys to staging and prod.

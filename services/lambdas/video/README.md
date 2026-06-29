@@ -1,15 +1,19 @@
 # services/lambdas/video/
 
-Lambdas for the video / clip pipeline.
+Video and clip pipeline Lambdas.
 
-Note: transcription via Whisper API fits the 15-min Lambda ceiling. WhisperX (local GPU) does NOT fit Lambda — that path either drops with the EC2 retirement or runs on Fargate with GPU. Render jobs over 15 minutes also need Fargate.
+## Status
 
-Expected functions:
+**Deferred to post-R1.** Per the migration plan, transcription and video processing move to SQS + Lambda/Fargate after Round 1 dev exit. Render stays on the existing EC2 GPU box until post-MVP, then migrates to ECS GPU + S3.
 
-- `whisper_transcribe/` — Whisper API transcription, SQS-triggered
-- `video_metadata_probe/` — FFprobe metadata extraction, fast
-- `transcript_parser/` — pure utility, parses diarized transcript text
+## Expected functions (when R1+ work begins)
 
-Out of scope for Lambda (needs Fargate):
-- `render_engine` — multi-minute FFmpeg encoding
-- `whisperx_transcribe` — GPU dependency; likely retired with EC2 box
+- `whisper_transcribe/` — Whisper API transcription, SQS-triggered. Fits Lambda 15-min ceiling.
+- `video_metadata_probe/` — FFprobe metadata extraction. Fast.
+- `transcript_parser/` — pure utility, parses diarized transcript text.
+
+## Out of scope for Lambda (needs Fargate)
+
+- `render_engine` — multi-minute FFmpeg encoding. ECS GPU + S3, post-MVP.
+- `whisperx_transcribe` — GPU dependency. Drops with the EC2 retirement unless explicitly kept.
+- `auto_segmenter` — zero callers, retired.

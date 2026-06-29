@@ -1,12 +1,11 @@
 # docs/conventions/
 
-Code conventions, naming conventions, PR conventions.
+Code conventions, naming conventions, API design rules.
 
-Includes (or will include):
-- Lambda naming: `contenthub-<domain>-<function>` (e.g. `contenthub-social-linkedin-thumbnail-refresh`)
-- EventBridge rule naming: `contenthub-<domain>-<function>-schedule`
-- S3 bucket naming: `contenthub-<env>-<purpose>` (e.g. `contenthub-prod-render-output`)
-- DynamoDB table naming: `contenthub-<env>-<purpose>`
-- Aurora schema names: `<domain>` (e.g. `hcp_intel`, `tagging`)
-- PR description format
-- Conventional Commits enforcement
+Documented:
+- `api-design.md` — endpoint consolidation principle, RBAC via Cognito group claims
+
+To be written:
+- `iac.md` — Terraform module conventions, state backend setup, OIDC role pattern
+- `naming.md` — resource naming across AWS (Lambda functions, EventBridge rules, S3 buckets, etc.)
+- `prs.md` — PR description format, review expectations

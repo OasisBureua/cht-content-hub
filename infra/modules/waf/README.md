@@ -1,3 +1,19 @@
 # infra/modules/waf/
 
-WAF web ACL module. Baseline AWS managed rule sets + custom rate limiting for the ALB fronting the ECS API. Inputs: rate-limit thresholds, IP allowlists. Outputs: web ACL ARN.
+WAF web ACL module.
+
+## Inputs
+
+- Web ACL name (`cht-content-hub-{env}-acl`)
+- Scope: `CLOUDFRONT` (for the SPA distribution) or `REGIONAL` (for the ALB)
+- Managed rule sets: AWS Core, Known Bad Inputs, SQL Injection, Linux/Unix
+- Custom rules: rate limiting per IP, allowlists for internal callers
+
+## Outputs
+
+- Web ACL ARN
+
+## Notes
+
+- One ACL per environment.
+- CloudFront ACLs must be created in `us-east-1` regardless of distribution region.

@@ -1,5 +1,5 @@
 # migrations/versions/
 
-Individual migration files. Populated by Alembic-style migration generation.
+Individual Alembic migration files.
 
-Empty until first schema migration is created post-cutover.
+Empty until the first post-cutover schema change.

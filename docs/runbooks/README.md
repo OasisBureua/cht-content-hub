@@ -1,5 +1,12 @@
 # docs/runbooks/
 
-Operational runbooks. Each runbook documents how to do a specific operational task: how to debug a failing scheduled Lambda, how to manually trigger a backfill, how to recover from a DMS replication break, how to rotate a Cognito app client secret.
+Operational runbooks.
 
-Each runbook should be: scenario, symptoms, diagnostic steps, remediation, prevention.
+Each runbook: scenario, symptoms, diagnostic steps, remediation, prevention.
+
+Examples (to be written):
+- Debugging a failing scheduled Lambda
+- Manually triggering a sync backfill
+- Recovering from a producer Aurora failover
+- Rotating a Cognito app client secret
+- Investigating a cache invalidation miss
