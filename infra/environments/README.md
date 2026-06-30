@@ -1,11 +1,23 @@
 # infra/environments/
 
-Per-environment Terraform composition.
+Per-region Terraform composition, mirroring the `cht-platform-tool` layout.
 
-| Environment | Producer DB | Compute | Notes |
-|---|---|---|---|
-| `dev/` | RDS Postgres single-AZ (`db.t3.small` or similar) | ECS Fargate, single task | Cost-optimized. Aurora overkill for dev. |
-| `staging/` | Aurora cluster, single region (`us-east-1`) | ECS Fargate, smaller capacity than prod | Mirrors prod shape for pre-prod verification. |
-| `prod/` | Aurora Global — writer `us-east-1`, reader `us-east-2` | Multi-AZ Fargate with autoscaling | Production traffic. DR via reader region. |
+| Directory | Purpose |
+|---|---|
+| `us-east-1/` | Primary region. Hosts the writer Aurora cluster, ECS services, ALB, CloudFront. |
+| `us-east-2/` | Disaster recovery region. Hosts the reader Aurora cluster for Aurora Global failover. |
+| `variables/` | Environment-specific variable files referenced by the region directories. |
 
-Each environment subdirectory composes modules from `../modules/` with environment-specific values.
+## Variable files
+
+| File | Use |
+|---|---|
+| `variables/dev.tfvars` | Developer-mode values. Used when running Terraform against the dev RDS instance and dev ECS task. |
+| `variables/prod.tfvars` | Production values. Used by the deploy pipeline targeting the prod stack. |
+
+Each region directory composes modules from `../modules/` and selects its tfvars file at apply time:
+
+```
+terraform apply -var-file=../variables/dev.tfvars
+terraform apply -var-file=../variables/prod.tfvars
+```

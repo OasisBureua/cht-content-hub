@@ -7,8 +7,7 @@ Likely shape:
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `pr-validation.yml` | Pull requests | Lint (ruff, mypy), unit tests, Terraform validate, Terraform plan against dev |
-| `deploy-dev.yml` | Push to `feature/**` or `develop` | Deploy to dev environment |
-| `deploy-staging.yml` | Push to `staging` branch | Deploy to staging environment |
+| `deploy-dev.yml` | Push to `develop` | Deploy to dev environment |
 | `deploy-prod.yml` | Push to `release/**` or `v*` tags, manual | Deploy to prod (with manual approval gate) |
 | `rollback.yml` | Manual | Roll back ECS services and disable EventBridge rules |
 
@@ -18,4 +17,4 @@ GitHub Actions assumes the IAM role `GitHubActions-CHT-ContentHub` via OIDC. No 
 
 ## Environments
 
-GitHub Environment secrets per `dev`, `staging`, `prod`. Branch protection rules gate deploys to staging and prod.
+GitHub Environment secrets per `dev`, `prod`. Branch protection rules gate deploys to prod.
