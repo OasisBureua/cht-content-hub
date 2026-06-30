@@ -1,0 +1,4 @@
+{
+  "include": ["sync"],
+  "exclude": ["backend", "worker"]
+}
