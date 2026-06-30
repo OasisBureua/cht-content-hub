@@ -31,18 +31,27 @@ Content-Type: application/json
 | 422 | Validation error (upsert body, query params) |
 | 429 | Rate limit (100 requests/minute per route) |
 
-**Error response shape (all /api/public/* errors)**
+**Error response shape (matches legacy MediaHub — CHT-compatible)**
 
 ```json
 {
-  "errors": {
-    "status_code": 401,
-    "details": "Missing API key"
+  "error": {
+    "code": "AUTH_INVALID_KEY",
+    "message": "Invalid API key",
+    "status": 401,
+    "request_id": "7db6e28c-c142-4fe9-987d-8a06c867d26b"
   }
 }
 ```
 
-HTTP status on the response matches `errors.status_code`. CHT should read `errors.details` for the message.
+| code | HTTP status |
+|------|-------------|
+| AUTH_INVALID_KEY | 401 |
+| RESOURCE_NOT_FOUND | 404 |
+| VALIDATION_ERROR | 422 |
+| RATE_LIMITED | 429 |
+
+HTTP status on the response matches `error.status`. CHT should read `error.code` and `error.message`.
 
 ---
 

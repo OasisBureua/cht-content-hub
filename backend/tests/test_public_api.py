@@ -23,9 +23,10 @@ async def test_kols_requires_api_key(http_client: AsyncClient):
     response = await http_client.get("/api/public/kols")
     assert response.status_code == 401
     body = response.json()
-    assert body == {
-        "errors": {"status_code": 401, "details": "Missing API key"},
-    }
+    assert body["error"]["code"] == "AUTH_INVALID_KEY"
+    assert body["error"]["message"] == "Missing API key"
+    assert body["error"]["status"] == 401
+    assert body["error"]["request_id"]
 
 
 @pytest.mark.asyncio
@@ -35,9 +36,10 @@ async def test_kols_rejects_invalid_api_key(http_client: AsyncClient):
         headers={"X-API-Key": "wrong-key"},
     )
     assert response.status_code == 401
-    assert response.json() == {
-        "errors": {"status_code": 401, "details": "Invalid API key"},
-    }
+    body = response.json()
+    assert body["error"]["code"] == "AUTH_INVALID_KEY"
+    assert body["error"]["message"] == "Invalid API key"
+    assert body["error"]["status"] == 401
 
 
 @pytest.mark.asyncio
@@ -123,9 +125,10 @@ async def test_kol_detail_not_found(client: AsyncClient):
         headers=api_headers(),
     )
     assert response.status_code == 404
-    assert response.json() == {
-        "errors": {"status_code": 404, "details": "KOL not found"},
-    }
+    body = response.json()
+    assert body["error"]["code"] == "RESOURCE_NOT_FOUND"
+    assert body["error"]["message"] == "KOL not found"
+    assert body["error"]["status"] == 404
 
 
 @pytest.mark.asyncio
@@ -172,9 +175,9 @@ async def test_rate_limit_enforced(client: AsyncClient):
         assert response.status_code == 200
     response = await client.get("/api/public/kols", headers=headers)
     assert response.status_code == 429
-    assert response.json() == {
-        "errors": {"status_code": 429, "details": "Rate limit exceeded"},
-    }
+    body = response.json()
+    assert body["error"]["code"] == "RATE_LIMITED"
+    assert body["error"]["status"] == 429
 
 
 @pytest.mark.asyncio
@@ -184,9 +187,9 @@ async def test_hcp_upsert_requires_api_key(http_client: AsyncClient):
         json={"npi": "1234567890", "first_name": "Jane", "last_name": "Doe"},
     )
     assert response.status_code == 401
-    assert response.json() == {
-        "errors": {"status_code": 401, "details": "Missing API key"},
-    }
+    body = response.json()
+    assert body["error"]["code"] == "AUTH_INVALID_KEY"
+    assert body["error"]["message"] == "Missing API key"
 
 
 @pytest.mark.asyncio
@@ -263,9 +266,7 @@ async def test_hcp_upsert_rejects_invalid_npi(client: AsyncClient):
         json={"npi": "123", "first_name": "Jane", "last_name": "Doe"},
     )
     assert response.status_code == 422
-    assert response.json() == {
-        "errors": {
-            "status_code": 422,
-            "details": "NPI must be exactly 10 digits",
-        },
-    }
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    assert body["error"]["message"] == "NPI must be exactly 10 digits"
+    assert body["error"]["status"] == 422
