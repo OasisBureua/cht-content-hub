@@ -3,5 +3,5 @@
 TODO: copy from cht-platform-tool/modules/compute/ecr-replication when enabling DR.
 
 Repository names:
-- mediahub-api
-- mediahub-worker
+- contenthub-api
+- contenthub-worker

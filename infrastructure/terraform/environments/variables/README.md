@@ -19,7 +19,8 @@
 | `api_domain` | `devhub.communityhealth.media` (dev) or `contenthub.communityhealth.media` (prod) |
 | `acm_certificate_arn` | `.cert-arns-*` after cert is ISSUED |
 | `api_image`, `worker_image` | ECR after first image push |
-| `public_api_key` | Must match CHT `MEDIAHUB_API_KEY` — use `TF_VAR_public_api_key` |
+| `manage_route53` | Default `true` — creates hosted zone + ALB alias for `api_domain`; set `false` if DNS is manual |
+| `public_api_key` | Must match CHT `CONTENTHUB_API_KEY` — use `TF_VAR_public_api_key` |
 | `webhook_api_key` | ops-console — use `TF_VAR_webhook_api_key` |
 | `jwt_secret` | Required by Terraform today — use `TF_VAR_jwt_secret` |
 | `internal_cache_secret` | Shared with CHT cache clear — use `TF_VAR_internal_cache_secret` |
@@ -54,8 +55,8 @@ cp prod.tfvars.example prod.tfvars
 
 # 4. Export secrets (see above)
 
-# 5. Apply
-./scripts/deploy-primary.sh dev
+# 5. Plan only until devhub ACM is ISSUED (apply blocked without acm_certificate_arn)
+./scripts/deploy-primary.sh dev plan
 ```
 
 ## Make scripts executable

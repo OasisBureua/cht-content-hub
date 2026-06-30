@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
+from shared.cht_cache import clear_cht_catalog_cache
+from shared.runtime import configure_logging, install_paths
 
 
 def handler(event: dict, context) -> dict:
-    url = os.environ.get("CHT_CACHE_CLEAR_URL", "")
-    secret = os.environ.get("INTERNAL_CACHE_SECRET", "")
-    if not url or not secret:
-        return {"status": "skipped", "reason": "CHT_CACHE_CLEAR_URL or secret not set"}
-    # TODO CH-03: httpx POST with X-Internal-Secret header
-    return {"status": "not_implemented", "job": "cache_clear", "url": url}
+    install_paths()
+    configure_logging()
+    job = (event or {}).get("job")
+    cleared = clear_cht_catalog_cache(job=job)
+    return {"status": "ok" if cleared else "skipped", "job": job or "cache_clear"}

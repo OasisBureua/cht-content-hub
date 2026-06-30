@@ -13,11 +13,11 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "mediahub-terraform-state"
-    key          = "us-east-1/terraform.tfstate"
+    bucket       = "cht-contenthub-terraform-state"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true
+    # State key: pass via -backend-config=../backends/us-east-1-{dev|prod}.hcl
   }
 }
 
@@ -39,6 +39,7 @@ data "aws_caller_identity" "current" {}
 locals {
   resource_prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
   log_retention   = contains(["prod", "platform"], var.environment) ? 365 : 7
+  api_image_tag   = try(element(split(":", var.api_image), 1), "unknown")
 }
 
 module "ecs_cluster" {
@@ -62,6 +63,15 @@ module "iam" {
   environment     = var.environment
   aws_region      = "us-east-1"
   aws_account_id  = data.aws_caller_identity.current.account_id
+}
+
+module "s3_assets" {
+  source = "../../modules/storage/s3-assets"
+
+  project        = var.project
+  environment    = var.environment
+  aws_account_id = data.aws_caller_identity.current.account_id
+  task_role_arn  = module.iam.task_role_arn
 }
 
 module "app_secrets" {
@@ -90,8 +100,6 @@ module "rds" {
   backup_retention_period = var.rds_backup_retention
 }
 
-
-
 module "alb_api" {
   source = "../../modules/networking/alb-api"
 
@@ -101,6 +109,18 @@ module "alb_api" {
   subnet_ids      = var.public_subnet_ids
   certificate_arn = var.acm_certificate_arn
   api_domain      = var.api_domain
+}
+
+module "route53_api" {
+  count  = var.manage_route53 ? 1 : 0
+  source = "../../modules/networking/route53-api"
+
+  project     = var.project
+  environment = var.environment
+  api_domain  = var.api_domain
+
+  alb_dns_name = module.alb_api.alb_dns_name
+  alb_zone_id  = module.alb_api.alb_zone_id
 }
 
 module "ecs_api" {
@@ -120,6 +140,7 @@ module "ecs_api" {
   alb_listener_arn      = module.alb_api.listener_arn
   log_group_name        = local.log_group_name
   container_image       = var.api_image
+  app_version           = local.api_image_tag
   database_secret_arn   = module.rds.database_secret_arn
   app_secrets_arn       = module.app_secrets.app_secrets_arn
   task_cpu              = var.api_task_cpu
@@ -127,6 +148,8 @@ module "ecs_api" {
   desired_count         = var.api_desired_count
   min_capacity          = var.api_min_capacity
   max_capacity          = var.api_max_capacity
+
+  depends_on = [module.rds, module.app_secrets]
 }
 
 module "ecs_worker" {
@@ -152,8 +175,9 @@ module "ecs_worker" {
   desired_count       = var.worker_desired_count
 }
 
-# Wire ECS → RDS after service security groups exist
+# ECS → RDS (separate rules avoid Terraform cycle: rds secrets ↔ ecs_api SG)
 resource "aws_vpc_security_group_ingress_rule" "rds_from_api" {
+  description                  = "PostgreSQL from contenthub-api ECS tasks"
   security_group_id            = module.rds.security_group_id
   referenced_security_group_id = module.ecs_api.security_group_id
   from_port                    = 5432
@@ -164,11 +188,10 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_api" {
 resource "aws_vpc_security_group_ingress_rule" "rds_from_worker" {
   count = var.worker_desired_count > 0 ? 1 : 0
 
+  description                  = "PostgreSQL from contenthub-worker ECS tasks"
   security_group_id            = module.rds.security_group_id
   referenced_security_group_id = module.ecs_worker[0].security_group_id
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"
 }
-
-

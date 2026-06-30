@@ -1,14 +1,13 @@
-locals {
-  api_scheme = var.certificate_arn != "" ? "https" : "http"
-  api_host   = var.api_domain != "" ? var.api_domain : aws_lb.main.dns_name
-}
-
 output "alb_arn" {
   value = aws_lb.main.arn
 }
 
 output "alb_dns_name" {
   value = aws_lb.main.dns_name
+}
+
+output "alb_zone_id" {
+  value = aws_lb.main.zone_id
 }
 
 output "alb_security_group_id" {
@@ -24,6 +23,6 @@ output "listener_arn" {
 }
 
 output "api_base_url" {
-  description = "CHT MEDIAHUB_BASE_URL host — append /api/public (until /api migration)"
+  description = "CHT CONTENTHUB_BASE_URL host — append /api/public (until /api migration)"
   value       = "${local.api_scheme}://${local.api_host}"
 }

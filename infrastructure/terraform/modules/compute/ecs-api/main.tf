@@ -4,7 +4,7 @@ locals {
 
 resource "aws_security_group" "api" {
   name        = "${local.prefix}-api-sg"
-  description = "mediahub-api ECS tasks"
+  description = "contenthub-api ECS tasks"
   vpc_id      = var.vpc_id
 
   ingress {
@@ -39,15 +39,17 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([
     {
-      name      = "mediahub-api"
+      name      = "contenthub-api"
       image     = var.container_image
       essential = true
       portMappings = [{ containerPort = 8000, protocol = "tcp" }]
       environment = concat(
         [
-          { name = "ENABLE_SCHEDULER", value = "false" },
-          { name = "MEDIAHUB_SERVICE_ROLE", value = "api" },
+          { name = "CONTENTHUB_SERVICE_ROLE", value = "api" },
           { name = "AWS_REGION", value = var.aws_region },
+          { name = "ENVIRONMENT", value = var.environment },
+          { name = "APP_VERSION", value = var.app_version },
+          { name = "CONTAINER_IMAGE", value = var.container_image },
         ],
         var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : []
       )
@@ -66,7 +68,7 @@ resource "aws_ecs_task_definition" "api" {
         }
       }
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+        command     = ["CMD-SHELL", "curl -sf http://localhost:8000/health/live || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -91,7 +93,7 @@ resource "aws_ecs_service" "api" {
 
   load_balancer {
     target_group_arn = var.target_group_arn
-    container_name   = "mediahub-api"
+    container_name   = "contenthub-api"
     container_port   = 8000
   }
 

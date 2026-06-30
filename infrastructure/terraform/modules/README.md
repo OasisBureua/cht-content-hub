@@ -1,26 +1,27 @@
-# Terraform Modules — MediaHub
+# Terraform Modules — Content Hub
 
 Headless **producer microservice** for CHT — api + worker + RDS + public API ALB.
 
-**Architecture:** [docs/mediahub-architecture.md](../../../docs/mediahub-architecture.md)
+**Architecture:** [docs/engineering/colocated-deployment.md](../../../docs/engineering/colocated-deployment.md)
 
 ```
 modules/
 ├── networking/
 │   ├── alb-api/             # Internet-facing ALB (CHT consumer, public URL)
+│   ├── route53-api/         # Hosted zone + A/alias → ALB (until CloudFront + S3)
 │   └── alb-internal/        # DEPRECATED — do not use for new envs
 ├── compute/
-│   ├── ecs-api/             # mediahub-api (FastAPI :8000, autoscale)
-│   └── ecs-worker/          # mediahub-worker (scheduler ×1)
+│   ├── ecs-api/             # contenthub-api (FastAPI :8000, autoscale)
+│   └── ecs-worker/          # contenthub-worker (scheduler ×1)
 ├── database/
-│   └── rds/                 # MediaHub Postgres (separate from CHT)
+│   └── rds/                 # Content Hub Postgres (separate from CHT)
 ├── security/
 │   ├── iam/
 │   └── secrets-manager/
 └── storage/ messaging/ …    # Post-MVP
 ```
 
-**Not in MVP modules:** CloudFront, S3 frontend, ElastiCache (MediaHub Redis removed), NLB.
+**Not in MVP modules:** CloudFront, S3 frontend, ElastiCache (Content Hub Redis removed), NLB.
 
 ## Deployment modes
 

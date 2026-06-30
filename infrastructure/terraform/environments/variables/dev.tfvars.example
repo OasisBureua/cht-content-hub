@@ -33,4 +33,16 @@ worker_task_cpu      = 512
 worker_task_memory   = 1024
 worker_desired_count = 0
 
+# Sync Lambdas — build artifact first: ./scripts/build-sync-lambda.sh
+# Disabled by default on dev until HCP intel handlers are complete (Option A).
+sync_jobs_enabled = {
+  cache_clear         = false
+  hcp_intel_poll      = false
+  openalex_backfill   = false
+  kol_hcp_matcher     = false
+  post_tagging        = false
+  playlist_doctor_tagger = false
+}
+# sync_lambda_package_path = "/absolute/path/to/dist/sync-lambda.zip"
+
 cht_cache_clear_url = "https://<chm-backend-dev-host>/internal/cache/catalog/clear"

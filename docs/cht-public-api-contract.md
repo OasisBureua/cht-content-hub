@@ -1,6 +1,6 @@
-# CHT ↔ MediaHub public API contract
+# CHT ↔ Content Hub public API contract
 
-**Scope:** Endpoints CHT actively calls. This is the **extraction boundary** for `mediahub-api` on ECS — everything else in `backend/legacy/` is out of scope for the CHT producer microservice (EC2 admin, webhooks, post-MVP).
+**Scope:** Endpoints CHT actively calls. This is the **extraction boundary** for `contenthub-api` on ECS — everything else in `backend/legacy/` is out of scope for the CHT producer microservice (EC2 admin, webhooks, post-MVP).
 
 **Base URL (prod):** `https://contenthub.communityhealth.media/api/public`  
 **Base URL (dev):** `https://devhub.communityhealth.media/api/public`  
@@ -76,7 +76,7 @@ These modules back the public routes — live in `backend/src/`:
 | Summaries | `services/ai_descriptions.py` — Claude Haiku (`ANTHROPIC_API_KEY`) |
 | Tagging | `services/post_tagger.py` — keyword vocabulary (worker `post_tagging` job) |
 
-**Worker (producer):** Keeps all platform sync + HCP intel jobs that **populate** the data these endpoints read — see [mediahub-services.md](./mediahub-services.md).
+**Worker (producer):** Keeps all platform sync + HCP intel jobs that **populate** the data these endpoints read — see [contenthub-migration-plan.md](./contenthub-migration-plan.md).
 
 ---
 
@@ -110,13 +110,13 @@ curl -s -o /dev/null -w "%{http_code}" "$BASE/../status"   # optional
 
 ## Future path migration
 
-Planned rename: `/api/public/*` → `/api/*` with unchanged shapes. CHT `MEDIAHUB_BASE_URL` drops `/public` segment when both sides cut over.
+Planned rename: `/api/public/*` → `/api/*` with unchanged shapes. CHT `CONTENTHUB_BASE_URL` drops `/public` segment when both sides cut over.
 
 ---
 
 ## Related
 
-- CHT client: `cht-platform-tool/backend/src/modules/catalog/mediahub.service.ts`
+- CHT client: `cht-platform-tool/backend/src/modules/catalog/` (legacy `mediahub.service.ts` — rename to `contenthub.service.ts` when wiring `CONTENTHUB_BASE_URL`)
 - CHT KOL: `cht-platform-tool/backend/src/modules/kol-network/`
-- [mediahub-architecture.md](./mediahub-architecture.md)
+- [engineering/architecture.md](./engineering/architecture.md)
 - [cache-sync-contract.md](./cache-sync-contract.md)

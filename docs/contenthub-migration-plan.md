@@ -21,7 +21,7 @@ Single document for target state, phasing, and step-by-step migration. Supersede
 Migrate from **EC2 monolith MediaHub** to:
 
 1. **Content Hub** — consumer + admin SPA at `contenthub.communityhealth.media` (CHT platform repo).
-2. **Content Hub producer** (formerly MediaHub backend) — headless API + **serverless sync** (this repo → `mediahub-platform`).
+2. **Content Hub producer** — headless API + **serverless sync** (this repo: `cht-content-hub`).
 3. **Two databases** — CHT **Aurora Global** (platform) and producer **Aurora Global** (prod) / **RDS** (dev); never shared, never cross-connected from CHT backend.
 
 **Round 1 dev goal:** Producer API on ECS dev + RDS data port + CHT dev wired via API key + first serverless sync jobs + admin shell on Content Hub.
@@ -76,21 +76,21 @@ us-east-2 DR: CloudFront/ALB failover · Aurora Global readers · Lambda in acti
 |------|--------|
 | `contenthub.communityhealth.media` | Consumer SPA + `/admin/*` |
 | `contenthub.dev.communityhealth.media` | Dev consumer + admin |
-| `mediahub.{dev.,}communityhealth.media` | **APIs only** — `/api/public/*`, `/api/admin/studio/*`, `/webhook/*`, `/health` |
+| `devhub.communityhealth.media` / `contenthub.communityhealth.media` | **APIs only** — `/api/public/*`, `/api/admin/studio/*`, `/webhook/*`, `/health` |
 
-Planned rename: product brand **Content Hub**; producer API hostname may remain `mediahub.*` until DNS cutover.
+Producer API hostnames: **devhub** (dev), **contenthub** (prod).
 
 ### 2.2 Services at target
 
 | Service | Dev | Prod | Retired |
 |---------|-----|------|---------|
 | `cht-platform-backend` | ECS | ECS autoscale | — |
-| `contenthub-api` (was mediahub-api) | ECS | ECS autoscale | — |
-| **Sync Lambdas** + EventBridge | Yes | Yes | ECS `mediahub-worker` |
+| `contenthub-api` | ECS | ECS autoscale | — |
+| **Sync Lambdas** + EventBridge | Yes | Yes | ECS `contenthub-worker` |
 | SQS + DLQ (long sync) | Yes | Yes | APScheduler in API |
-| `mediahub-render` | — | post-MVP ECS/GPU | inline FFmpeg in API |
+| `contenthub-render` | — | post-MVP ECS/GPU | inline FFmpeg in API |
 | MediaHub Next.js admin | EC2 bridge | — | **Retired** |
-| MediaHub Redis | — | — | **Retired** (CHT cache only) |
+| Content Hub Redis | — | — | **Retired** (CHT cache only) |
 
 ### 2.3 Databases
 
@@ -109,7 +109,7 @@ Planned rename: product brand **Content Hub**; producer API hostname may remain 
 |------|----------|
 | Admin UI | `contenthub.communityhealth.media/admin` — same SPA, same session cookie |
 | Admin routes | `/admin/platform/*` (CHT) · `/admin/studio/*` (producer) |
-| Cognito groups | `chm-admin`, `chm-editor`, `chm-viewer` — no `mediahub-admin`; `superadmin` → `chm-admin` |
+| Cognito groups | `chm-admin`, `chm-editor`, `chm-viewer` — no `contenthub-admin`; `superadmin` → `chm-admin` |
 | Client scope | `client_ids` on **CHT Aurora user** row; studio API enforces |
 | HCP Intel admin | `/admin/studio/hcp-intel/*` on producer API until future Aurora migration |
 | CHT → producer catalog | `X-API-Key` on `/api/public/*` (optional Cognito M2M later) |
@@ -158,7 +158,7 @@ See [contenthub-admin-architecture.md](./contenthub-admin-architecture.md) for g
 | Component | Target | Notes |
 |-----------|--------|-------|
 | `transcription`, `video_processor` | SQS + Lambda/Fargate | Post-R1 |
-| `render_engine`, `ass_generator` | `mediahub-render` ECS GPU + S3 | Post-MVP |
+| `render_engine`, `ass_generator` | `contenthub-render` ECS GPU + S3 | Post-MVP |
 | `transcript_parser` | Producer API lib | `/api/public/transcripts` |
 | `routers/render`, `conversations` | `/api/admin/studio/*` | Admin SPA |
 | `auto_segmenter` | Retire | — |
@@ -237,10 +237,10 @@ pg_restore -h <dev-rds> -U mediahub -d contenthub_producer \
 
 1. `pg_dump` EC2 → restore to **producer Aurora Global** primary.  
 2. Parallel run EC2 + new stack until 48h stable.  
-3. Point CHT prod `MEDIAHUB_BASE_URL` at new API.  
+3. Point CHT prod `CONTENTHUB_BASE_URL` at new API.  
 4. Retire EC2.
 
-Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
+Detail: [step-4-backend.md](./step-4-backend.md).
 
 ---
 
@@ -252,7 +252,7 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 |------|-------|--------|------|
 | 0.1 | CHT | Cognito prod/dev pools stable | End users on Cognito |
 | 0.2 | CHT | Groups `chm-admin`, `chm-editor`, `chm-viewer` in Terraform | Groups assignable |
-| 0.3 | Both | `PUBLIC_API_KEY` / `MEDIAHUB_API_KEY` in Secrets Manager | Keys rotatable |
+| 0.3 | Both | `PUBLIC_API_KEY` / `CONTENTHUB_API_KEY` in Secrets Manager | Keys rotatable |
 | 0.4 | Producer | Block end-user login on legacy MediaHub UI | No learner signup |
 | 0.5 | CHT | `/internal/cache/catalog/clear` + Redis `cht:catalog:*` | Contract tests pass |
 
@@ -263,7 +263,7 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 | 1.1 | Producer | Terraform: producer **dev RDS**, `contenthub-api` ECS, ALB | `/health` 200 |
 | 1.2 | Producer | Deploy `contenthub-api` — `/api/public/*` from `backend/src/` | Contract smoke |
 | 1.3 | Producer | `pg_dump` → dev RDS restore | Row counts match |
-| 1.4 | CHT | Dev `MEDIAHUB_BASE_URL` → dev API | Catalog loads in dev app |
+| 1.4 | CHT | Dev `CONTENTHUB_BASE_URL` → dev API | Catalog loads in dev app |
 | 1.5 | Producer | First Lambdas: `post_tagging`, `playlist_doctor_tagger`, `cache_clear` | Tags refresh; cache clears |
 | 1.6 | CHT | Admin link → `/admin` shell (empty studio OK) | Group-gated nav |
 
@@ -294,7 +294,7 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 | 4.2 | Producer | Retire MediaHub Next.js admin | Staff use `/admin` only |
 | 4.3 | Producer | Retire GoTrue, producer `users` router | Auth checklist signed |
 | 4.4 | Both | Retire ECS worker if any remains | All cron on EventBridge |
-| 4.5 | Post-MVP | `mediahub-render` GPU + S3 | Clips render off EC2 |
+| 4.5 | Post-MVP | `contenthub-render` GPU + S3 | Clips render off EC2 |
 
 ---
 
@@ -302,15 +302,15 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 
 **CHT platform repo**
 
-- [ ] `MEDIAHUB_BASE_URL` per environment  
-- [ ] `MEDIAHUB_API_KEY` in Secrets Manager  
+- [ ] `CONTENTHUB_BASE_URL` per environment  
+- [ ] `CONTENTHUB_API_KEY` in Secrets Manager  
 - [ ] `INTERNAL_CACHE_SECRET` + cache wrapper  
 - [ ] Catalog + KOL services use cache  
 - [ ] Admin SPA at `/admin` with Cognito guards  
 - [ ] `client_ids` on user model  
 - [ ] Remove MediaHub auth URLs from consumer app  
 
-**Producer repo (`mediahub-platform`)**
+**Producer repo (`cht-content-hub`)**
 
 - [ ] `contenthub-api` ECS service  
 - [ ] Producer dev RDS / prod Aurora Global Terraform  
@@ -338,7 +338,7 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 
 | Phase | Rollback |
 |-------|----------|
-| Dev API | Revert CHT `MEDIAHUB_BASE_URL` to EC2 prod URL |
+| Dev API | Revert CHT `CONTENTHUB_BASE_URL` to EC2 prod URL |
 | Prod cutover | Keep EC2 running 48h; revert DNS/env |
 | Lambdas | Disable EventBridge rules; re-enable EC2 scheduler temporarily |
 | Aurora | Restore snapshot; do not drop EC2 DB until signed off |
@@ -349,7 +349,7 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 
 | # | Question | Default until decided |
 |---|----------|----------------------|
-| 1 | Rename API hostname to `contenthub.*`? | Keep `mediahub.*` for API in R1 |
+| 1 | Rename API hostname to `contenthub.*`? | **Done** — devhub (dev), contenthub (prod) |
 | 2 | Cognito M2M instead of API key? | API key for R1 |
 | 3 | Lambda vs Fargate for 12h platform sync? | SQS + Lambda; Fargate if timeout hit |
 | 4 | KOL data eventual ownership in CHT Aurora? | Producer serves `/api/public/kols` |
@@ -383,10 +383,10 @@ Detail: [mediahub-platform-cutover.md](./mediahub-platform-cutover.md).
 |-----|----------|
 | **This doc** | Migration planning & phase gates |
 | [contenthub-admin-architecture.md](./contenthub-admin-architecture.md) | Admin routes, groups, API prefixes |
-| [mediahub-architecture.md](./mediahub-architecture.md) | Producer microservice context |
+| [engineering/architecture.md](./engineering/architecture.md) | Producer microservice context |
 | [cht-public-api-contract.md](./cht-public-api-contract.md) | Endpoint parity testing |
-| [mediahub-auth-decommission-checklist.md](./mediahub-auth-decommission-checklist.md) | Cognito cutover day |
-| [mediahub-platform-cutover.md](./mediahub-platform-cutover.md) | Prod pg_dump detail |
+| [contenthub-migration-plan.md](./contenthub-migration-plan.md) | Cognito cutover day |
+| [contenthub-migration-plan.md](./contenthub-migration-plan.md) | Prod pg_dump detail |
 | [cache-sync-contract.md](./cache-sync-contract.md) | Lambda → CHT cache |
 
 CHT platform repo: `cht-platform-architecture.pdf`, `cht-platform-auth.pdf`, Cognito Terraform.

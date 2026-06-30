@@ -1,4 +1,6 @@
 {
-  "include": ["sync"],
-  "exclude": ["backend", "worker"]
+  "venvPath": "worker",
+  "venv": ".venv",
+  "include": ["backend/src", "worker"],
+  "extraPaths": ["backend/src", "worker"]
 }

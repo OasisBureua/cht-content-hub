@@ -1,8 +1,8 @@
 # Contract: CHT catalog cache & sync refresh
 
-Defines Redis caching on **chm-backend only** and cache invalidation when MediaHub sync completes.
+Defines Redis caching on **chm-backend only** and cache invalidation when Content Hub sync completes.
 
-**When to implement:** Phase 4 (MediaHub platform move) — document now for Hub worker + CHT backend alignment.
+**When to implement:** Phase 4 (Content Hub platform move) — document now for Hub worker + CHT backend alignment.
 
 **Owner:** Uche Aduakaa  
 **Reviewer:** Adaze Oviawe  
@@ -13,7 +13,7 @@ Defines Redis caching on **chm-backend only** and cache invalidation when MediaH
 
 ## Principles
 
-- **CHT-only cache** — no HTTP cache in mediahub-api; no FastAPI middleware
+- **CHT-only cache** — no HTTP cache in contenthub-api; no FastAPI middleware
 - **24h TTL** — safety net for populated keys
 - **Refresh on sync** — clear catalog keys after successful worker sync (no version counters)
 - **Never cache** — auth, payments, admin writes, HCP upsert responses
@@ -43,11 +43,11 @@ Defines Redis caching on **chm-backend only** and cache invalidation when MediaH
 ## Sync refresh flow
 
 ```
-mediahub-worker completes successful sync
+contenthub-worker completes successful sync
     → POST https://<chm-backend>/internal/cache/catalog/clear
     → Header: Authorization: Bearer <INTERNAL_CACHE_SECRET>
     → chm-backend deletes keys matching cht:catalog:* and cht:kol-network:*
-    → Next user request = cache miss → fetch mediahub-api → store 24h
+    → Next user request = cache miss → fetch contenthub-api → store 24h
 ```
 
 ### Internal endpoint (CHT)
@@ -61,7 +61,7 @@ Response: `204 No Content`
 
 **Security:** ALB rule or SG — not public internet; shared secret in Secrets Manager.
 
-### Worker hook (MediaHub)
+### Worker hook (Content Hub)
 
 Call CHT clear endpoint **only after** sync transaction commits successfully. Do not call on failed sync.
 
@@ -75,7 +75,7 @@ Call CHT clear endpoint **only after** sync transaction commits successfully. Do
 - [ ] Internal clear endpoint + guard
 - [ ] `INTERNAL_CACHE_SECRET` in Secrets Manager
 
-**mediahub-worker:**
+**contenthub-worker:**
 
 - [ ] `CHT_CACHE_CLEAR_URL` + secret env vars
 - [ ] HTTP POST on sync success
@@ -98,4 +98,4 @@ Call CHT clear endpoint **only after** sync transaction commits successfully. Do
 ## Related
 
 - CHT platform roadmap — CHT-only cache strategy (CHT platform repo)
-- [mediahub-platform-cutover.md](./mediahub-platform-cutover.md)
+- [contenthub-migration-plan.md](./contenthub-migration-plan.md)

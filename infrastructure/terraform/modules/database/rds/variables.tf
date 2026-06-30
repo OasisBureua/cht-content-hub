@@ -40,12 +40,12 @@ variable "allocated_storage" {
 
 variable "database_name" {
   type    = string
-  default = "mediahub"
+  default = "contenthub_producer"
 }
 
 variable "master_username" {
   type    = string
-  default = "mediahub_admin"
+  default = "contenthub_admin"
 }
 
 variable "backup_retention_period" {

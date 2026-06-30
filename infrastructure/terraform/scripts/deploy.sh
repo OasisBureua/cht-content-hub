@@ -7,7 +7,7 @@ ACTION="${2:-plan}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-echo "MediaHub Terraform Deployment"
+echo "Content Hub Terraform Deployment"
 echo "Environment: $ENVIRONMENT"
 echo "Action: $ACTION"
 echo ""
@@ -38,7 +38,7 @@ case "$ACTION" in
     terraform apply "${TF_VAR_ARGS[@]}"
     ;;
   destroy)
-    read -r -p "Destroy all MediaHub resources in ${ENVIRONMENT}? (yes/no): " confirm
+    read -r -p "Destroy all Content Hub resources in ${ENVIRONMENT}? (yes/no): " confirm
     if [[ "$confirm" == "yes" ]]; then
       terraform destroy "${TF_VAR_ARGS[@]}"
     else

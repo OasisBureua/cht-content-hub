@@ -1,10 +1,19 @@
 # CHT Content Hub
 
-**Community Health Technologies — Content Hub producer** (headless API + sync jobs) powering the clinical content catalog consumed by the CHT platform.
+**Community Health Technologies — Content Hub producer service** (headless API + sync jobs) powering the clinical content catalog consumed by the CHT platform.
 
-The consumer and admin SPA live in [cht-platform-tool](https://github.com/OasisBureua/cht-platform-tool). This repo owns producer infrastructure, sync jobs, and (later) the API surface.
+This repo is the AWS-native rebuild of the legacy MediaHub monolith. The consumer and admin SPA live in [cht-platform-tool](https://github.com/OasisBureua/cht-platform-tool); this repo owns clips, tags, KOLs, HCP intel, and studio admin APIs.
 
-> **Current focus:** infrastructure decisions before application code. `backend/` and `worker/` are placeholders.
+---
+
+## What It Does
+
+| Area | Description |
+|---|---|
+| **Public catalog API** | `/api/public/*` — clips, playlists, doctors, KOLs, transcripts (CHT backend calls via `X-API-Key`) |
+| **Studio admin API** | `/api/admin/studio/*` — tag editor, analytics, render pipeline (Cognito JWT from Content Hub admin) |
+| **Sync jobs** | EventBridge + Lambda (target) — platform importers, tagging, cache clear → CHT |
+| **Webhooks** | `/webhook/*` — ops-console ingest |
 
 ---
 
@@ -12,79 +21,123 @@ The consumer and admin SPA live in [cht-platform-tool](https://github.com/OasisB
 
 ```
 cht-content-hub/
-├── infrastructure/   # Terraform IaC (AWS) — active
-├── docs/             # Migration plan + engineering docs
-├── sync/             # EventBridge / Lambda job definitions (planned)
-├── scripts/          # Deploy & data migration helpers
-├── backend/          # contenthub-api — TBD after infra
-└── worker/           # ECS bridge or retired — TBD after infra
+├── backend/          # FastAPI API server (contenthub-api, Python)
+├── worker/           # Background sync workers (legacy ECS until Lambdas land)
+├── sync/             # EventBridge / Lambda job definitions (scaffold)
+├── infrastructure/   # Terraform IaC (AWS)
+├── docs/             # Extended documentation
+└── scripts/          # Deployment & utility scripts
 ```
 
 ---
 
-## Target architecture
+## Tech Stack
 
-| Component | Dev | Prod |
-|-----------|-----|------|
-| `contenthub-api` | ECS Fargate | ECS Fargate |
-| Producer database | RDS Postgres | Aurora Global |
-| Sync | EventBridge + Lambda (+ SQS) | Same |
-| CHT integration | `X-API-Key` on `/api/public/*` | Same |
+### Backend (FastAPI)
+- **PostgreSQL** + SQLAlchemy async + Alembic migrations
+- **Python 3.11**
+- Public API key auth for CHT; Cognito JWT for studio admin routes
 
-**Rule:** CHT platform never connects to the producer database — HTTP only.
+### Worker (Python 3.11)
+- **APScheduler** (ECS worker bridge until serverless cutover)
+- **Boto3** — SQS / Lambda invocation (future)
+- Cache invalidation → CHT `POST /internal/cache/catalog/clear`
 
-| Host | Env | Producer API |
-|------|-----|--------------|
-| `devhub.communityhealth.media` | Dev | `MEDIAHUB_BASE_URL=https://devhub.communityhealth.media/api/public` |
-| `contenthub.communityhealth.media` | Prod | `MEDIAHUB_BASE_URL=https://contenthub.communityhealth.media/api/public` |
-
-See [docs/contenthub-migration-plan.md](docs/contenthub-migration-plan.md) for phased rollout.
+### Infrastructure (AWS)
+- **ECS Fargate** — `contenthub-api` + transitional `contenthub-worker`
+- **RDS** (dev) / **Aurora Global** (prod) — producer database (never shared with CHT)
+- **EventBridge + Lambda** — sync job target state
+- **Terraform** — all infrastructure as code
 
 ---
 
-## Getting started (infra)
+## Getting Started
 
 ### Prerequisites
 
-- AWS CLI
-- Terraform >= 1.0
-- Docker Desktop (optional — local Postgres for future app dev)
+- Python 3.11+
+- Docker Desktop
+- AWS CLI (for deployment only)
+- Terraform (for infrastructure only)
 
-### Local Postgres (optional, for future app work)
+### 1. Start database
 
 ```bash
 docker compose up -d
 ```
 
-Postgres on **localhost:5433** (avoids conflict with CHT platform on 5432).
+Postgres listens on **localhost:5433** (avoids conflict with CHT platform on 5432).
 
-### Terraform
+### 2. Backend
 
 ```bash
-cp infrastructure/terraform/environments/variables/dev.tfvars.example \
-   infrastructure/terraform/environments/variables/dev.tfvars
-./scripts/deploy-primary.sh dev
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# DATABASE_URL=postgresql+asyncpg://contenthub:contenthub@localhost:5433/contenthub_producer
+export PYTHONPATH=src
+uvicorn main:app --app-dir src --reload --port 8002
 ```
 
-See [infrastructure/README.md](infrastructure/README.md) and [docs/engineering/deployment.md](docs/engineering/deployment.md).
+### 3. Worker
+
+```bash
+cd worker
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export PYTHONPATH=../backend/src
+python start_workers.py
+```
+
+Access points once running:
+- API: http://localhost:8002
+- Health: http://localhost:8002/health
+- Public status: http://localhost:8002/api/public/status
 
 ---
 
-## Verification
+## Integration with CHT Platform
+
+| Direction | Contract |
+|---|---|
+| CHT → Content Hub | `GET /api/public/*` with `X-API-Key` |
+| Content Hub → CHT | `POST /internal/cache/catalog/clear` after sync |
+| Admin SPA → Studio | `GET/POST /api/admin/studio/*` with Cognito session JWT |
+
+CHT env vars: `MEDIAHUB_BASE_URL`, `MEDIAHUB_API_KEY` (rename to `CONTENTHUB_*` in a future phase).
+
+See [docs/engineering/architecture.md](docs/engineering/architecture.md) for the full target-state diagram.
+
+---
+
+## Local Development Helpers
 
 ```bash
-./verify.sh
-./scripts/verify-certificate.sh devhub
-./scripts/smoke.sh https://devhub.communityhealth.media
+./verify.sh           # lint + import tests for backend + worker
+./verify.sh backend   # backend only
+./verify.sh worker    # worker only
+
+./scripts/smoke.sh                        # hits local health endpoints
+./scripts/smoke.sh https://mediahub.dev.communityhealth.media  # hosted dev
 ```
+
+---
+
+## Deployment
+
+See [docs/engineering/deployment.md](docs/engineering/deployment.md) for step-by-step deployment instructions.
+
+Workflow details: [.github/CI_CD.md](.github/CI_CD.md).
 
 ---
 
 ## Docs
 
 | File | Description |
-|------|-------------|
-| [docs/contenthub-migration-plan.md](docs/contenthub-migration-plan.md) | Canonical migration runbook |
-| [docs/contenthub-admin-architecture.md](docs/contenthub-admin-architecture.md) | Admin routes & Cognito groups |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/engineering/getting-started.md](docs/engineering/getting-started.md) | Local dev setup + env variables |
+| [docs/engineering/architecture.md](docs/engineering/architecture.md) | System architecture |
+| [docs/engineering/deployment.md](docs/engineering/deployment.md) | Staging and production deploys |
 | [infrastructure/README.md](infrastructure/README.md) | Terraform layout |
-| [docs/engineering/architecture.md](docs/engineering/architecture.md) | System design |

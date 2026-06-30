@@ -4,7 +4,7 @@ locals {
 
 resource "aws_security_group" "alb" {
   name        = "${local.prefix}-api-alb-sg"
-  description = "Internet-facing ALB for mediahub-api (CHT consumer)"
+  description = "Internet-facing ALB for contenthub-api (CHT consumer)"
   vpc_id      = var.vpc_id
 
   ingress {
@@ -110,4 +110,5 @@ resource "aws_lb_listener" "https" {
 locals {
   listener_arn = var.certificate_arn != "" ? aws_lb_listener.https[0].arn : aws_lb_listener.http_forward[0].arn
   api_scheme   = var.certificate_arn != "" ? "https" : "http"
+  api_host     = var.api_domain != "" ? var.api_domain : aws_lb.main.dns_name
 }

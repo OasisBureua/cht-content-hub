@@ -9,14 +9,18 @@ resource "aws_db_subnet_group" "main" {
 
 resource "aws_security_group" "rds" {
   name        = "${local.prefix}-rds-sg"
-  description = "MediaHub RDS PostgreSQL"
+  description = "Content Hub RDS PostgreSQL"
   vpc_id      = var.vpc_id
 
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = var.allowed_security_groups
+  dynamic "ingress" {
+    for_each = length(var.allowed_security_groups) > 0 ? [1] : []
+    content {
+      description     = "PostgreSQL from allowed ECS tasks"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = var.allowed_security_groups
+    }
   }
 
   egress {
@@ -61,7 +65,14 @@ resource "aws_db_instance" "main" {
 }
 
 resource "aws_secretsmanager_secret" "database" {
-  name = "${local.prefix}-database-credentials"
+  name                    = "${local.prefix}-database-credentials"
+  description             = "Database credentials for Content Hub ${var.environment}"
+  recovery_window_in_days = 7
+
+  tags = {
+    Name        = "${local.prefix}-database-credentials"
+    Environment = var.environment
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "database" {
@@ -72,6 +83,8 @@ resource "aws_secretsmanager_secret_version" "database" {
     host     = aws_db_instance.main.address
     port     = aws_db_instance.main.port
     dbname   = var.database_name
-    url      = "postgresql+asyncpg://${var.master_username}:${random_password.db_password.result}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.database_name}"
+    url      = "postgresql+asyncpg://${var.master_username}:${urlencode(random_password.db_password.result)}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.database_name}"
   })
+
+  depends_on = [aws_db_instance.main]
 }

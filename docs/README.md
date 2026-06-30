@@ -9,6 +9,8 @@ Operational docs for the CHT Content Hub producer service.
 | [engineering/architecture.md](./engineering/architecture.md) | System design and CHT integration |
 | [engineering/deployment.md](./engineering/deployment.md) | Staging and production deploys |
 | [contenthub-migration-plan.md](./contenthub-migration-plan.md) | Canonical migration runbook |
+| [kol-hcp-intel-migration.md](./kol-hcp-intel-migration.md) | KOL + HCP Intel extraction from MediaHub (target: zero KOL/HCP in MediaHub) |
+| [KOL_HCP_Intel_Migration_Spec.pdf](./KOL_HCP_Intel_Migration_Spec.pdf) | PDF export of KOL + HCP Intel migration spec |
 | [contenthub-admin-architecture.md](./contenthub-admin-architecture.md) | Admin routes and Cognito group matrix |
 | [cht-public-api-contract.md](./cht-public-api-contract.md) | CHT catalog API contract |
 | [cache-sync-contract.md](./cache-sync-contract.md) | Lambda/worker → CHT cache clear |

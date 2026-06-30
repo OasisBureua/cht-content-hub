@@ -2,7 +2,7 @@
 
 Deploy after **us-east-1** primary is stable. Mirrors CHT `environments/us-east-2` pattern:
 
-- Cross-region RDS read replica of `mediahub-{env}-db`
+- Cross-region RDS read replica of `contenthub-{env}-db`
 - Standby ECS tasks at ~50% capacity
 - ECR image replication from us-east-1
 - Secrets Manager replica regions
@@ -13,9 +13,9 @@ Scaffold only — copy `us-east-1` modules with:
 
 - `dr_standby_scale_factor = 0.5`
 - Data sources for primary RDS and secrets in us-east-1
-- Internal ALB DNS for CHT `MEDIAHUB_BASE_URL_SECONDARY`
+- Internal ALB DNS for CHT `CONTENTHUB_BASE_URL_SECONDARY`
 
-See [docs/mediahub-multi-region-dr.md](../../../docs/mediahub-multi-region-dr.md).
+See [docs/engineering/architecture.md](../../../docs/engineering/architecture.md).
 
 ## Apply order
 

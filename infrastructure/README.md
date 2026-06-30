@@ -2,7 +2,7 @@
 
 AWS infrastructure for the Content Hub **producer** service.
 
-**Deployment mode (locked):** [VPC-colocated](../docs/engineering/colocated-deployment.md) — shared CHT VPC, **own** Content Hub ECS cluster, dedicated producer RDS + API ALB. CHT calls the producer over HTTP (`MEDIAHUB_BASE_URL`).
+**Deployment mode (locked):** [VPC-colocated](../docs/engineering/colocated-deployment.md) — shared CHT VPC, **own** Content Hub ECS cluster, dedicated producer RDS + API ALB. CHT calls the producer over HTTP (`CONTENTHUB_BASE_URL`).
 
 ## Architecture
 
@@ -44,7 +44,16 @@ cp infrastructure/terraform/environments/variables/dev.tfvars.example \
 
 ## State backend
 
-Update `backend "s3"` in `environments/us-east-1/main.tf` before first apply, or reuse `mediahub-terraform-state` if migrating from legacy MediaHub Terraform.
+Remote state lives in **`cht-contenthub-terraform-state`** (Content Hub–only bucket):
+
+| Environment | Key |
+|-------------|-----|
+| dev | `devhub/terraform.tfstate` |
+| prod | `contenthub/terraform.tfstate` |
+
+Bootstrap once: `./scripts/bootstrap-terraform-state.sh`. See [environments/backends/README.md](terraform/environments/backends/README.md).
+
+**Do not `terraform apply` until devhub ACM cert is ISSUED** (`acm_certificate_arn` in dev.tfvars).
 
 ## Modules
 

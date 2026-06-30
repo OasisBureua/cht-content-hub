@@ -28,6 +28,6 @@ variable "api_port" {
 
 variable "api_domain" {
   type        = string
-  description = "Public hostname for CHT MEDIAHUB_BASE_URL (without path)"
+  description = "Public hostname for CHT CONTENTHUB_BASE_URL (without path)"
   default     = ""
 }

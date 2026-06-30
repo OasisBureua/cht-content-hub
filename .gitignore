@@ -25,8 +25,8 @@ worker/.env
 dist/
 build/
 *.log
-uploads/
-reports/
+backend/uploads/
+backend/reports/
 
 # Terraform
 *.tfstate
@@ -36,11 +36,13 @@ reports/
 *.tfplan
 infrastructure/terraform/environments/variables/*.tfvars
 infrastructure/terraform/environments/variables/.cert-arns*
-infrastructure/terraform/environments/variables/*.local.tfvars
 
 # Testing
 coverage/
 .pytest_cache/
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Misc
 *.bak

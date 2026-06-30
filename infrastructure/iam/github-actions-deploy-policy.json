@@ -33,19 +33,19 @@
         "ecr:ListImages",
         "ecr:CreateRepository"
       ],
-      "Resource": "arn:aws:ecr:*:ACCOUNT_ID:repository/mediahub-*"
+      "Resource": "arn:aws:ecr:*:ACCOUNT_ID:repository/contenthub-*"
     },
     {
       "Sid": "TerraformState",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
       "Resource": [
-        "arn:aws:s3:::mediahub-terraform-state",
-        "arn:aws:s3:::mediahub-terraform-state/*"
+        "arn:aws:s3:::cht-contenthub-terraform-state",
+        "arn:aws:s3:::cht-contenthub-terraform-state/*"
       ]
     },
     {
-      "Sid": "MediaHubDeploy",
+      "Sid": "ContentHubDeploy",
       "Effect": "Allow",
       "Action": [
         "ecs:*",
@@ -60,7 +60,7 @@
       "Resource": "*",
       "Condition": {
         "StringLike": {
-          "aws:ResourceTag/Project": "mediahub*"
+          "aws:ResourceTag/Project": "contenthub*"
         }
       }
     }

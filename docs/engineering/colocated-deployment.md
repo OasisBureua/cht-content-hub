@@ -1,6 +1,6 @@
 # VPC-colocated deployment (locked)
 
-**Decision:** Content Hub producer runs **inside the CHT platform VPC** (shared subnets/NAT) with its **own ECS cluster**, dedicated RDS, and public API ALB. CHT integrates over HTTP only — it calls `MEDIAHUB_BASE_URL`, not shared compute.
+**Decision:** Content Hub producer runs **inside the CHT platform VPC** (shared subnets/NAT) with its **own ECS cluster**, dedicated RDS, and public API ALB. CHT integrates over HTTP only — it calls `CONTENTHUB_BASE_URL`, not shared compute.
 
 **Status:** Approved — June 2026  
 **Rejected:** Sharing CHT’s ECS cluster (separate blast radius and deploy lifecycle for producer).
@@ -31,7 +31,7 @@
 └──────────────────────────────────────────────────────────────────────┘
 
 CHT backend  ──HTTP + X-API-Key──►  devhub.* / contenthub.* /api/public
-              (MEDIAHUB_BASE_URL)    (no Postgres, no shared ECS cluster)
+              (CONTENTHUB_BASE_URL)    (no Postgres, no shared ECS cluster)
 ```
 
 | Resource | Owner | Shared with CHT? |
@@ -85,7 +85,7 @@ Subnet IDs are often tagged `Tier=private` / `Tier=public` on the CHT VPC. If ta
 
 ## DNS & TLS
 
-| Environment | Producer API hostname | CHT `MEDIAHUB_BASE_URL` |
+| Environment | Producer API hostname | CHT `CONTENTHUB_BASE_URL` |
 |-------------|----------------------|-------------------------|
 | **Dev** | `devhub.communityhealth.media` | `https://devhub.communityhealth.media/api/public` |
 | **Prod** | `contenthub.communityhealth.media` | `https://contenthub.communityhealth.media/api/public` |
@@ -103,9 +103,20 @@ Consumer/admin SPA hostnames are owned by **cht-platform-tool** (CloudFront). Pr
 
 After ISSUED, set `acm_certificate_arn` in tfvars from `infrastructure/terraform/environments/variables/.cert-arns-*`.
 
-### Route53
+### Route53 (Terraform)
 
-Create an **A/alias** in the CHT hosted zone pointing each hostname → producer ALB (`terraform output api_alb_dns_name`).
+With `manage_route53 = true` (default), Terraform creates a hosted zone for `api_domain` and an **A/alias** → producer ALB.
+
+**Traffic path:** Route53 → ALB → ECS → RDS (until CloudFront + S3 frontend is added).
+
+After `terraform apply`, delegate the subdomain in GoDaddy:
+
+```bash
+terraform output route53_nameservers
+terraform output dns_delegation_hint
+```
+
+Add **NS** records for `devhub` (or `contenthub`) in the parent `communityhealth.media` zone — same pattern as CHT `devapp.communityhealth.media`.
 
 ---
 
@@ -114,7 +125,7 @@ Create an **A/alias** in the CHT hosted zone pointing each hostname → producer
 - **ECS cluster** — always Content Hub–owned
 - **Producer database** — always a separate RDS instance
 - **Sync Lambdas** — VPC-attached in same VPC; own IAM roles
-- **MediaHub Redis** — not provisioned
+- **Content Hub Redis** — not provisioned
 - **GoTrue / JWT auth on producer** — retired; studio auth uses Cognito JWKS from CHT
 
 ---
@@ -137,7 +148,7 @@ Not supported out of the box in this repo today.
 1. Copy `vpc_id` + subnet IDs from cht-platform-tool → `dev.tfvars`
 2. Set secrets via `TF_VAR_public_api_key` etc.
 3. Request ACM cert: `./scripts/request-certificate-devhub.sh`
-4. Route53 alias: `devhub.communityhealth.media` → producer ALB
-5. `./scripts/deploy-primary.sh dev` — creates cluster, RDS, ALB, ECS API
+4. `terraform apply` — creates Route53 zone + ALB alias (then delegate NS in GoDaddy)
+5. `./scripts/deploy-primary.sh dev apply` — cluster, RDS, ALB, ECS API
 
 See [contenthub-migration-plan.md](../contenthub-migration-plan.md) Phase 1.

@@ -62,6 +62,12 @@ variable "app_secrets_arn" {
   type = string
 }
 
+variable "app_version" {
+  type        = string
+  default     = "unknown"
+  description = "Container image tag for actuator/info"
+}
+
 variable "redis_url" {
   type    = string
   default = ""

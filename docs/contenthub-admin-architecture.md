@@ -2,7 +2,7 @@
 
 **Status:** Approved decisions — June 2026  
 **Owner:** Uche Aduakaa  
-**Scope:** CHM staff admin UI on Content Hub; MediaHub studio APIs; unified Cognito groups
+**Scope:** CHM staff admin UI on Content Hub; Content Hub studio APIs; unified Cognito groups
 
 > **Migration execution:** see [contenthub-migration-plan.md](./contenthub-migration-plan.md) for phased rollout, infrastructure, and data port.
 
@@ -10,7 +10,7 @@
 
 ## Summary
 
-CHM admins and editors use **one admin application** at `contenthub.communityhealth.media/admin` on the same SPA host as the consumer app. They enter admin only via a link in Content Hub (same session cookie). Producer/editorial tools call **MediaHub studio APIs**; platform ops call **cht-platform-backend**. End users never see `/admin`. MediaHub has **no standalone admin UI** in target state.
+CHM admins and editors use **one admin application** at `contenthub.communityhealth.media/admin` on the same SPA host as the consumer app. They enter admin only via a link in Content Hub (same session cookie). Producer/editorial tools call **Content Hub studio APIs**; platform ops call **cht-platform-backend**. End users never see `/admin`. Content Hub has **no standalone admin UI** on legacy producer hostnames in target state.
 
 ---
 
@@ -18,11 +18,11 @@ CHM admins and editors use **one admin application** at `contenthub.communityhea
 
 | # | Decision | Choice |
 |---|----------|--------|
-| 1 | Admin route namespace | `/admin/studio/*` for MediaHub producer tools; `/admin/platform/*` for CHT platform ops |
+| 1 | Admin route namespace | `/admin/studio/*` for Content Hub producer tools; `/admin/platform/*` for CHT platform ops |
 | 2 | Hosting | **Same host** — `contenthub.communityhealth.media/admin` (not a separate admin subdomain) |
-| 3 | Cognito groups | **`chm-admin`**, **`chm-editor`**, **`chm-viewer`** — fold legacy `superadmin` into `chm-admin`; **no** separate `mediahub-admin` client or group |
+| 3 | Cognito groups | **`chm-admin`**, **`chm-editor`**, **`chm-viewer`** — fold legacy `superadmin` into `chm-admin`; **no** separate `contenthub-admin` client or group |
 | 4 | Multi-tenant client scope | **`client_ids`** (and `has_client_access`) on **Aurora user row**; studio API enforces scope per request |
-| 5 | HCP Intel placement | **`/admin/studio/hcp-intel/*`** — backed by MediaHub RDS/API until a future HCP intel migration to Aurora |
+| 5 | HCP Intel placement | **`/admin/studio/hcp-intel/*`** — backed by Content Hub Aurora/API (see [kol-hcp-intel-migration.md](./kol-hcp-intel-migration.md)) |
 
 ---
 
@@ -35,11 +35,10 @@ contenthub.communityhealth.media
 └── /admin/*                  CHM staff only (Cognito group gate)
         ├── /admin                      Overview
         ├── /admin/platform/*           cht-platform-backend → Aurora Global
-        └── /admin/studio/*             mediahub-api /api/admin/studio/* → MediaHub RDS
+        └── /admin/studio/*             contenthub-api /api/admin/studio/* → Content Hub Aurora
 
-mediahub.{dev.,}communityhealth.media
-├── /api/public/*             CHT backend only (X-API-Key) — catalog contract
-├── /api/admin/studio/*       Admin SPA only (Cognito session JWT + group check)
+devhub.communityhealth.media / contenthub.communityhealth.media   (post-cutover: no KOL, no HCP Intel)
+├── /dashboard/*              Client analytics (optional read-only Content Hub calls)
 ├── /webhook/*                ops-console (WEBHOOK_API_KEY)
 └── /health
 ```
@@ -109,7 +108,7 @@ MediaHub `public.users` / `client_users` tables retire after Aurora becomes sour
 
 - Consumer app shows **Admin** (or **Content Studio**) link when Cognito groups include `chm-admin`, `chm-editor`, or `chm-viewer`.
 - Link navigates to `/admin` (same origin).
-- Admins never receive links to `mediahub.communityhealth.media` for UI.
+- Admins never receive links to legacy producer hostnames for UI.
 
 ### Sidebar sections
 
@@ -121,7 +120,7 @@ MediaHub `public.users` / `client_users` tables retire after Aurora becomes sour
 | `/admin/platform/access` | Access requests (until fully replaced by groups) |
 | _future_ | CME, honorarium, surveys (Zoom, JotForm, Bill.com) |
 
-**Studio** (`/admin/studio/*`) — mediahub-api
+**Studio** (`/admin/studio/*`) — contenthub-api
 
 | Route | Legacy MediaHub route | Backend (today) |
 |-------|----------------------|-----------------|
@@ -178,7 +177,7 @@ All producer admin HTTP routes move under:
 | `/api/admin/studio/reports` | `routers/reports` |
 | `/api/admin/studio/knowledge-base` | `routers/knowledge_base` |
 
-Legacy paths remain on EC2 monolith until cutover; new admin SPA targets prefixed routes on `mediahub-api`.
+Legacy paths remain on EC2 monolith until cutover; new admin SPA targets prefixed routes on `contenthub-api`.
 
 **CORS:** `Access-Control-Allow-Origin: https://contenthub.communityhealth.media`, credentials enabled.
 
@@ -188,7 +187,7 @@ Legacy paths remain on EC2 monolith until cutover; new admin SPA targets prefixe
 
 | Phase | Deliverable |
 |-------|-------------|
-| **A0** | Cognito groups `chm-admin` / `chm-editor` / `chm-viewer` in CHT Terraform; deprecate `mediahub-admin` |
+| **A0** | Cognito groups `chm-admin` / `chm-editor` / `chm-viewer` in CHT Terraform; deprecate legacy `contenthub-admin` group name if present |
 | **A1** | `/admin` shell in Content Hub frontend (layout, guards, empty platform + studio) |
 | **A2** | MediaHub: JWT + group middleware on `/api/admin/studio/*`; Aurora `client_ids` sync on login |
 | **A3** | Port studio **content** + **analytics** (highest catalog impact) |
@@ -202,9 +201,9 @@ Legacy paths remain on EC2 monolith until cutover; new admin SPA targets prefixe
 
 | Doc | Scope |
 |-----|-------|
-| [mediahub-architecture.md](./mediahub-architecture.md) | Producer microservice + API-only host |
+| [engineering/architecture.md](./engineering/architecture.md) | Producer microservice + API-only host |
 | [cht-public-api-contract.md](./cht-public-api-contract.md) | CHT catalog API key boundary |
-| [mediahub-auth-decommission-checklist.md](./mediahub-auth-decommission-checklist.md) | End-user auth off; admin via Content Hub |
-| [mediahub-platform-alignment.md](./mediahub-platform-alignment.md) | Parallel CHT / MediaHub tracks |
+| [contenthub-migration-plan.md](./contenthub-migration-plan.md) | End-user auth off; admin via Content Hub |
+| [contenthub-migration-plan.md](./contenthub-migration-plan.md) | Parallel CHT / Content Hub tracks |
 
 CHT platform repo: auth PDF, Cognito Terraform, Content Hub frontend implementation.

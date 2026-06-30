@@ -4,7 +4,7 @@ locals {
 
 resource "aws_security_group" "alb" {
   name        = "${local.prefix}-api-alb-sg"
-  description = "Internal ALB for mediahub-api"
+  description = "Internal ALB for contenthub-api"
   vpc_id      = var.vpc_id
 
   dynamic "ingress" {

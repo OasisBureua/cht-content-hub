@@ -9,7 +9,7 @@ resource "aws_elasticache_subnet_group" "main" {
 
 resource "aws_security_group" "redis" {
   name        = "${local.prefix}-redis-sg"
-  description = "MediaHub Redis"
+  description = "Content Hub Redis"
   vpc_id      = var.vpc_id
 
   ingress {

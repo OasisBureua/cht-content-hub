@@ -1,12 +1,12 @@
-# MediaHub Webhook API Contract
+# Content Hub Webhook API Contract
 
-This document defines the webhook API that MediaHub exposes for receiving data from external systems.
+This document defines the webhook API that Content Hub exposes for receiving data from external systems.
 
 ## Overview
 
-MediaHub receives clip, post, and shoot data via a webhook endpoint. This allows any authorized system to push analytics and content data into the portal.
+Content Hub receives clip, post, and shoot data via a webhook endpoint. This allows any authorized system to push analytics and content data into the portal.
 
-**Key principle**: MediaHub works independently. The webhook is for receiving updates, not a required dependency.
+**Key principle**: Content Hub works independently. The webhook is for receiving updates, not a required dependency.
 
 ---
 
@@ -18,7 +18,7 @@ All webhook requests require an API key in the header:
 X-API-Key: <your-api-key>
 ```
 
-API keys are configured in MediaHub's environment variables.
+API keys are configured in Content Hub's environment variables.
 
 ---
 
@@ -26,7 +26,7 @@ API keys are configured in MediaHub's environment variables.
 
 ### POST /webhook/sync
 
-Sync clips, posts, and shoots to MediaHub.
+Sync clips, posts, and shoots to Content Hub.
 
 **Request:**
 
@@ -208,7 +208,7 @@ Empty arrays are valid and skip that entity type.
 ## Example: Full Sync Request
 
 ```bash
-curl -X POST https://mediahub.example.com/webhook/sync \
+curl -X POST https://contenthub.example.com/webhook/sync \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{

@@ -1,55 +1,76 @@
 # Serverless sync jobs
 
-EventBridge Scheduler + Lambda (+ SQS for long jobs) replacing the ECS worker APScheduler.
+EventBridge + Lambda (+ SQS for long jobs) — **same pattern in dev and prod**.
 
-## Job catalog (target)
+Each environment gets its **own** Lambda functions, queues, and schedules. Dev and prod share:
 
-| Job | Schedule | Executor | Cache clear |
-|-----|----------|----------|-------------|
-| `platform_sync` | 12h | SQS + Lambda | Yes |
-| `platform_stats` | 12h | SQS + Lambda | Yes |
-| `post_tagging` | 12h | Lambda | Yes |
-| `playlist_doctor_tagger` | 04:30 UTC | Lambda | Yes |
-| `ai_summaries` | 12h | SQS + Lambda | Yes |
-| `metric_snapshots` | 12h | Lambda | No |
-| `hcp_intel_poll` | 30m | SQS + Lambda | No |
-| `cache_clear` | on-demand | Lambda | — |
+- Handler code (`sync/jobs/*`)
+- Business logic (`backend/src/hcp_intel/*`)
+- Deployment artifact (`dist/sync-lambda.zip` from `./scripts/build-sync-lambda.sh`)
+- Terraform module (`modules/compute/lambda-job/`)
 
-**Do not migrate:** `shoot_tag_pipeline` (dormant), `kol_cache_warm` (drop).
+## Job catalog
 
-## Round 1 Lambdas (Phase 1.5)
+| Job | Schedule | Trigger | Default enabled |
+|-----|----------|---------|-----------------|
+| `hcp_intel_poll` | every 30m | EventBridge → SQS → Lambda | yes |
+| `openalex_backfill` | Sun 03:30 UTC | EventBridge → Lambda | yes |
+| `kol_hcp_matcher` | daily 04:00 UTC | EventBridge → Lambda | yes |
+| `cache_clear` | on-demand | Lambda invoke | yes |
+| `post_tagging` | every 12h | EventBridge → Lambda | no (catalog not on Hub yet) |
+| `playlist_doctor_tagger` | 04:30 UTC | EventBridge → Lambda | no |
 
+**Do not migrate:** `kol_cache_warm` (CHT owns Redis).
+
+## Build & deploy
+
+```bash
+# 1. Package (same zip for dev + prod)
+./scripts/build-sync-lambda.sh $(git rev-parse --short HEAD)
+
+# 2. Terraform apply (creates contenthub-dev-sync-* or contenthub-prod-sync-*)
+./scripts/deploy-primary.sh dev apply
 ```
-sync/
-├── README.md
-├── jobs/
-│   ├── post_tagging/
-│   │   └── handler.py
-│   ├── playlist_doctor_tagger/
-│   │   └── handler.py
-│   └── cache_clear/
-│       └── handler.py
-└── shared/
-    ├── db.py          # VPC RDS access via Secrets Manager
-    └── cht_cache.py   # POST /internal/cache/catalog/clear
+
+Optional tfvars overrides:
+
+```hcl
+sync_jobs_enabled = {
+  post_tagging             = false
+  playlist_doctor_tagger   = false
+}
+```
+
+Manual invoke (dev example):
+
+```bash
+aws lambda invoke --function-name contenthub-dev-sync-kol-hcp-matcher \
+  --payload '{}' /tmp/out.json && cat /tmp/out.json
 ```
 
 ## Handler contract
 
 1. Idempotent — safe to retry
-2. Tagging jobs: `reserved_concurrency=1`
-3. On successful writes → invoke `cache_clear` Lambda
-4. DLQ per SQS queue; credentials from Secrets Manager
-5. VPC access to producer DB via IAM role
+2. Serial jobs: `reserved_concurrent_executions = 1`
+3. VPC access to producer RDS via Secrets Manager (`DATABASE_SECRET_ARN`)
+4. Optional CHT cache clear via `CHT_CACHE_CLEAR_URL` + `INTERNAL_CACHE_SECRET`
 
-See [cache-sync-contract.md](../docs/cache-sync-contract.md) and [contenthub-migration-plan.md](../docs/contenthub-migration-plan.md) §7.
+See [cache-sync-contract.md](../docs/cache-sync-contract.md) and [contenthub-migration-plan.md](../docs/contenthub-migration-plan.md).
 
-## Local development
+## Layout
 
-Until Lambdas land, run the transitional ECS worker:
-
-```bash
-cd worker && python start_workers.py
+```
+sync/
+├── requirements.txt          # Lambda runtime deps
+├── jobs/
+│   ├── hcp_intel_poll/
+│   ├── openalex_backfill/
+│   ├── kol_hcp_matcher/
+│   └── cache_clear/
+└── shared/
+    ├── runtime.py            # path setup + asyncio.run
+    ├── secrets.py            # Secrets Manager → DATABASE_URL
+    └── cht_cache.py
 ```
 
-The worker calls job modules that will live under `backend/src/jobs/` once application code is added.
+Business logic lives in `backend/src/hcp_intel/` (shared with `contenthub-api`).

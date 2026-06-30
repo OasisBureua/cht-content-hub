@@ -156,7 +156,25 @@ variable "internal_cache_secret" {
   default   = ""
 }
 
+variable "manage_route53" {
+  type        = bool
+  default     = true
+  description = "Create Route53 hosted zone + ALB alias for api_domain (R53 → ALB → ECS → RDS)"
+}
+
 variable "cht_cache_clear_url" {
   type    = string
   default = ""
+}
+
+variable "sync_lambda_package_path" {
+  type        = string
+  default     = ""
+  description = "Path to dist/sync-lambda.zip — default: repo dist/sync-lambda.zip (run ./scripts/build-sync-lambda.sh before apply)"
+}
+
+variable "sync_jobs_enabled" {
+  type        = map(bool)
+  default     = {}
+  description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
 }

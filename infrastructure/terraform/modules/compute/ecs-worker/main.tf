@@ -6,7 +6,7 @@ locals {
 resource "aws_security_group" "worker" {
   count       = length(var.security_group_ids) > 0 ? 0 : 1
   name        = "${local.prefix}-worker-sg"
-  description = "mediahub-worker ECS tasks"
+  description = "contenthub-worker ECS tasks"
   vpc_id      = var.vpc_id
 
   egress {
@@ -33,13 +33,12 @@ resource "aws_ecs_task_definition" "worker" {
 
   container_definitions = jsonencode([
     {
-      name      = "mediahub-worker"
+      name      = "contenthub-worker"
       image     = var.container_image
       essential = true
       environment = concat(
         [
-          { name = "ENABLE_SCHEDULER", value = "true" },
-          { name = "MEDIAHUB_SERVICE_ROLE", value = "worker" },
+          { name = "CONTENTHUB_SERVICE_ROLE", value = "worker" },
           { name = "AWS_REGION", value = var.aws_region },
         ],
         var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : [],

@@ -121,14 +121,21 @@ RECORD_VALUE=$(aws acm describe-certificate \
     --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Value' \
     --output text)
 
+# GoDaddy host field: strip trailing dot and zone suffix (e.g. communityhealth.media).
+GODADDY_HOST="${RECORD_NAME%.}"
+GODADDY_HOST="${GODADDY_HOST%.communityhealth.media}"
+
 echo "Primary CNAME (add in GoDaddy):"
 echo "  Name:  $RECORD_NAME"
 echo "  Value: $RECORD_VALUE"
 echo "  TTL:   600"
 echo ""
-echo "In GoDaddy: DNS Management → Add → Type: CNAME"
-echo "  Name: _acme-challenge.${DNS_LABEL} (or the Name above, minus .communityhealth.media)"
-echo "  Value: (the Value above)"
+echo "In GoDaddy (zone: communityhealth.media) → DNS → Add → Type: CNAME"
+echo "  Host/Name: $GODADDY_HOST"
+echo "  Points to: $RECORD_VALUE"
+echo "  TTL:       600 (or default)"
+echo ""
+echo "  ⚠️  Use the exact Host/Name above — NOT _acme-challenge.${DNS_LABEL} (that is Let's Encrypt, not ACM)."
 echo ""
 
 mkdir -p infrastructure/terraform/environments/variables
@@ -152,6 +159,6 @@ else
     echo "4. Once ISSUED, update $TFVARS_FILE:"
     echo "     api_domain = \"$DOMAIN\""
     echo "     acm_certificate_arn = \"$CERT_ARN\""
-    echo "5. CHT MEDIAHUB_BASE_URL=https://${DOMAIN}/api/public"
+    echo "5. CHT CONTENTHUB_BASE_URL=https://${DOMAIN}/api/public"
     echo "6. Deploy primary: cd infrastructure/terraform/environments/us-east-1 && terraform apply -var-file=../variables/$TFVARS_FILE"
 fi

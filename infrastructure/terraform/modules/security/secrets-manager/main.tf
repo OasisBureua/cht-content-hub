@@ -3,7 +3,14 @@ locals {
 }
 
 resource "aws_secretsmanager_secret" "app" {
-  name = "${local.prefix}-app-secrets"
+  name                    = "${local.prefix}-app-secrets"
+  description             = "Application secrets for Content Hub ${var.environment}"
+  recovery_window_in_days = 7
+
+  tags = {
+    Name        = "${local.prefix}-app-secrets"
+    Environment = var.environment
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "app" {
