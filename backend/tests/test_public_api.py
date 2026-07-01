@@ -6,7 +6,6 @@ import pytest
 from httpx import AsyncClient
 
 from conftest import API_KEY, api_headers
-from utils.kol_public import build_kol_slug_map
 
 
 @pytest.mark.asyncio
@@ -104,9 +103,31 @@ async def test_kols_new_only_filter(client: AsyncClient, kol_with_shoot):
 
 
 @pytest.mark.asyncio
+async def test_kols_pagination(client: AsyncClient, sample_kol, kol_with_shoot):
+    response = await client.get(
+        "/api/public/kols",
+        headers=api_headers(),
+        params={"limit": 1, "offset": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_kols_omit_intel_by_default(client: AsyncClient, kol_with_publications):
+    response = await client.get("/api/public/kols", headers=api_headers())
+    assert response.status_code == 200
+    item = next(
+        i for i in response.json()["items"] if i["name"] == "Dr. Virginia Kaklamani"
+    )
+    assert item.get("intel") is None
+
+
+@pytest.mark.asyncio
 async def test_kol_detail(client: AsyncClient, kol_with_shoot):
-    slugs = await build_kol_slug_map([kol_with_shoot])
-    slug = slugs[kol_with_shoot.id]
+    slug = kol_with_shoot.slug
     response = await client.get(
         f"/api/public/kols/{slug}",
         headers=api_headers(),
@@ -133,8 +154,7 @@ async def test_kol_detail_not_found(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_kol_publications_empty_without_npi(client: AsyncClient, sample_kol):
-    slugs = await build_kol_slug_map([sample_kol])
-    slug = slugs[sample_kol.id]
+    slug = sample_kol.slug
     response = await client.get(
         f"/api/public/kols/{slug}/publications",
         headers=api_headers(),
@@ -147,8 +167,7 @@ async def test_kol_publications_empty_without_npi(client: AsyncClient, sample_ko
 
 @pytest.mark.asyncio
 async def test_kol_publications_with_signals(client: AsyncClient, kol_with_publications):
-    slugs = await build_kol_slug_map([kol_with_publications])
-    slug = slugs[kol_with_publications.id]
+    slug = kol_with_publications.slug
     response = await client.get(
         f"/api/public/kols/{slug}/publications",
         headers=api_headers(),

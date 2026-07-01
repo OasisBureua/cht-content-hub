@@ -86,6 +86,12 @@ variable "rds_backup_retention" {
   default = 7
 }
 
+variable "log_retention_days" {
+  type        = number
+  default     = null
+  description = "CloudWatch log retention for ECS and sync Lambdas. Defaults to 365 (prod/platform) or 7 (dev/staging)."
+}
+
 # Redis
 variable "redis_node_type" {
   type    = string

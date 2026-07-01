@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +21,10 @@ from schemas.public import (
     PublicKOLRegion,
 )
 from services.kol_regions import REGIONS
-from utils.kol_public import build_kol_slug_map, kol_to_public
+from utils.kol_public import kol_to_public
 from utils.time import ensure_utc
+
+NEW_WINDOW_DAYS = 60
 
 
 @dataclass(frozen=True)
@@ -31,14 +33,39 @@ class ShootStats:
     first_shoot_at: datetime | None = None
 
 
-async def list_kols(
-    db: AsyncSession,
+@dataclass(frozen=True)
+class KolListFacets:
+    total: int
+    region_counts: dict[str, int]
+    institutions: list[str]
+
+
+def _new_only_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=NEW_WINDOW_DAYS)
+
+
+def _shoot_stats_subquery():
+    return (
+        select(
+            KOLGroupMember.kol_id.label("kol_id"),
+            func.count(func.distinct(Shoot.id)).label("shoot_count"),
+            func.min(coalesce(Shoot.shoot_date, Shoot.created_at)).label("first_shoot_at"),
+        )
+        .join(KOLGroup, KOLGroup.id == KOLGroupMember.kol_group_id)
+        .join(Shoot, Shoot.kol_group_id == KOLGroup.id)
+        .group_by(KOLGroupMember.kol_id)
+        .subquery("kol_shoot_stats")
+    )
+
+
+def _apply_kol_filters(
+    stmt: Select,
     *,
     region: str | None = None,
     institution: str | None = None,
     q: str | None = None,
-) -> list[KOL]:
-    stmt = select(KOL).order_by(KOL.name.asc())
+    new_only: bool = False,
+) -> Select:
     if region:
         stmt = stmt.where(KOL.region == region)
     if institution:
@@ -53,21 +80,134 @@ async def list_kols(
                 KOL.bio.ilike(like),
             )
         )
+    if new_only:
+        stats = _shoot_stats_subquery()
+        stmt = (
+            stmt.join(stats, stats.c.kol_id == KOL.id)
+            .where(stats.c.first_shoot_at >= _new_only_cutoff())
+        )
+    return stmt
+
+
+async def list_kols(
+    db: AsyncSession,
+    *,
+    region: str | None = None,
+    institution: str | None = None,
+    q: str | None = None,
+    new_only: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[KOL]:
+    stmt = _apply_kol_filters(
+        select(KOL), region=region, institution=institution, q=q, new_only=new_only
+    ).order_by(KOL.name.asc())
+    if limit is not None:
+        stmt = stmt.limit(limit).offset(offset)
     return list((await db.execute(stmt)).scalars().all())
 
 
-async def load_slug_index(db: AsyncSession) -> tuple[list[KOL], dict[str, str]]:
-    kols = await list_kols(db)
-    slugs = await build_kol_slug_map(kols)
-    return kols, slugs
+async def count_kols(
+    db: AsyncSession,
+    *,
+    region: str | None = None,
+    institution: str | None = None,
+    q: str | None = None,
+    new_only: bool = False,
+) -> int:
+    stmt = _apply_kol_filters(
+        select(func.count()).select_from(KOL),
+        region=region,
+        institution=institution,
+        q=q,
+        new_only=new_only,
+    )
+    return int((await db.execute(stmt)).scalar() or 0)
+
+
+async def region_facet_counts(
+    db: AsyncSession,
+    *,
+    region: str | None = None,
+    institution: str | None = None,
+    q: str | None = None,
+    new_only: bool = False,
+) -> dict[str, int]:
+    stmt = _apply_kol_filters(
+        select(KOL.region, func.count())
+        .where(KOL.region.isnot(None))
+        .group_by(KOL.region),
+        region=region,
+        institution=institution,
+        q=q,
+        new_only=new_only,
+    )
+    rows = (await db.execute(stmt)).all()
+    return {row[0]: int(row[1]) for row in rows}
+
+
+async def institution_facet_values(
+    db: AsyncSession,
+    *,
+    region: str | None = None,
+    institution: str | None = None,
+    q: str | None = None,
+    new_only: bool = False,
+) -> list[str]:
+    stmt = _apply_kol_filters(
+        select(KOL.institution)
+        .where(KOL.institution.isnot(None))
+        .distinct()
+        .order_by(KOL.institution.asc()),
+        region=region,
+        institution=institution,
+        q=q,
+        new_only=new_only,
+    )
+    return [row[0] for row in (await db.execute(stmt)).all()]
+
+
+async def get_kol_list_facets(
+    db: AsyncSession,
+    *,
+    region: str | None = None,
+    institution: str | None = None,
+    q: str | None = None,
+    new_only: bool = False,
+) -> KolListFacets:
+    filters = {
+        "region": region,
+        "institution": institution,
+        "q": q,
+        "new_only": new_only,
+    }
+    total, region_counts, institutions = await _gather_facets(db, **filters)
+    return KolListFacets(
+        total=total,
+        region_counts=region_counts,
+        institutions=institutions,
+    )
+
+
+async def _gather_facets(db: AsyncSession, **filters) -> tuple[int, dict[str, int], list[str]]:
+    from services.db_reads import gather_reads
+
+    total, region_counts, institutions = await gather_reads(
+        db,
+        lambda session: count_kols(session, **filters),
+        lambda session: region_facet_counts(session, **filters),
+        lambda session: institution_facet_values(session, **filters),
+    )
+    return total, region_counts, institutions
 
 
 async def get_kol_by_slug(db: AsyncSession, slug: str) -> tuple[KOL, str]:
-    kols, slugs = await load_slug_index(db)
-    for kol in kols:
-        if slugs.get(kol.id) == slug:
-            return kol, slug
-    raise HTTPException(status_code=404, detail="KOL not found")
+    kol = (
+        await db.execute(select(KOL).where(KOL.slug == slug))
+    ).scalar_one_or_none()
+    if kol is None:
+        raise HTTPException(status_code=404, detail="KOL not found")
+    return kol, slug
 
 
 async def shoot_stats_for_kols(
@@ -132,6 +272,10 @@ def build_region_facets(items: list[PublicKOL]) -> list[PublicKOLRegion]:
     for item in items:
         if item.region:
             counts[item.region] = counts.get(item.region, 0) + 1
+    return build_region_facets_from_counts(counts)
+
+
+def build_region_facets_from_counts(counts: dict[str, int]) -> list[PublicKOLRegion]:
     return [
         PublicKOLRegion(slug=r["slug"], label=r["label"], kol_count=counts[r["slug"]])
         for r in REGIONS
@@ -169,22 +313,24 @@ async def list_publications(
         HCPSignal.hcp_npi == hcp_npi,
         HCPSignal.signal_type == "publication",
     )
-    rows = list(
-        (
-            await db.execute(
-                select(HCPSignal)
-                .where(*base_filter)
-                .order_by(HCPSignal.observed_at.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-        ).scalars()
-    )
-    total = (
+    total_col = func.count().over().label("total")
+    rows = (
         await db.execute(
-            select(func.count()).select_from(HCPSignal).where(*base_filter)
+            select(HCPSignal, total_col)
+            .where(*base_filter)
+            .order_by(HCPSignal.observed_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
-    ).scalar() or 0
+    ).all()
 
-    items = [pub for row in rows if (pub := signal_to_publication(row)) is not None]
-    return PublicKOLPublicationList(items=items, total=int(total))
+    if not rows:
+        return PublicKOLPublicationList(items=[], total=0)
+
+    total = int(rows[0].total or 0)
+    items = [
+        pub
+        for row in rows
+        if (pub := signal_to_publication(row[0])) is not None
+    ]
+    return PublicKOLPublicationList(items=items, total=total)

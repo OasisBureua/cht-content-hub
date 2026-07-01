@@ -38,7 +38,10 @@ data "aws_caller_identity" "current" {}
 
 locals {
   resource_prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
-  log_retention   = contains(["prod", "platform"], var.environment) ? 365 : 7
+  log_retention   = coalesce(
+    var.log_retention_days,
+    contains(["prod", "platform"], var.environment) ? 365 : 7
+  )
   api_image_tag   = try(element(split(":", var.api_image), 1), "unknown")
 }
 

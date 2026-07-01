@@ -32,6 +32,7 @@ class KOL(Base):
         primary_key=True,
         default=lambda: str(uuid4())
     )
+    slug: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str | None] = mapped_column(String(100), nullable=True)  # e.g., "MD", "PhD"
     specialty: Mapped[str | None] = mapped_column(String(255), nullable=True)  # e.g., "Medical Oncology"

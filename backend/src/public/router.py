@@ -11,7 +11,6 @@ from database import get_db
 from public.deps import verify_public_api_key
 from public.limits import limiter
 from schemas.public import (
-    PublicKOLIntel,
     HCPUpsertRequest,
     HCPUpsertResponse,
     PublicKOL,
@@ -19,7 +18,8 @@ from schemas.public import (
     PublicKOLPublicationList,
 )
 from services import hcp_upsert, kol_enrichment, kol_queries
-from utils.kol_public import build_kol_slug_map
+from services.db_reads import gather_reads
+
 
 router = APIRouter(prefix="/api/public", tags=["public-kol"])
 
@@ -34,35 +34,55 @@ async def get_public_kols(
     institution: str | None = Query(default=None),
     q: str | None = Query(default=None, max_length=200),
     new_only: bool = Query(default=False),
+    include_intel: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> PublicKOLList:
-    kols = await kol_queries.list_kols(db, region=region, institution=institution, q=q)
-    if not kols:
+    filters = {
+        "region": region,
+        "institution": institution,
+        "q": q,
+        "new_only": new_only,
+    }
+
+    facets, kols = await gather_reads(
+        db,
+        lambda session: kol_queries.get_kol_list_facets(session, **filters),
+        lambda session: kol_queries.list_kols(
+            session, **filters, limit=limit, offset=offset
+        ),
+    )
+    if facets.total == 0:
         return PublicKOLList(items=[], total=0, regions=[], institutions=[])
 
-    slugs = await build_kol_slug_map(kols)
-    stats_by_id = await kol_queries.shoot_stats_for_kols(db, [k.id for k in kols])
+    kol_ids = [k.id for k in kols]
     npis = [k.hcp_npi for k in kols if k.hcp_npi]
-    intel_by_npi = await kol_enrichment.load_intel_for_npis(db, npis)
 
-    items: list[PublicKOL] = []
-    for kol in kols:
-        public = kol_queries.to_public_kol(
-            kol,
-            slugs[kol.id],
-            stats_by_id.get(kol.id, kol_queries.ShootStats()),
-            intel=intel_by_npi.get(kol.hcp_npi) if kol.hcp_npi else None,
+    if include_intel and npis:
+        stats_by_id, intel_by_npi = await gather_reads(
+            db,
+            lambda session: kol_queries.shoot_stats_for_kols(session, kol_ids),
+            lambda session: kol_enrichment.load_intel_for_npis(session, npis),
         )
-        if new_only and not public.is_new:
-            continue
-        items.append(public)
+    else:
+        stats_by_id = await kol_queries.shoot_stats_for_kols(db, kol_ids)
+        intel_by_npi = {}
+
+    items = [
+        kol_queries.to_public_kol(
+            kol,
+            kol.slug,
+            stats_by_id.get(kol.id, kol_queries.ShootStats()),
+            intel=intel_by_npi.get(kol.hcp_npi) if kol.hcp_npi and include_intel else None,
+        )
+        for kol in kols
+    ]
 
     return PublicKOLList(
-        items=items[offset : offset + limit],
-        total=len(items),
-        regions=kol_queries.build_region_facets(items),
-        institutions=kol_queries.collect_institutions(items),
+        items=items,
+        total=facets.total,
+        regions=kol_queries.build_region_facets_from_counts(facets.region_counts),
+        institutions=facets.institutions,
     )
 
 
@@ -73,13 +93,21 @@ async def get_public_kol_detail(
     request: Request,
     _api_key: Annotated[str, Depends(verify_public_api_key)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    include_intel: bool = Query(default=True),
 ) -> PublicKOL:
     kol, resolved_slug = await kol_queries.get_kol_by_slug(db, slug)
-    stats = await kol_queries.shoot_stats_for_kol(db, kol.id)
-    intel = None
-    if kol.hcp_npi:
-        intel_map = await kol_enrichment.load_intel_for_npis(db, [kol.hcp_npi])
+
+    if kol.hcp_npi and include_intel:
+        stats, intel_map = await gather_reads(
+            db,
+            lambda session: kol_queries.shoot_stats_for_kol(session, kol.id),
+            lambda session: kol_enrichment.load_intel_for_npis(session, [kol.hcp_npi]),
+        )
         intel = intel_map.get(kol.hcp_npi)
+    else:
+        stats = await kol_queries.shoot_stats_for_kol(db, kol.id)
+        intel = None
+
     return kol_queries.to_public_kol(kol, resolved_slug, stats, intel=intel)
 
 

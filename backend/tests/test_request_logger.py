@@ -27,9 +27,9 @@ async def test_request_id_echoed(http_client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_health_path_not_access_logged(http_client: AsyncClient, caplog):
+async def test_health_probe_not_access_logged(http_client: AsyncClient, caplog):
     caplog.set_level(logging.INFO, logger="contenthub.access")
-    await http_client.get("/health")
+    await http_client.get("/health/live")
     access_logs = [r for r in caplog.records if r.name == "contenthub.access"]
     assert access_logs == []
 

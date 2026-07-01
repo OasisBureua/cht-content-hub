@@ -55,7 +55,7 @@ def kol_to_public(
     )
 
 
-async def build_kol_slug_map(kols: list[KOL]) -> dict[str, str]:
+def build_kol_slug_map(kols: list[KOL]) -> dict[str, str]:
     slug_counts: dict[str, int] = {}
     out: dict[str, str] = {}
     for kol in sorted(kols, key=lambda k: k.name):

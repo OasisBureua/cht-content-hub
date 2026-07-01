@@ -22,6 +22,7 @@ rds_engine_version    = "15.17"
 rds_allocated_storage = 20
 rds_multi_az          = false
 rds_backup_retention  = 7
+log_retention_days    = 7
 
 api_task_cpu      = 512
 api_task_memory   = 1024

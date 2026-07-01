@@ -39,6 +39,7 @@ from models.kol import KOL, KOLGroup, KOLGroupMember  # noqa: E402
 from models.project import Project  # noqa: E402
 from models.shoot import Shoot  # noqa: E402
 from schema import create_test_schema  # noqa: E402
+from utils.kol_public import kol_slug  # noqa: E402
 
 API_KEY = os.environ["PUBLIC_API_KEY"]
 
@@ -110,6 +111,7 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
 @pytest.fixture
 async def sample_kol(db_session: AsyncSession) -> KOL:
     kol = KOL(
+        slug=kol_slug("Dr. Jane Smith"),
         name="Dr. Jane Smith",
         title="MD",
         specialty="Medical Oncology",
@@ -126,6 +128,7 @@ async def kol_with_shoot(db_session: AsyncSession) -> KOL:
     client = Client(name="Test Pharma", slug="test-pharma")
     project = Project(client=client, name="Test Drug", code="TD01")
     kol = KOL(
+        slug=kol_slug("Dr. Jason Mouabbi"),
         name="Dr. Jason Mouabbi",
         specialty="Medical Oncology",
         institution="MD Anderson",
@@ -151,6 +154,7 @@ async def kol_with_publications(db_session: AsyncSession) -> KOL:
     npi = "1234567890"
     hcp = HCP(npi=npi, first_name="Virginia", last_name="Kaklamani")
     kol = KOL(
+        slug=kol_slug("Dr. Virginia Kaklamani"),
         name="Dr. Virginia Kaklamani",
         institution="UT Southwestern",
         region="texas",

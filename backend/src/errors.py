@@ -6,12 +6,15 @@ Matches legacy MediaHub public API shape (chm-mediahub/backend/legacy/main.py):
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+
+logger = logging.getLogger("contenthub.api")
 
 _ERROR_CODE_MAP: dict[int, str] = {
     401: "AUTH_INVALID_KEY",
@@ -56,6 +59,28 @@ def json_error(
     )
 
 
+def _log_public_api_error(
+    request: Request,
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    request_id: str | None,
+) -> None:
+    extra = {
+        "request_id": request_id,
+        "method": request.method,
+        "path": request.url.path,
+        "query": request.url.query or None,
+        "status_code": status_code,
+        "error_code": code,
+    }
+    if status_code >= 500:
+        logger.error("public api error: %s", message, extra=extra)
+    elif status_code >= 400:
+        logger.warning("public api error: %s", message, extra=extra)
+
+
 def _stringify_detail(detail: Any) -> str:
     if isinstance(detail, str):
         return detail
@@ -84,11 +109,17 @@ def format_validation_errors(exc: RequestValidationError) -> str:
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     if request.url.path.startswith("/api/public"):
-        return json_error(
-            exc.status_code,
-            _stringify_detail(exc.detail),
-            request_id=_request_id(request),
+        message = _stringify_detail(exc.detail)
+        code = _ERROR_CODE_MAP.get(exc.status_code, f"HTTP_{exc.status_code}")
+        req_id = _request_id(request)
+        _log_public_api_error(
+            request,
+            status_code=exc.status_code,
+            code=code,
+            message=message,
+            request_id=req_id,
         )
+        return json_error(exc.status_code, message, request_id=req_id)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
@@ -96,11 +127,16 @@ async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     if request.url.path.startswith("/api/public"):
-        return json_error(
-            422,
-            format_validation_errors(exc),
-            request_id=_request_id(request),
+        message = format_validation_errors(exc)
+        req_id = _request_id(request)
+        _log_public_api_error(
+            request,
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message=message,
+            request_id=req_id,
         )
+        return json_error(422, message, request_id=req_id)
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
@@ -108,11 +144,40 @@ async def rate_limit_exception_handler(
     request: Request, exc: RateLimitExceeded
 ) -> JSONResponse:
     if request.url.path.startswith("/api/public"):
-        return json_error(429, "Rate limit exceeded", request_id=_request_id(request))
+        req_id = _request_id(request)
+        _log_public_api_error(
+            request,
+            status_code=429,
+            code="RATE_LIMITED",
+            message="Rate limit exceeded",
+            request_id=req_id,
+        )
+        return json_error(429, "Rate limit exceeded", request_id=req_id)
     return json_error(429, "Rate limit exceeded", request_id=_request_id(request))
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    req_id = _request_id(request)
+    logger.exception(
+        "unhandled exception",
+        extra={
+            "request_id": req_id,
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
+    if request.url.path.startswith("/api/public"):
+        return json_error(
+            500,
+            "Internal server error",
+            code="INTERNAL_ERROR",
+            request_id=req_id,
+        )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)

@@ -11,7 +11,6 @@ from hcp_intel.models import HCPSignal
 from models.kol import KOL
 from schemas.public import PublicKOL
 from services import kol_queries
-from utils.kol_public import build_kol_slug_map
 
 
 def test_build_region_facets():
@@ -130,8 +129,7 @@ async def test_list_kols_filters(db_session, sample_kol, kol_with_shoot):
 
 @pytest.mark.asyncio
 async def test_get_kol_by_slug(db_session, sample_kol):
-    slugs = await build_kol_slug_map([sample_kol])
-    slug = slugs[sample_kol.id]
+    slug = sample_kol.slug
     kol, resolved = await kol_queries.get_kol_by_slug(db_session, slug)
     assert kol.id == sample_kol.id
     assert resolved == slug
