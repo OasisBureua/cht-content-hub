@@ -1,0 +1,23 @@
+# Full stack compose — enable api/worker services after backend code lands.
+# For now, use root docker-compose.yml (Postgres only).
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: contenthub-postgres
+    environment:
+      POSTGRES_USER: contenthub
+      POSTGRES_PASSWORD: contenthub
+      POSTGRES_DB: contenthub_producer
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contenthub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

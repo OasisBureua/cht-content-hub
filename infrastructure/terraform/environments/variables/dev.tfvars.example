@@ -1,0 +1,49 @@
+# Content Hub — dev.tfvars.example
+# Copy: cp dev.tfvars.example dev.tfvars
+# See README.md in this folder for full setup steps.
+
+project     = "contenthub"
+environment = "dev"
+deploy_mode = "cht-vpc"
+
+api_domain          = "devhub.communityhealth.media"
+acm_certificate_arn = ""
+
+# From cht-platform-tool Terraform outputs (shared VPC; own contenthub-dev-cluster)
+vpc_id = "vpc-xxxxxxxx"
+private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
+
+api_image    = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:dev-latest"
+worker_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-worker:dev-latest"
+
+rds_instance_class    = "db.t4g.small"
+rds_engine_version    = "15.17"
+rds_allocated_storage = 20
+rds_multi_az          = false
+rds_backup_retention  = 7
+log_retention_days    = 7
+
+api_task_cpu      = 512
+api_task_memory   = 1024
+api_desired_count = 1
+api_min_capacity  = 1
+api_max_capacity  = 4
+
+worker_task_cpu      = 512
+worker_task_memory   = 1024
+worker_desired_count = 0
+
+# Sync Lambdas — build artifact first: ./scripts/build-sync-lambda.sh
+# Disabled by default on dev until HCP intel handlers are complete (Option A).
+sync_jobs_enabled = {
+  cache_clear         = false
+  hcp_intel_poll      = false
+  openalex_backfill   = false
+  kol_hcp_matcher     = false
+  post_tagging        = false
+  playlist_doctor_tagger = false
+}
+# sync_lambda_package_path = "/absolute/path/to/dist/sync-lambda.zip"
+
+cht_cache_clear_url = "https://<chm-backend-dev-host>/internal/cache/catalog/clear"
