@@ -52,4 +52,16 @@ app.include_router(health_router)
 app.include_router(public_router)
 
 
+@app.get("/", include_in_schema=False)
+async def root() -> dict[str, str]:
+    """Landing page for bare hostname hits (browser, scanners, misconfigured clients)."""
+    return {
+        "service": "contenthub-api",
+        "status": "ok",
+        "health": "/health",
+        "public_api": "/api/public/kols",
+        "docs": "/docs",
+    }
+
+
 __all__ = ["app"]
