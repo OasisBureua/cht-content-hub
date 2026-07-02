@@ -5,6 +5,21 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class PublicKOLAIBrief(BaseModel):
+    """Three-section HCP AI brief consumed by the CHT KOL profile Background tab.
+
+    MediaHub's brief generator emits a single markdown blob with three fixed
+    `## Who they are / ## What they focus on / ## CHM context` headings. The
+    producer parses that markdown into these three fields so the frontend can
+    render each section under its own label instead of dumping the raw markdown
+    into a single paragraph.
+    """
+
+    whoTheyAre: str | None = None
+    focus: str | None = None
+    chmContext: str | None = None
+
+
 class PublicKOLIntel(BaseModel):
     """Optional HCP Intel overlay — mirrors CHT KolIntel subset for /kol-network."""
 
@@ -15,7 +30,7 @@ class PublicKOLIntel(BaseModel):
     affiliation: str | None = None
     publications_approx: int | None = None
     open_payments: dict | None = None
-    ai_brief: dict | None = None
+    ai_brief: PublicKOLAIBrief | None = None
 
 
 class PublicKOL(BaseModel):
