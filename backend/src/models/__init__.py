@@ -6,7 +6,7 @@ from models.client import Client
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.project import Project
 from models.shoot import Shoot
-from models.user import User
+from models.campaign import Campaign, CampaignPlatformData, ReportTemplate
 
 # HCP Intel — full package for migrations + Step 4+ ingestion
 from hcp_intel.models import (  # noqa: F401

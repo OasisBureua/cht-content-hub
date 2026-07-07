@@ -107,9 +107,29 @@ def format_validation_errors(exc: RequestValidationError) -> str:
     return _stringify_detail(exc.errors())
 
 
+def _nestjs_error(status_code: int, message: str) -> JSONResponse:
+    labels = {
+        400: "Bad Request",
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Not Found",
+        422: "Unprocessable Entity",
+        429: "Too Many Requests",
+        500: "Internal Server Error",
+    }
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "statusCode": status_code,
+            "message": message,
+            "error": labels.get(status_code, "Error"),
+        },
+    )
+
+
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    message = _stringify_detail(exc.detail)
     if request.url.path.startswith("/api/public"):
-        message = _stringify_detail(exc.detail)
         code = _ERROR_CODE_MAP.get(exc.status_code, f"HTTP_{exc.status_code}")
         req_id = _request_id(request)
         _log_public_api_error(
@@ -120,14 +140,16 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             request_id=req_id,
         )
         return json_error(exc.status_code, message, request_id=req_id)
+    if request.url.path.startswith("/api/admin"):
+        return _nestjs_error(exc.status_code, message)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    message = format_validation_errors(exc)
     if request.url.path.startswith("/api/public"):
-        message = format_validation_errors(exc)
         req_id = _request_id(request)
         _log_public_api_error(
             request,
@@ -137,6 +159,8 @@ async def validation_exception_handler(
             request_id=req_id,
         )
         return json_error(422, message, request_id=req_id)
+    if request.url.path.startswith("/api/admin"):
+        return _nestjs_error(422, message)
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
@@ -173,6 +197,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
             code="INTERNAL_ERROR",
             request_id=req_id,
         )
+    if request.url.path.startswith("/api/admin"):
+        return _nestjs_error(500, "Internal server error")
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 

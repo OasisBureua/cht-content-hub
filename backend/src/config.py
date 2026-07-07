@@ -35,6 +35,15 @@ class Settings(BaseSettings):
 
     # CHT server-to-server auth for /api/public/*
     public_api_key: str = "change-this-in-production"
+    # CHT proxy auth for /api/admin/* (defaults to public key in dev)
+    admin_api_key: str = Field(
+        default="",
+        validation_alias="ADMIN_API_KEY",
+    )
+
+    @property
+    def resolved_admin_api_key(self) -> str:
+        return self.admin_api_key or self.public_api_key
 
 
 @lru_cache
