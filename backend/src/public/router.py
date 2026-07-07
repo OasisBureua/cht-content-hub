@@ -1,13 +1,15 @@
-"""Public KOL network API."""
+"""Public KOL network + playlist API."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models.playlist_tag import PlaylistTag
 from public.deps import verify_public_api_key
 from public.limits import limiter
 from schemas.public import (
@@ -16,6 +18,8 @@ from schemas.public import (
     PublicKOL,
     PublicKOLList,
     PublicKOLPublicationList,
+    PublicPlaylistTag,
+    PublicPlaylistTagList,
 )
 from services import hcp_upsert, kol_enrichment, kol_queries
 from services.db_reads import gather_reads
@@ -138,3 +142,110 @@ async def post_hcp_upsert(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> HCPUpsertResponse:
     return await hcp_upsert.upsert_hcp(db, payload)
+
+
+@router.get("/playlists", response_model=PublicPlaylistTagList)
+@limiter.limit("100/minute")
+async def get_public_playlists(
+    request: Request,
+    response: Response,
+    _api_key: Annotated[str, Depends(verify_public_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tag: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by namespaced tags (comma-separated, AND logic). "
+            "Same vocabulary as clip tags: biomarker:HER2+, drug:T-DXd, etc. "
+            "Returns playlists whose `tags` array contains ALL of the given tags. "
+            "Example: ?tag=biomarker:HER2+,topic:CNS"
+        ),
+    ),
+    lane: Optional[str] = Query(
+        None,
+        pattern="^(biomarker|drug|trial|doctor_pair|mixed|archive)$",
+        description=(
+            "Filter by editorial lane. "
+            "Allowed values: biomarker | drug | trial | doctor_pair | mixed | archive. "
+            "Use to surface 'all biomarker-lane playlists' or 'all doctor_pair playlists' "
+            "without filtering on a specific tag."
+        ),
+    ),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> PublicPlaylistTagList:
+    """List curator-tagged YouTube playlists.
+
+    Returns rows from the `playlist_tags` overlay table. Only playlists that
+    have been explicitly tagged by a curator appear here — untagged
+    YouTube playlists are not in this table. Powers CHT's biomarker-row
+    queries (replaces the brittle frontend `_generated-catalog-playlists.json`
+    fuzzy-title-match approach).
+
+    The full playlist metadata (title, description, video_count) is NOT
+    returned by this endpoint. Fetch it separately from the YouTube Data
+    API by playlist ID, then join with these tags client-side.
+
+    Pagination: returns up to `limit` items starting at `offset`.
+    `X-Total-Count` response header reflects the unpaginated count.
+    """
+    query = select(PlaylistTag)
+
+    if lane:
+        query = query.where(PlaylistTag.lane == lane)
+
+    tags_list = (
+        [t.strip() for t in tag.split(",") if t.strip()] if tag else []
+    )
+
+    # Postgres path: use ARRAY .any() for efficient DB-side filtering.
+    # SQLite (tests) path: no ARRAY operator support — load all matches
+    # against `lane`, then filter tags in Python. Volume in prod queries
+    # is capped by `limit` (max 200); test datasets are tiny.
+    dialect_name = db.bind.dialect.name if db.bind else "postgresql"
+
+    if tags_list and dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import ARRAY
+        from sqlalchemy import cast, String as SAString
+        # Cast the StringArray column to postgres ARRAY for .any() access.
+        for t in tags_list:
+            query = query.where(
+                cast(PlaylistTag.tags, ARRAY(SAString)).any(t)
+            )
+
+    # Order: lane first (groups same-lane playlists), then most-recently-updated
+    # so newly-curated entries surface to the top.
+    query = query.order_by(PlaylistTag.lane.asc(), PlaylistTag.updated_at.desc())
+
+    if tags_list and dialect_name != "postgresql":
+        # SQLite fallback: run without tag filter, filter in Python.
+        all_rows = list((await db.execute(query)).scalars())
+        matching = [
+            r for r in all_rows
+            if all(t in (r.tags or []) for t in tags_list)
+        ]
+        total = len(matching)
+        rows = matching[offset : offset + limit]
+    else:
+        # Count before pagination (for X-Total-Count)
+        count_query = select(func.count()).select_from(query.subquery())
+        total = (await db.execute(count_query)).scalar_one()
+
+        rows = list(
+            (
+                await db.execute(query.limit(limit).offset(offset))
+            ).scalars()
+        )
+
+    response.headers["X-Total-Count"] = str(total)
+
+    return PublicPlaylistTagList(
+        items=[
+            PublicPlaylistTag(
+                youtube_playlist_id=r.youtube_playlist_id,
+                tags=r.tags or [],
+                lane=r.lane,
+            )
+            for r in rows
+        ],
+        total=total,
+    )

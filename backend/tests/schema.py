@@ -16,6 +16,7 @@ from models.campaign import (
 )
 from models.client import Client
 from models.kol import KOL, KOLGroup, KOLGroupMember
+from models.playlist_tag import PlaylistTag
 from models.project import Project
 from models.shoot import Shoot
 
@@ -31,6 +32,7 @@ ORM_TABLES = [
     KOL.__table__,
     KOLGroup.__table__,
     KOLGroupMember.__table__,
+    PlaylistTag.__table__,
     Shoot.__table__,
 ]
 

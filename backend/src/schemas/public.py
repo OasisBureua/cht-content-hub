@@ -77,6 +77,30 @@ class PublicKOLPublicationList(BaseModel):
     total: int
 
 
+class PublicPlaylistTag(BaseModel):
+    """Curator-set tag overlay for a YouTube playlist.
+
+    Returned by /api/public/playlists. The full playlist metadata (title,
+    description, videos) lives in YouTube — fetch that separately via the
+    YouTube Data API. This row is purely the editorial overlay: "this
+    playlist is intended to be a biomarker:HER2+ playlist."
+
+    CHT uses this to render biomarker rows by querying the playlist_tags
+    table instead of the brittle frontend JSON file that fuzzy-matched
+    playlist titles. CHT joins these tags with YouTube's actual playlist
+    metadata client-side.
+    """
+
+    youtube_playlist_id: str
+    tags: list[str]
+    lane: str | None
+
+
+class PublicPlaylistTagList(BaseModel):
+    items: list[PublicPlaylistTag]
+    total: int
+
+
 class HCPUpsertRequest(BaseModel):
     """CHT registration sync — snake_case body matches mediahub-sync.service.ts."""
 
