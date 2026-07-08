@@ -10,10 +10,7 @@ on:
       - 'worker/**'
       - 'infrastructure/**'
       - 'scripts/**'
-      - '.github/workflows/deploy-dev.yml'
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
+      - '.github/workflows/**'
 
 concurrency:
   group: deploy-contenthub-dev
