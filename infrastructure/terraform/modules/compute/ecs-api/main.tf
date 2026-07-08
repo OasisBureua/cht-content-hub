@@ -1,5 +1,31 @@
 locals {
   prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
+
+  app_secret_env = [
+    { name = "PUBLIC_API_KEY", key = "public_api_key" },
+    { name = "WEBHOOK_API_KEY", key = "webhook_api_key" },
+    { name = "JWT_SECRET", key = "jwt_secret" },
+    { name = "INTERNAL_CACHE_SECRET", key = "internal_cache_secret" },
+    { name = "OPENAI_API_KEY", key = "openai_api_key" },
+    { name = "ANTHROPIC_API_KEY", key = "anthropic_api_key" },
+    { name = "LINKEDIN_CLIENT_ID", key = "linkedin_client_id" },
+    { name = "LINKEDIN_CLIENT_SECRET", key = "linkedin_client_secret" },
+    { name = "LINKEDIN_REDIRECT_URI", key = "linkedin_redirect_uri" },
+    { name = "LINKEDIN_SCOPES", key = "linkedin_scopes" },
+    { name = "LINKEDIN_ORG_URN", key = "linkedin_org_urn" },
+    { name = "LINKEDIN_AD_ACCOUNT_ID", key = "linkedin_ad_account_id" },
+    { name = "LINKEDIN_ADS_ACCESS_TOKEN", key = "linkedin_ads_access_token" },
+    { name = "LINKEDIN_ADS_CLIENT_ID", key = "linkedin_ads_client_id" },
+    { name = "LINKEDIN_ADS_CLIENT_SECRET", key = "linkedin_ads_client_secret" },
+    { name = "LINKEDIN_ADS_REDIRECT_URI", key = "linkedin_ads_redirect_uri" },
+    { name = "LINKEDIN_ADS_SCOPES", key = "linkedin_ads_scopes" },
+    { name = "YOUTUBE_API_KEY", key = "youtube_api_key" },
+    { name = "YOUTUBE_CHANNEL_ID", key = "youtube_channel_id" },
+    { name = "YOUTUBE_CHANNEL_HANDLE", key = "youtube_channel_handle" },
+    { name = "X_BEARER_TOKEN", key = "x_bearer_token" },
+    { name = "X_ACCOUNT_HANDLE", key = "x_account_handle" },
+    { name = "WORDPRESS_WEBHOOK_SECRET", key = "wordpress_webhook_secret" },
+  ]
 }
 
 resource "aws_security_group" "api" {
@@ -53,12 +79,17 @@ resource "aws_ecs_task_definition" "api" {
         ],
         var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : []
       )
-      secrets = [
-        { name = "DATABASE_URL", valueFrom = "${var.database_secret_arn}:url::" },
-        { name = "PUBLIC_API_KEY", valueFrom = "${var.app_secrets_arn}:public_api_key::" },
-        { name = "WEBHOOK_API_KEY", valueFrom = "${var.app_secrets_arn}:webhook_api_key::" },
-        { name = "JWT_SECRET", valueFrom = "${var.app_secrets_arn}:jwt_secret::" },
-      ]
+      secrets = concat(
+        [
+          { name = "DATABASE_URL", valueFrom = "${var.database_secret_arn}:url::" },
+        ],
+        [
+          for item in local.app_secret_env : {
+            name      = item.name
+            valueFrom = "${var.app_secrets_arn}:${item.key}::"
+          }
+        ],
+      )
       logConfiguration = {
         logDriver = "awslogs"
         options = {
