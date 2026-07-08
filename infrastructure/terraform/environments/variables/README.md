@@ -3,6 +3,7 @@
 | File | Purpose |
 |------|---------|
 | `dev.tfvars.example` | Template — commit to git |
+| `dev.github.tfvars` | Non-secret dev infra for GitHub Actions — commit to git |
 | `prod.tfvars.example` | Template — commit to git |
 | `dev.tfvars` | Your dev values — **gitignored** |
 | `prod.tfvars` | Your prod values — **gitignored** |

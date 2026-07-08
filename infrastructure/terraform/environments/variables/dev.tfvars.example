@@ -57,3 +57,12 @@ sync_jobs_enabled = {
 # sync_lambda_package_path = "/absolute/path/to/dist/sync-lambda.zip"
 
 cht_cache_clear_url = "https://<chm-backend-dev-host>/internal/cache/catalog/clear"
+
+# ── Secrets (do NOT commit — use TF_VAR_* or GitHub Environment secrets) ─────
+# export TF_VAR_public_api_key="..."
+# export TF_VAR_webhook_api_key="..."
+# export TF_VAR_jwt_secret="..."
+# export TF_VAR_internal_cache_secret="..."
+#
+# GitHub Actions: see .github/CI_CD.md (Environment "development")
+# CI uses dev.github.tfvars + secrets above (no secrets in repo)
