@@ -6,7 +6,7 @@
 |----------|---------|---------|
 | `pr-validation.yml` | Pull requests | Terraform validate |
 | `branch-policy.yml` | PRs → `main` | Require head branch `release/*` (and based on `main`) |
-| `deploy-dev.yml` | Push to `main` (app/infra paths), manual | Build images, semver tag, Terraform apply dev |
+| `deploy-dev.yml` | Push to `develop` or `feature/**` (app/infra paths), manual | Build images, semver tag, Terraform apply dev |
 
 Docs-only changes under `docs/**` do not trigger dev deploy.
 
@@ -75,7 +75,7 @@ release/vX.Y.Z  (cut from main → prod/platform deploy)
  PR release/* → main  (after prod validated)
 ```
 
-For Content Hub dev deploys: merge to `main` triggers `deploy-dev.yml` (or run manually).
+For Content Hub dev deploys: push to `develop` or `feature/**` triggers `deploy-dev.yml` (or run manually).
 
 ### 4. Optional — block direct pushes to main
 
