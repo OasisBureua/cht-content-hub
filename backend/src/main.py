@@ -19,6 +19,7 @@ from fastapi import FastAPI  # noqa: E402
 from errors import register_error_handlers  # noqa: E402
 from health.router import router as health_router  # noqa: E402
 from public.limits import limiter  # noqa: E402
+from admin.router import router as admin_router  # noqa: E402
 from public.router import router as public_router  # noqa: E402
 from request_logger import RequestLoggerMiddleware  # noqa: E402
 from slowapi.middleware import SlowAPIMiddleware  # noqa: E402
@@ -50,6 +51,21 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.include_router(health_router)
 app.include_router(public_router)
+app.include_router(admin_router)
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> dict[str, str]:
+    """Landing page for bare hostname hits (browser, scanners, misconfigured clients)."""
+    return {
+        "service": "contenthub-api",
+        "status": "ok",
+        "health": "/health",
+        "public_api": "/api/public/kols",
+        "admin_api": "/api/admin/campaigns",
+        "admin_docs": "/docs#/admin-campaigns",
+        "docs": "/docs",
+    }
 
 
 __all__ = ["app"]

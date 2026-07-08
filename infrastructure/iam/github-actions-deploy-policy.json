@@ -8,7 +8,15 @@
         "iam:CreateUser",
         "iam:DeleteUser",
         "iam:CreateAccessKey",
-        "iam:DeleteAccessKey"
+        "iam:DeleteAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:CreateLoginProfile",
+        "iam:UpdateLoginProfile",
+        "iam:DeleteLoginProfile",
+        "iam:AttachUserPolicy",
+        "iam:DetachUserPolicy",
+        "iam:PutUserPolicy",
+        "iam:DeleteUserPolicy"
       ],
       "Resource": "*"
     },
@@ -24,6 +32,7 @@
       "Action": [
         "ecr:BatchCheckLayerAvailability",
         "ecr:CompleteLayerUpload",
+        "ecr:CreateRepository",
         "ecr:InitiateLayerUpload",
         "ecr:PutImage",
         "ecr:UploadLayerPart",
@@ -31,38 +40,109 @@
         "ecr:GetDownloadUrlForLayer",
         "ecr:DescribeRepositories",
         "ecr:ListImages",
-        "ecr:CreateRepository"
+        "ecr:DescribeImages"
       ],
-      "Resource": "arn:aws:ecr:*:ACCOUNT_ID:repository/contenthub-*"
+      "Resource": [
+        "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-api",
+        "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-worker"
+      ]
     },
     {
-      "Sid": "TerraformState",
+      "Sid": "TerraformStateS3",
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration"
+      ],
       "Resource": [
         "arn:aws:s3:::cht-contenthub-terraform-state",
         "arn:aws:s3:::cht-contenthub-terraform-state/*"
       ]
     },
     {
-      "Sid": "ContentHubDeploy",
+      "Sid": "ContentHubS3Assets",
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::contenthub-*",
+        "arn:aws:s3:::contenthub-*/*"
+      ]
+    },
+    {
+      "Sid": "ContentHubIAMRoles",
       "Effect": "Allow",
       "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:UpdateRole",
+        "iam:ListInstanceProfilesForRole",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:TagPolicy",
+        "iam:UntagPolicy",
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::233636046512:role/contenthub-*",
+        "arn:aws:iam::233636046512:policy/contenthub-*",
+        "arn:aws:iam::233636046512:policy/GitHubActions-ContentHub-Deploy"
+      ]
+    },
+    {
+      "Sid": "TerraformInfrastructure",
+      "Effect": "Allow",
+      "Action": [
+        "acm:Describe*",
+        "acm:Get*",
+        "acm:List*",
+        "application-autoscaling:*",
+        "cloudwatch:*",
+        "ec2:*",
         "ecs:*",
         "elasticloadbalancing:*",
-        "rds:*",
-        "elasticache:*",
-        "secretsmanager:*",
+        "events:*",
+        "lambda:*",
         "logs:*",
-        "iam:PassRole",
-        "iam:GetRole"
+        "rds:*",
+        "route53:*",
+        "secretsmanager:*",
+        "sns:*",
+        "sqs:*",
+        "wafv2:*",
+        "sts:GetCallerIdentity",
+        "tag:GetResources"
       ],
-      "Resource": "*",
-      "Condition": {
-        "StringLike": {
-          "aws:ResourceTag/Project": "contenthub*"
-        }
-      }
+      "Resource": "*"
+    },
+    {
+      "Sid": "DeployLogsRead",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:233636046512:log-group:/ecs/contenthub*"
     }
   ]
 }

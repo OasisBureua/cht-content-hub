@@ -1,22 +1,37 @@
-# Content Hub — local build & push to ECR (until GitHub Actions)
+# Content Hub — build, push, deploy
 
-## Quick start (dev)
+## Quick start (dev, local)
 
 ```bash
-./scripts/build-images.sh dev-latest
-./scripts/build-sync-lambda.sh dev-latest
-./scripts/push-images.sh dev-latest us-east-1 dev
+export TF_VAR_public_api_key="..."
+export TF_VAR_webhook_api_key="..."
+export TF_VAR_jwt_secret="..."
+export TF_VAR_internal_cache_secret="..."
+
+TAG=$(./scripts/next-dev-image-tag.sh)
+./scripts/build-images.sh "$TAG"
+./scripts/push-images.sh "$TAG" us-east-1 dev
 # Set api_image / worker_image in dev.tfvars from push output, then:
 ./scripts/deploy-primary.sh dev
-./scripts/smoke.sh https://devhub.communityhealth.media
+./scripts/smoke.sh https://devhub.communityhealth.media   # from CHT/VPC only if ALB locked down
 ```
 
-Requires: Docker, AWS CLI credentials with ECR push access.
+## GitHub Actions (preferred for dev)
+
+See [.github/CI_CD.md](../.github/CI_CD.md) — **Deploy to Development** workflow:
+
+- Semver tags `1.0.0`, `1.0.1`, … via `next-dev-image-tag.sh`
+- Secrets in GitHub Environment **development** (same as local `TF_VAR_*`)
+- Infra from committed `dev.github.tfvars`
+
+Requires: Docker, AWS CLI credentials with ECR push access (local only).
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
+| `next-dev-image-tag.sh [REPO] [REGION]` | Next semver ECR tag (1.0.0 → 1.0.1 → …) |
+| `verify-github-env-secrets.sh development` | Fail fast if GitHub secrets missing |
 | `build-images.sh [VERSION]` | Build `contenthub-api` + `contenthub-worker` locally |
 | `build-sync-lambda.sh [VERSION]` | Package sync jobs → `dist/sync-lambda.zip` (dev + prod) |
 | `push-images.sh [VERSION] [REGION] [ENV]` | Push to ECR; creates repos if missing |
@@ -26,12 +41,13 @@ Requires: Docker, AWS CLI credentials with ECR push access.
 
 ## Image tags
 
-| ENV arg | Rolling ECR tag | tfvars file |
-|---------|-----------------|-------------|
-| `dev` | `dev-latest` | `dev.tfvars` |
-| `prod` | `prod-latest` | `prod.tfvars` |
+| Deploy path | Tag scheme | tfvars |
+|-------------|------------|--------|
+| **GitHub Actions dev** | Semver `1.0.0`, `1.0.1`, … + `dev-latest` | `dev.github.tfvars` |
+| **Local dev** | Any tag + `dev-latest` rolling | `dev.tfvars` |
+| **Prod** | `prod-latest` + immutable tag | `prod.tfvars` |
 
-`VERSION` is also pushed as an immutable tag (e.g. git SHA) for traceability.
+Legacy tags (`v0.0.9`, sha tags) are ignored by `next-dev-image-tag.sh`.
 
 ## Dockerfiles
 

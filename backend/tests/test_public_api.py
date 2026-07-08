@@ -9,6 +9,15 @@ from conftest import API_KEY, api_headers
 
 
 @pytest.mark.asyncio
+async def test_root(http_client: AsyncClient):
+    response = await http_client.get("/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service"] == "contenthub-api"
+    assert body["public_api"] == "/api/public/kols"
+
+
+@pytest.mark.asyncio
 async def test_health(client: AsyncClient):
     response = await client.get("/health")
     assert response.status_code == 200

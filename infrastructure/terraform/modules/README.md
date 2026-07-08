@@ -17,7 +17,8 @@ modules/
 │   └── rds/                 # Content Hub Postgres (separate from CHT)
 ├── security/
 │   ├── iam/
-│   └── secrets-manager/
+│   ├── secrets-manager/
+│   └── waf-alb/             # Regional WAF on API ALB (dev/prod optional)
 └── storage/ messaging/ …    # Post-MVP
 ```
 

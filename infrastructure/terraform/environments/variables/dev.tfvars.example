@@ -14,6 +14,16 @@ vpc_id = "vpc-xxxxxxxx"
 private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
 
+# CHT dev backend ECS SG — terraform output backend_security_group_id (cht-platform-tool us-east-1)
+cht_backend_security_group_id = "sg-xxxxxxxx"
+# CHT dev NAT egress — terraform output nat_gateway_public_ips (or bare IPs; /32 added automatically)
+cht_nat_gateway_cidr_blocks = [
+  "18.233.236.119/32",
+  "44.223.243.240/32",
+]
+alb_allow_public_ingress      = false
+enable_waf                    = true
+
 api_image    = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:dev-latest"
 worker_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-worker:dev-latest"
 
@@ -47,3 +57,12 @@ sync_jobs_enabled = {
 # sync_lambda_package_path = "/absolute/path/to/dist/sync-lambda.zip"
 
 cht_cache_clear_url = "https://<chm-backend-dev-host>/internal/cache/catalog/clear"
+
+# ── Secrets (do NOT commit — use TF_VAR_* or GitHub Environment secrets) ─────
+# export TF_VAR_public_api_key="..."
+# export TF_VAR_webhook_api_key="..."
+# export TF_VAR_jwt_secret="..."
+# export TF_VAR_internal_cache_secret="..."
+#
+# GitHub Actions: see .github/CI_CD.md (Environment "development")
+# CI uses dev.github.tfvars + secrets above (no secrets in repo)

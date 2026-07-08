@@ -7,12 +7,24 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from database import Base
 from hcp_intel.models import HCP
+from models.campaign import (
+    Campaign,
+    CampaignPlatformData,
+    IntegrationSetting,
+    PlatformSyncRun,
+    ReportTemplate,
+)
 from models.client import Client
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.project import Project
 from models.shoot import Shoot
 
 ORM_TABLES = [
+    ReportTemplate.__table__,
+    Campaign.__table__,
+    CampaignPlatformData.__table__,
+    PlatformSyncRun.__table__,
+    IntegrationSetting.__table__,
     Client.__table__,
     Project.__table__,
     HCP.__table__,
@@ -22,7 +34,6 @@ ORM_TABLES = [
     Shoot.__table__,
 ]
 
-# Avoid feed_items FK chain from the full hcp_intel model graph.
 _HCP_SIGNALS_DDL = """
 CREATE TABLE IF NOT EXISTS hcp_signals (
     id VARCHAR(36) PRIMARY KEY,

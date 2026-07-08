@@ -112,6 +112,21 @@ module "alb_api" {
   subnet_ids      = var.public_subnet_ids
   certificate_arn = var.acm_certificate_arn
   api_domain      = var.api_domain
+
+  allow_public_ingress = var.alb_allow_public_ingress
+  allowed_ingress_security_group_ids = compact([
+    var.cht_backend_security_group_id,
+  ])
+  allowed_ingress_cidr_blocks = var.cht_nat_gateway_cidr_blocks
+}
+
+module "waf_alb" {
+  count  = var.enable_waf ? 1 : 0
+  source = "../../modules/security/waf-alb"
+
+  project     = var.project
+  environment = var.environment
+  alb_arn     = module.alb_api.alb_arn
 }
 
 module "route53_api" {

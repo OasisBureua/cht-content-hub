@@ -47,8 +47,36 @@ variable "acm_certificate_arn" {
 # Deprecated — CHT uses public URL; kept optional for future tightening
 variable "cht_backend_security_group_id" {
   type        = string
-  description = "Optional — not used by public ALB; document for network reviews"
+  description = "CHT backend ECS security group — ALB accepts HTTPS/HTTP from this SG (in-VPC path)"
   default     = ""
+}
+
+variable "cht_nat_gateway_cidr_blocks" {
+  type        = list(string)
+  description = "CHT NAT gateway public IPs (/32) — ALB accepts HTTPS when ECS egress hairpins via public devhub URL"
+  default     = []
+}
+
+variable "alb_allow_public_ingress" {
+  type        = bool
+  description = "Allow 0.0.0.0/0 on ALB ports 80/443. Set false with cht_backend_security_group_id for CHT-only access."
+  default     = true
+
+  validation {
+    condition = var.alb_allow_public_ingress || var.cht_backend_security_group_id != "" || length(var.cht_nat_gateway_cidr_blocks) > 0
+    error_message = "When alb_allow_public_ingress is false, set cht_backend_security_group_id and/or cht_nat_gateway_cidr_blocks."
+  }
+}
+
+variable "enable_waf" {
+  type        = bool
+  description = "Attach regional WAF Web ACL to the API ALB (rate limit + managed rules)"
+  default     = false
+
+  validation {
+    condition     = !var.enable_waf || var.acm_certificate_arn != ""
+    error_message = "enable_waf requires acm_certificate_arn — WAF sits in front of the HTTPS listener."
+  }
 }
 
 # Images

@@ -53,6 +53,18 @@ Remote state lives in **`cht-contenthub-terraform-state`** (Content Hub–only b
 
 Bootstrap once: `./scripts/bootstrap-terraform-state.sh`. See [environments/backends/README.md](terraform/environments/backends/README.md).
 
+## GitHub Actions OIDC
+
+Content Hub uses a **separate** deploy role from CHT (different repo + ECR/state prefixes).
+
+```bash
+chmod +x infrastructure/aws-github-oidc-setup.sh
+./infrastructure/aws-github-oidc-setup.sh
+# → paste AWS_ROLE_ARN into GitHub Environment "development"
+```
+
+Policy: [iam/github-actions-deploy-policy.json](iam/github-actions-deploy-policy.json). Full CI steps: [.github/CI_CD.md](../.github/CI_CD.md).
+
 **Do not `terraform apply` until devhub ACM cert is ISSUED** (`acm_certificate_arn` in dev.tfvars).
 
 ## Modules
