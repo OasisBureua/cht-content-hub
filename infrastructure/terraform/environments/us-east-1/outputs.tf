@@ -11,6 +11,16 @@ output "api_alb_dns_name" {
   value = module.alb_api.alb_dns_name
 }
 
+output "api_alb_security_group_id" {
+  description = "Hub API ALB security group ID"
+  value       = module.alb_api.alb_security_group_id
+}
+
+output "api_waf_web_acl_arn" {
+  description = "Regional WAF Web ACL ARN (null when enable_waf = false)"
+  value       = var.enable_waf ? module.waf_alb[0].web_acl_arn : null
+}
+
 output "route53_zone_id" {
   description = "Hosted zone for api_domain (null when manage_route53 = false)"
   value       = var.manage_route53 ? module.route53_api[0].zone_id : null
