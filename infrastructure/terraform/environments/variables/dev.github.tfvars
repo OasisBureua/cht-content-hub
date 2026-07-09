@@ -37,6 +37,11 @@ rds_multi_az          = false
 rds_backup_retention  = 7
 log_retention_days    = 7
 
+# Dev stays on standalone RDS (Aurora Global is prod-only).
+enable_aurora_global = false
+aurora_use_for_app   = false
+decommission_rds     = false
+
 api_task_cpu      = 512
 api_task_memory   = 1024
 api_desired_count = 1
