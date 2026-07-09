@@ -21,8 +21,8 @@ See [.github/CI_CD.md](../.github/CI_CD.md):
 
 | Workflow | ECR repo | Semver |
 |----------|----------|--------|
-| Deploy to Development | `contenthub-dev-api` | 1.0.0, 1.0.1, … |
-| Deploy to Production | `contenthub-api` | 1.0.0, 1.0.1, … |
+| Deploy to Development | `contenthub-dev-api` | 1.0.0 … 1.0.9 → 1.1.0 … |
+| Deploy to Production | `contenthub-api` | 1.0.0 … 1.0.9 → 1.1.0 … |
 
 ## Scripts
 

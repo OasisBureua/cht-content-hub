@@ -18,7 +18,9 @@ Docs-only changes under `docs/**` do not trigger deploys.
 | `contenthub-dev-api` | dev | `dev-latest` |
 | `contenthub-api` | prod | `prod-latest` |
 
-Each repo maintains its own semver counter: **1.0.0**, **1.0.1**, … (patch bump on every deploy). The ECS worker image is retired — only the API image is built and pushed.
+Each repo maintains its own semver counter. **develop** and **feature/** deploys both use `contenthub-dev-api` — one shared sequence (not per-branch tags). Prod uses `contenthub-api` independently.
+
+Bump rule: increment the patch digit each deploy (`1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0` → … → `1.9.9` → `2.0.0`). The ECS worker image is retired — only the API image is built and pushed.
 
 ## Branch flow (main ← release only)
 
@@ -146,8 +148,8 @@ AWS_ROLE_ARN=... PUBLIC_API_KEY=... WEBHOOK_API_KEY=... JWT_SECRET=... INTERNAL_
 
 Each dev deploy:
 
-1. Reads existing `x.y.z` tags on ECR **`contenthub-dev-api`**
-2. First deploy after reset → **1.0.0**; each later deploy bumps patch
+1. Reads existing semver tags on ECR **`contenthub-dev-api`** (highest `x.y.z`)
+2. First deploy after reset → **1.0.0**; each later deploy bumps one step (`1.0.9` → `1.1.0`)
 3. Pushes `{tag}` and `dev-latest`
 4. Passes exact semver to Terraform `api_image`
 
