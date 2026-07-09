@@ -7,6 +7,7 @@ from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.playlist_tag import PlaylistTag
 from models.project import Project
 from models.shoot import Shoot
+from models.user import User
 from models.campaign import Campaign, CampaignPlatformData, ReportTemplate
 
 # HCP Intel — full package for migrations + Step 4+ ingestion
