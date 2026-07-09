@@ -1,11 +1,11 @@
-name: Deploy to Development
+name: Deploy to Production
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - develop
-      - 'feature/**'
+      - main
+      - 'release/**'
     paths:
       - 'backend/**'
       - 'infrastructure/**'
@@ -13,18 +13,18 @@ on:
       - '.github/workflows/**'
 
 concurrency:
-  group: deploy-contenthub-dev
+  group: deploy-contenthub-prod
   cancel-in-progress: false
 
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 233636046512.dkr.ecr.us-east-1.amazonaws.com
-  ECR_REPO: contenthub-dev-api
+  ECR_REPO: contenthub-api
   TERRAFORM_VERSION: 1.10.5
   TF_ENV_DIR: infrastructure/terraform/environments/us-east-1
-  TF_VAR_FILE: ../variables/dev.github.tfvars
-  TF_BACKEND_CONFIG: ../backends/us-east-1-dev.hcl
-  API_URL: https://devhub.communityhealth.media
+  TF_VAR_FILE: ../variables/prod.github.tfvars
+  TF_BACKEND_CONFIG: ../backends/us-east-1-prod.hcl
+  API_URL: https://contenthub.communityhealth.media
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
@@ -67,10 +67,10 @@ jobs:
           terraform validate
 
   deploy:
-    name: Deploy to dev
+    name: Deploy to prod
     runs-on: ubuntu-latest
     needs: test
-    environment: development
+    environment: production
 
     steps:
       - name: Checkout code
@@ -111,7 +111,7 @@ jobs:
           push: true
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.image_tag }}
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:dev-latest
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:prod-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -130,7 +130,7 @@ jobs:
           INTERNAL_CACHE_SECRET: ${{ secrets.INTERNAL_CACHE_SECRET }}
         run: |
           chmod +x scripts/verify-github-env-secrets.sh
-          ./scripts/verify-github-env-secrets.sh development
+          ./scripts/verify-github-env-secrets.sh production
 
       - name: Terraform Init
         working-directory: ${{ env.TF_ENV_DIR }}
@@ -152,14 +152,14 @@ jobs:
       - name: Wait for ECS API service stable
         run: |
           aws ecs wait services-stable \
-            --cluster contenthub-dev-cluster \
-            --services contenthub-dev-api \
+            --cluster contenthub-cluster \
+            --services contenthub-api \
             --region "$AWS_REGION"
-          echo "ECS service contenthub-dev-api is stable"
+          echo "ECS service contenthub-api is stable"
 
       - name: Deployment Summary
         run: |
-          echo "## Content Hub dev deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Content Hub prod deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"

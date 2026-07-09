@@ -8,60 +8,48 @@ export TF_VAR_webhook_api_key="..."
 export TF_VAR_jwt_secret="..."
 export TF_VAR_internal_cache_secret="..."
 
-TAG=$(./scripts/next-dev-image-tag.sh)
+TAG=$(./scripts/next-ecr-image-tag.sh contenthub-dev-api us-east-1)
 ./scripts/build-images.sh "$TAG"
 ./scripts/push-images.sh "$TAG" us-east-1 dev
-# Set api_image / worker_image in dev.tfvars from push output, then:
 ./scripts/deploy-primary.sh dev
 ./scripts/smoke.sh https://devhub.communityhealth.media   # from CHT/VPC only if ALB locked down
 ```
 
-## GitHub Actions (preferred for dev)
+## GitHub Actions
 
-See [.github/CI_CD.md](../.github/CI_CD.md) — **Deploy to Development** workflow:
+See [.github/CI_CD.md](../.github/CI_CD.md):
 
-- Semver tags `1.0.0`, `1.0.1`, … via `next-dev-image-tag.sh`
-- Secrets in GitHub Environment **development** (same as local `TF_VAR_*`)
-- Infra from committed `dev.github.tfvars`
-
-Requires: Docker, AWS CLI credentials with ECR push access (local only).
+| Workflow | ECR repo | Semver |
+|----------|----------|--------|
+| Deploy to Development | `contenthub-dev-api` | 1.0.0, 1.0.1, … |
+| Deploy to Production | `contenthub-api` | 1.0.0, 1.0.1, … |
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `next-dev-image-tag.sh [REPO] [REGION]` | Next semver ECR tag (1.0.0 → 1.0.1 → …) |
-| `verify-github-env-secrets.sh development` | Fail fast if GitHub secrets missing |
-| `build-images.sh [VERSION]` | Build `contenthub-api` + `contenthub-worker` locally |
-| `build-sync-lambda.sh [VERSION]` | Package sync jobs → `dist/sync-lambda.zip` (dev + prod) |
-| `push-images.sh [VERSION] [REGION] [ENV]` | Push to ECR; creates repos if missing |
-| `deploy-primary.sh [dev\|prod] [plan]` | Terraform us-east-1 — default: plan then yes/no to apply |
-| `migrate-kol-headshots.sh [dev]` | EC2 PNGs → S3 assets bucket + rewrite `kols.photo_url` |
-| `backfill-kol-hcp-fields.sql` | One-shot SQL: copy specialty/institution from `hcps` |
+| `next-ecr-image-tag.sh [REPO] [REGION]` | Next semver ECR tag per repo |
+| `next-dev-image-tag.sh` | Wrapper → `next-ecr-image-tag.sh` |
+| `verify-github-env-secrets.sh [development\|production]` | Fail fast if GitHub secrets missing |
+| `build-images.sh [VERSION]` | Build `contenthub-api` locally |
+| `push-images.sh [VERSION] [REGION] [dev\|prod]` | Push to dev or prod ECR repo |
+| `deploy-primary.sh [dev\|prod] [plan]` | Terraform us-east-1 |
 
 ## Image tags
 
-| Deploy path | Tag scheme | tfvars |
-|-------------|------------|--------|
-| **GitHub Actions dev** | Semver `1.0.0`, `1.0.1`, … + `dev-latest` | `dev.github.tfvars` |
-| **Local dev** | Any tag + `dev-latest` rolling | `dev.tfvars` |
-| **Prod** | `prod-latest` + immutable tag | `prod.tfvars` |
+| Deploy path | ECR repo | Rolling alias |
+|-------------|----------|---------------|
+| GitHub Actions dev | `contenthub-dev-api` | `dev-latest` |
+| GitHub Actions prod | `contenthub-api` | `prod-latest` |
+| Local dev | `contenthub-dev-api` | `dev-latest` |
+| Local prod | `contenthub-api` | `prod-latest` |
 
-Legacy tags (`v0.0.9`, sha tags) are ignored by `next-dev-image-tag.sh`.
+Legacy tags (`v0.0.9`, sha tags) are ignored by `next-ecr-image-tag.sh`.
 
 ## Dockerfiles
 
 | Path | Service |
 |------|---------|
 | `backend/Dockerfile` | `contenthub-api` — runs `alembic upgrade head` then uvicorn |
-| `worker/Dockerfile` | Placeholder (ECS `worker_desired_count=0` until sync jobs land) |
 
-## Local API container (optional)
-
-```bash
-docker build -t contenthub-api:local -f backend/Dockerfile backend
-docker run --rm -p 8000:8000 \
-  -e DATABASE_URL=postgresql+asyncpg://contenthub:contenthub@host.docker.internal:5433/contenthub_producer \
-  -e PUBLIC_API_KEY=dev-change-me \
-  contenthub-api:local
-```
+The ECS worker is retired; async work uses Lambdas (see `worker/README.md` for history).

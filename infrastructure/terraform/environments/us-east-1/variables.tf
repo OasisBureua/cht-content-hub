@@ -85,7 +85,9 @@ variable "api_image" {
 }
 
 variable "worker_image" {
-  type = string
+  type        = string
+  default     = "233636046512.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:unused"
+  description = "Unused when worker_desired_count = 0 (ECS worker retired; Lambdas handle async work)."
 }
 
 # RDS

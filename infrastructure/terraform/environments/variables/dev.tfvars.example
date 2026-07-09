@@ -24,8 +24,7 @@ cht_nat_gateway_cidr_blocks = [
 alb_allow_public_ingress      = false
 enable_waf                    = true
 
-api_image    = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:dev-latest"
-worker_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-worker:dev-latest"
+api_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-dev-api:1.0.0"
 
 rds_instance_class    = "db.t4g.small"
 rds_engine_version    = "15.17"

@@ -4,6 +4,7 @@
 |------|---------|
 | `dev.tfvars.example` | Template — commit to git |
 | `dev.github.tfvars` | Non-secret dev infra for GitHub Actions — commit to git |
+| `prod.github.tfvars` | Non-secret prod infra for GitHub Actions — commit to git |
 | `prod.tfvars.example` | Template — commit to git |
 | `dev.tfvars` | Your dev values — **gitignored** |
 | `prod.tfvars` | Your prod values — **gitignored** |
@@ -23,7 +24,7 @@
 | `enable_waf` | `true` on dev — regional WAF on API ALB |
 | `api_domain` | `devhub.communityhealth.media` (dev) or `contenthub.communityhealth.media` (prod) |
 | `acm_certificate_arn` | `.cert-arns-*` after cert is ISSUED |
-| `api_image`, `worker_image` | ECR after first image push |
+| `api_image` | ECR after first image push — dev: `contenthub-dev-api`, prod: `contenthub-api` |
 | `manage_route53` | Default `true` — creates hosted zone + ALB alias for `api_domain`; set `false` if DNS is manual |
 | `public_api_key` | Must match CHT `CONTENTHUB_API_KEY` — use `TF_VAR_public_api_key` |
 | `webhook_api_key` | ops-console — use `TF_VAR_webhook_api_key` |
