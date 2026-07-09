@@ -63,7 +63,7 @@ variable "alb_allow_public_ingress" {
   default     = true
 
   validation {
-    condition = var.alb_allow_public_ingress || var.cht_backend_security_group_id != "" || length(var.cht_nat_gateway_cidr_blocks) > 0
+    condition     = var.alb_allow_public_ingress || var.cht_backend_security_group_id != "" || length(var.cht_nat_gateway_cidr_blocks) > 0
     error_message = "When alb_allow_public_ingress is false, set cht_backend_security_group_id and/or cht_nat_gateway_cidr_blocks."
   }
 }
@@ -213,4 +213,112 @@ variable "sync_jobs_enabled" {
   type        = map(bool)
   default     = {}
   description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
+}
+
+# Platform integration secrets — pass via dev.tfvars (local) or TF_VAR_* (GitHub Actions).
+# See infrastructure/terraform/environments/variables/dev.tfvars.example
+
+variable "openai_api_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "anthropic_api_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "linkedin_client_id" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "linkedin_client_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "linkedin_redirect_uri" {
+  type    = string
+  default = ""
+}
+
+variable "linkedin_scopes" {
+  type    = string
+  default = ""
+}
+
+variable "linkedin_org_urn" {
+  type    = string
+  default = ""
+}
+
+variable "linkedin_ad_account_id" {
+  type    = string
+  default = ""
+}
+
+variable "linkedin_ads_access_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "linkedin_ads_client_id" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "linkedin_ads_client_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "linkedin_ads_redirect_uri" {
+  type    = string
+  default = ""
+}
+
+variable "linkedin_ads_scopes" {
+  type    = string
+  default = ""
+}
+
+variable "youtube_api_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "youtube_channel_id" {
+  type    = string
+  default = ""
+}
+
+variable "youtube_channel_handle" {
+  type    = string
+  default = ""
+}
+
+variable "x_bearer_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "x_account_handle" {
+  type    = string
+  default = ""
+}
+
+variable "wordpress_webhook_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
 }

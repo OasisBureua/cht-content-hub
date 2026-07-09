@@ -31,6 +31,21 @@
 | `jwt_secret` | Required by Terraform today — use `TF_VAR_jwt_secret` |
 | `internal_cache_secret` | Shared with CHT cache clear — use `TF_VAR_internal_cache_secret` |
 
+### Platform integrations (optional — LinkedIn/YouTube sync, AI insights)
+
+Set in **gitignored** `dev.tfvars` (local) or GitHub Environment secrets → `TF_VAR_*` (CI).  
+Stored in `contenthub-dev-app-secrets` JSON and injected into the API ECS task.
+
+| Variable | Purpose |
+|----------|---------|
+| `linkedin_ads_client_id`, `linkedin_ads_client_secret`, `linkedin_ads_redirect_uri`, `linkedin_ads_scopes`, `linkedin_ad_account_id` | LinkedIn Ads report sync |
+| `linkedin_client_id`, `linkedin_client_secret`, `linkedin_redirect_uri`, `linkedin_scopes`, `linkedin_org_urn` | LinkedIn organic (Lambdas / future) |
+| `youtube_api_key`, `youtube_channel_id`, `youtube_channel_handle` | YouTube report sync |
+| `openai_api_key`, `anthropic_api_key` | AI insights |
+| `x_bearer_token`, `x_account_handle`, `wordpress_webhook_secret` | Optional integrations |
+
+**Important:** Terraform manages the full Secrets Manager JSON. Fill these in `dev.tfvars` (or GitHub secrets) **before** `terraform apply`, or empty values will overwrite keys you added manually in AWS.
+
 ### Secrets (do not commit)
 
 ```bash

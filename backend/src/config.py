@@ -45,6 +45,24 @@ class Settings(BaseSettings):
     def resolved_admin_api_key(self) -> str:
         return self.admin_api_key or self.public_api_key
 
+    # LinkedIn Ads (campaign report sync)
+    linkedin_ads_access_token: str = Field(
+        default="",
+        validation_alias="LINKEDIN_ADS_ACCESS_TOKEN",
+    )
+    linkedin_ad_account_id: str = Field(
+        default="",
+        validation_alias="LINKEDIN_AD_ACCOUNT_ID",
+    )
+
+    # YouTube (Data API v3 — views per video)
+    youtube_api_key: str = Field(default="", validation_alias="YOUTUBE_API_KEY")
+    youtube_channel_id: str = Field(default="", validation_alias="YOUTUBE_CHANNEL_ID")
+    youtube_channel_handle: str = Field(
+        default="",
+        validation_alias="YOUTUBE_CHANNEL_HANDLE",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

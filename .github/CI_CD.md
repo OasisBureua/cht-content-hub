@@ -71,6 +71,12 @@ release/vX.Y.Z  (cut from main → prod/platform deploy)
  PR release/* → main  (after prod validated)
 ```
 
+For Content Hub dev deploys: push to `develop` or `feature/**` triggers `deploy-dev.yml` (or run manually).
+
+### 4. Optional — block direct pushes to main
+
+In the `main` ruleset, ensure **Restrict updates** is on so nobody pushes to `main` without a PR (except bypass actors you trust).
+
 ## Development deploy
 
 - **Environment:** `development` (GitHub Environment secrets)
@@ -93,6 +99,31 @@ release/vX.Y.Z  (cut from main → prod/platform deploy)
 | `WEBHOOK_API_KEY` | `TF_VAR_webhook_api_key` |
 | `JWT_SECRET` | `TF_VAR_jwt_secret` |
 | `INTERNAL_CACHE_SECRET` | `TF_VAR_internal_cache_secret` |
+
+**Platform integrations (optional — add when enabling LinkedIn/YouTube sync or AI insights):**
+
+| GitHub secret | Terraform variable | Local equivalent |
+|---------------|-------------------|------------------|
+| `OPENAI_API_KEY` | `TF_VAR_openai_api_key` | inline in `dev.tfvars` or export |
+| `ANTHROPIC_API_KEY` | `TF_VAR_anthropic_api_key` | inline in `dev.tfvars` or export |
+| `LINKEDIN_ADS_CLIENT_ID` | `TF_VAR_linkedin_ads_client_id` | inline in `dev.tfvars` or export |
+| `LINKEDIN_ADS_CLIENT_SECRET` | `TF_VAR_linkedin_ads_client_secret` | inline in `dev.tfvars` or export |
+| `LINKEDIN_ADS_REDIRECT_URI` | `TF_VAR_linkedin_ads_redirect_uri` | inline in `dev.tfvars` or export |
+| `LINKEDIN_ADS_SCOPES` | `TF_VAR_linkedin_ads_scopes` | inline in `dev.tfvars` or export |
+| `LINKEDIN_AD_ACCOUNT_ID` | `TF_VAR_linkedin_ad_account_id` | inline in `dev.tfvars` or export |
+| `LINKEDIN_CLIENT_ID` | `TF_VAR_linkedin_client_id` | inline in `dev.tfvars` or export |
+| `LINKEDIN_CLIENT_SECRET` | `TF_VAR_linkedin_client_secret` | inline in `dev.tfvars` or export |
+| `LINKEDIN_REDIRECT_URI` | `TF_VAR_linkedin_redirect_uri` | inline in `dev.tfvars` or export |
+| `LINKEDIN_SCOPES` | `TF_VAR_linkedin_scopes` | inline in `dev.tfvars` or export |
+| `LINKEDIN_ORG_URN` | `TF_VAR_linkedin_org_urn` | inline in `dev.tfvars` or export |
+| `YOUTUBE_API_KEY` | `TF_VAR_youtube_api_key` | inline in `dev.tfvars` or export |
+| `YOUTUBE_CHANNEL_ID` | `TF_VAR_youtube_channel_id` | inline in `dev.tfvars` or export |
+| `YOUTUBE_CHANNEL_HANDLE` | `TF_VAR_youtube_channel_handle` | inline in `dev.tfvars` or export |
+| `X_BEARER_TOKEN` | `TF_VAR_x_bearer_token` | inline in `dev.tfvars` or export |
+| `X_ACCOUNT_HANDLE` | `TF_VAR_x_account_handle` | inline in `dev.tfvars` or export |
+| `WORDPRESS_WEBHOOK_SECRET` | `TF_VAR_wordpress_webhook_secret` | inline in `dev.tfvars` or export |
+
+Empty optional secrets are OK — deploy still succeeds; platform sync features stay disabled until values are set.
 
 3. **Configure OIDC** — run once from your machine (admin AWS creds):
 
