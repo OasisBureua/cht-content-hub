@@ -33,7 +33,16 @@ See [.github/CI_CD.md](../.github/CI_CD.md):
 | `verify-github-env-secrets.sh [development\|production]` | Fail fast if GitHub secrets missing |
 | `build-images.sh [VERSION]` | Build `contenthub-api` locally |
 | `push-images.sh [VERSION] [REGION] [dev\|prod]` | Push to dev or prod ECR repo |
-| `deploy-primary.sh [dev\|prod] [plan]` | Terraform us-east-1 |
+| `deploy-primary.sh [dev\|prod] [plan]` | Terraform us-east-1 (infra) |
+| `deploy-api-service.sh [dev\|prod] [TAG]` | After infra-only prod apply: build, push, start ECS service |
+
+## Prod infra-first flow
+
+1. Set `deploy_api_ecs_service = false` in `prod.tfvars` / `prod.github.tfvars`
+2. Fill VPC, subnets, ACM ARN
+3. `./scripts/deploy-primary.sh prod` — creates Route53, ALB, RDS, ECS cluster + task def (no running service)
+4. Delegate NS: `terraform output route53_nameservers` → GoDaddy
+5. `./scripts/deploy-api-service.sh prod` — push image + create ECS service locally
 
 ## Image tags
 

@@ -3,5 +3,9 @@ output "security_group_id" {
 }
 
 output "service_name" {
-  value = aws_ecs_service.api.name
+  value = try(aws_ecs_service.api[0].name, null)
+}
+
+output "service_created" {
+  value = var.create_service
 }

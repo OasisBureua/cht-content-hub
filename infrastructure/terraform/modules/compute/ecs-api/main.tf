@@ -110,6 +110,8 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
+  count = var.create_service ? 1 : 0
+
   name            = "${local.prefix}-api"
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.api.arn
@@ -135,19 +137,23 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_appautoscaling_target" "api" {
+  count = var.create_service ? 1 : 0
+
   max_capacity       = var.max_capacity
   min_capacity       = var.min_capacity
-  resource_id        = "service/${var.cluster_name}/${aws_ecs_service.api.name}"
+  resource_id        = "service/${var.cluster_name}/${aws_ecs_service.api[0].name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
 }
 
 resource "aws_appautoscaling_policy" "api_cpu" {
+  count = var.create_service ? 1 : 0
+
   name               = "${local.prefix}-api-cpu"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.api.resource_id
-  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.api.service_namespace
+  resource_id        = aws_appautoscaling_target.api[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.api[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api[0].service_namespace
 
   target_tracking_scaling_policy_configuration {
     predefined_metric_specification {
