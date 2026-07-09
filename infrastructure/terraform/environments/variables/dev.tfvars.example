@@ -55,7 +55,7 @@ sync_jobs_enabled = {
 }
 # sync_lambda_package_path = "/absolute/path/to/dist/sync-lambda.zip"
 
-cht_cache_clear_url = "https://<chm-backend-dev-host>/internal/cache/catalog/clear"
+cht_cache_clear_url = "https://devapp.communityhealth.media/api/internal/cache/catalog/clear"
 
 # ── Secrets (do NOT commit — use TF_VAR_* or GitHub Environment secrets) ─────
 # Core (required):

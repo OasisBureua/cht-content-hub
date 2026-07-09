@@ -79,20 +79,20 @@ module "sync_lambda" {
   reserved_concurrent_executions = each.value.reserved_concurrent_executions
   vpc_id                  = var.vpc_id
   private_subnet_ids      = var.private_subnet_ids
-  database_secret_arn     = module.rds.database_secret_arn
+  database_secret_arn     = local.database_secret_arn
   app_secrets_arn         = module.app_secrets.app_secrets_arn
   cht_cache_clear_url     = var.cht_cache_clear_url
   log_retention_days      = local.log_retention
   enabled                 = true
 
-  depends_on = [module.rds, module.app_secrets]
+  depends_on = [module.app_secrets]
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rds_from_sync_lambda" {
   for_each = module.sync_lambda
 
   description                  = "PostgreSQL from sync Lambda ${each.key}"
-  security_group_id            = module.rds.security_group_id
+  security_group_id            = local.database_security_group_id
   referenced_security_group_id = each.value.security_group_id
   from_port                    = 5432
   to_port                      = 5432

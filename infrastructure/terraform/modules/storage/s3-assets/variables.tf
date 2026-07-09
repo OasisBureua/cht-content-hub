@@ -16,6 +16,12 @@ variable "task_role_arn" {
   default     = ""
 }
 
+variable "attach_task_role_policy" {
+  type        = bool
+  description = "Attach S3 read/write policy to the ECS task role (set true when task_role_arn is wired from module.iam)"
+  default     = false
+}
+
 variable "public_read_prefixes" {
   type        = list(string)
   description = "S3 key prefixes world-readable via bucket policy (e.g. kol-headshots/)"

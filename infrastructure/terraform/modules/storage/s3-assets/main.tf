@@ -75,7 +75,7 @@ resource "aws_s3_bucket_policy" "assets" {
 }
 
 data "aws_iam_policy_document" "task_rw" {
-  count = var.task_role_arn != "" ? 1 : 0
+  count = var.attach_task_role_policy ? 1 : 0
 
   statement {
     effect = "Allow"
@@ -93,7 +93,7 @@ data "aws_iam_policy_document" "task_rw" {
 }
 
 resource "aws_iam_role_policy" "task_assets" {
-  count = var.task_role_arn != "" ? 1 : 0
+  count = var.attach_task_role_policy ? 1 : 0
 
   name   = "${local.prefix}-s3-assets"
   role   = replace(var.task_role_arn, "/^arn:aws:iam::[0-9]+:role\\//", "")
