@@ -8,6 +8,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from migrations.helpers import index_exists, table_exists
+
 revision: str = "0003_campaigns_admin"
 down_revision: Union[str, None] = "0002_kol_slug_and_signal_index"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -15,8 +17,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "report_templates",
+    if not table_exists("report_templates"):
+        op.create_table(
+            "report_templates",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("type", sa.String(length=64), nullable=False),
@@ -34,10 +37,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-    )
+        )
 
-    op.create_table(
-        "campaigns",
+    if not table_exists("campaigns"):
+        op.create_table(
+            "campaigns",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(length=500), nullable=False),
         sa.Column("program_name", sa.String(length=500), nullable=False, server_default=""),
@@ -102,10 +106,11 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["template_id"], ["report_templates.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-    )
+        )
 
-    op.create_table(
-        "campaign_csv_uploads",
+    if not table_exists("campaign_csv_uploads"):
+        op.create_table(
+            "campaign_csv_uploads",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("campaign_id", sa.Integer(), nullable=False),
         sa.Column("platform", sa.String(length=32), nullable=False),
@@ -121,12 +126,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["campaign_id"], ["campaigns.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("campaign_id", "platform", name="uix_campaign_csv_platform"),
-    )
-    op.create_index(
-        "ix_campaign_csv_uploads_campaign_id",
-        "campaign_csv_uploads",
-        ["campaign_id"],
-    )
+        )
+    if not index_exists("campaign_csv_uploads", "ix_campaign_csv_uploads_campaign_id"):
+        op.create_index(
+            "ix_campaign_csv_uploads_campaign_id",
+            "campaign_csv_uploads",
+            ["campaign_id"],
+        )
 
 
 def downgrade() -> None:

@@ -42,10 +42,7 @@
         "ecr:ListImages",
         "ecr:DescribeImages"
       ],
-      "Resource": [
-        "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-api",
-        "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-dev-api"
-      ]
+      "Resource": "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-*"
     },
     {
       "Sid": "TerraformStateS3",
