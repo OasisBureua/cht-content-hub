@@ -13,8 +13,7 @@ vpc_id = "vpc-xxxxxxxx"
 private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
 
-api_image    = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:prod-latest"
-worker_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-worker:prod-latest"
+api_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:1.0.0"
 
 rds_instance_class    = "db.r6g.large"
 rds_engine_version    = "15.17"

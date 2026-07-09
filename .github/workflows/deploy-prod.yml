@@ -1,11 +1,11 @@
-name: Deploy to Development
+name: Deploy to Production
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - develop
-      - 'feature/**'
+      - main
+      - 'release/**'
     paths:
       - 'backend/**'
       - 'infrastructure/**'
@@ -13,18 +13,18 @@ on:
       - '.github/workflows/**'
 
 concurrency:
-  group: deploy-contenthub-dev
+  group: deploy-contenthub-prod
   cancel-in-progress: false
 
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 233636046512.dkr.ecr.us-east-1.amazonaws.com
-  ECR_REPO: contenthub-dev-api
+  ECR_REPO: contenthub-api
   TERRAFORM_VERSION: 1.10.5
   TF_ENV_DIR: infrastructure/terraform/environments/us-east-1
-  TF_VAR_FILE: ../variables/dev.github.tfvars
-  TF_BACKEND_CONFIG: ../backends/us-east-1-dev.hcl
-  API_URL: https://devhub.communityhealth.media
+  TF_VAR_FILE: ../variables/prod.github.tfvars
+  TF_BACKEND_CONFIG: ../backends/us-east-1-prod.hcl
+  API_URL: https://contenthub.communityhealth.media
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
@@ -67,10 +67,10 @@ jobs:
           terraform validate
 
   deploy:
-    name: Deploy to dev
+    name: Deploy to prod
     runs-on: ubuntu-latest
     needs: test
-    environment: development
+    environment: production
 
     steps:
       - name: Checkout code
@@ -111,7 +111,7 @@ jobs:
           push: true
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.image_tag }}
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:dev-latest
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:prod-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -128,28 +128,9 @@ jobs:
           WEBHOOK_API_KEY: ${{ secrets.WEBHOOK_API_KEY }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           INTERNAL_CACHE_SECRET: ${{ secrets.INTERNAL_CACHE_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LINKEDIN_CLIENT_ID: ${{ secrets.LINKEDIN_CLIENT_ID }}
-          LINKEDIN_CLIENT_SECRET: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
-          LINKEDIN_REDIRECT_URI: ${{ secrets.LINKEDIN_REDIRECT_URI }}
-          LINKEDIN_SCOPES: ${{ secrets.LINKEDIN_SCOPES }}
-          LINKEDIN_ORG_URN: ${{ secrets.LINKEDIN_ORG_URN }}
-          LINKEDIN_AD_ACCOUNT_ID: ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
-          LINKEDIN_ADS_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ADS_ACCESS_TOKEN }}
-          LINKEDIN_ADS_CLIENT_ID: ${{ secrets.LINKEDIN_ADS_CLIENT_ID }}
-          LINKEDIN_ADS_CLIENT_SECRET: ${{ secrets.LINKEDIN_ADS_CLIENT_SECRET }}
-          LINKEDIN_ADS_REDIRECT_URI: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
-          LINKEDIN_ADS_SCOPES: ${{ secrets.LINKEDIN_ADS_SCOPES }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
-          YOUTUBE_CHANNEL_HANDLE: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
-          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
-          X_ACCOUNT_HANDLE: ${{ secrets.X_ACCOUNT_HANDLE }}
-          WORDPRESS_WEBHOOK_SECRET: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}
         run: |
           chmod +x scripts/verify-github-env-secrets.sh
-          ./scripts/verify-github-env-secrets.sh development
+          ./scripts/verify-github-env-secrets.sh production
 
       - name: Terraform Init
         working-directory: ${{ env.TF_ENV_DIR }}
@@ -167,37 +148,18 @@ jobs:
           TF_VAR_webhook_api_key: ${{ secrets.WEBHOOK_API_KEY }}
           TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
           TF_VAR_internal_cache_secret: ${{ secrets.INTERNAL_CACHE_SECRET }}
-          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          TF_VAR_linkedin_client_id: ${{ secrets.LINKEDIN_CLIENT_ID }}
-          TF_VAR_linkedin_client_secret: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
-          TF_VAR_linkedin_redirect_uri: ${{ secrets.LINKEDIN_REDIRECT_URI }}
-          TF_VAR_linkedin_scopes: ${{ secrets.LINKEDIN_SCOPES }}
-          TF_VAR_linkedin_org_urn: ${{ secrets.LINKEDIN_ORG_URN }}
-          TF_VAR_linkedin_ad_account_id: ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
-          TF_VAR_linkedin_ads_access_token: ${{ secrets.LINKEDIN_ADS_ACCESS_TOKEN }}
-          TF_VAR_linkedin_ads_client_id: ${{ secrets.LINKEDIN_ADS_CLIENT_ID }}
-          TF_VAR_linkedin_ads_client_secret: ${{ secrets.LINKEDIN_ADS_CLIENT_SECRET }}
-          TF_VAR_linkedin_ads_redirect_uri: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
-          TF_VAR_linkedin_ads_scopes: ${{ secrets.LINKEDIN_ADS_SCOPES }}
-          TF_VAR_youtube_api_key: ${{ secrets.YOUTUBE_API_KEY }}
-          TF_VAR_youtube_channel_id: ${{ secrets.YOUTUBE_CHANNEL_ID }}
-          TF_VAR_youtube_channel_handle: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
-          TF_VAR_x_bearer_token: ${{ secrets.X_BEARER_TOKEN }}
-          TF_VAR_x_account_handle: ${{ secrets.X_ACCOUNT_HANDLE }}
-          TF_VAR_wordpress_webhook_secret: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}
 
       - name: Wait for ECS API service stable
         run: |
           aws ecs wait services-stable \
-            --cluster contenthub-dev-cluster \
-            --services contenthub-dev-api \
+            --cluster contenthub-cluster \
+            --services contenthub-api \
             --region "$AWS_REGION"
-          echo "ECS service contenthub-dev-api is stable"
+          echo "ECS service contenthub-api is stable"
 
       - name: Deployment Summary
         run: |
-          echo "## Content Hub dev deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Content Hub prod deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
