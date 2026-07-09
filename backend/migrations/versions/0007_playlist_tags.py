@@ -27,6 +27,7 @@ from path_setup import install  # noqa: E402
 
 install()
 
+from migrations.helpers import index_exists, table_exists  # noqa: E402
 
 revision: str = "0007_playlist_tags"
 down_revision: Union[str, None] = "0006_campaign_platform_data"
@@ -35,8 +36,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "playlist_tags",
+    if not table_exists("playlist_tags"):
+        op.create_table(
+            "playlist_tags",
         sa.Column("youtube_playlist_id", sa.String(length=64), primary_key=True),
         sa.Column(
             "tags",
@@ -57,9 +59,9 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-    )
-    # Index on lane for /api/public/playlists?lane= queries
-    op.create_index("ix_playlist_tags_lane", "playlist_tags", ["lane"])
+        )
+    if not index_exists("playlist_tags", "ix_playlist_tags_lane"):
+        op.create_index("ix_playlist_tags_lane", "playlist_tags", ["lane"])
 
 
 def downgrade() -> None:
