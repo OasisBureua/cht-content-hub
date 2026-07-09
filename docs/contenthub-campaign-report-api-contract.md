@@ -73,7 +73,7 @@ After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.
 
 ### Platform data
 - `GET /campaigns/{id}/platform-data` — sync status per platform
-- `POST /campaigns/{id}/platforms/{platform}/sync` — on-demand pull (stub until Phase 2 connectors)
+- `POST /campaigns/{id}/platforms/{platform}/sync` — on-demand pull (LinkedIn Ads + YouTube when `enabled: true` and not `stub`)
 - `POST /campaigns/{id}/sync-all`
 
 ### CSV bootstrap (fallback)

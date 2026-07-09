@@ -59,10 +59,31 @@ sync_jobs_enabled = {
 cht_cache_clear_url = "https://<chm-backend-dev-host>/internal/cache/catalog/clear"
 
 # ── Secrets (do NOT commit — use TF_VAR_* or GitHub Environment secrets) ─────
-# export TF_VAR_public_api_key="..."
-# export TF_VAR_webhook_api_key="..."
-# export TF_VAR_jwt_secret="..."
-# export TF_VAR_internal_cache_secret="..."
+# Core (required):
+# public_api_key        = ""
+# webhook_api_key       = ""
+# jwt_secret            = ""
+# internal_cache_secret = ""
 #
+# Platform integrations (optional — for LinkedIn/YouTube sync + AI insights):
+# linkedin_ads_client_id     = ""
+# linkedin_ads_client_secret = ""
+# linkedin_ads_access_token  = ""   # OAuth token — or PATCH integration accessToken
+# linkedin_ad_account_id     = ""
+# linkedin_client_id         = ""
+# linkedin_client_secret     = ""
+# linkedin_redirect_uri      = ""
+# linkedin_scopes            = ""
+# linkedin_org_urn           = ""
+# youtube_api_key            = ""
+# youtube_channel_id         = ""
+# youtube_channel_handle     = ""
+# openai_api_key             = ""
+# anthropic_api_key          = ""
+# x_bearer_token             = ""
+# x_account_handle           = ""
+# wordpress_webhook_secret   = ""
+#
+# Or export TF_VAR_<name> instead of inline values above.
 # GitHub Actions: see .github/CI_CD.md (Environment "development")
-# CI uses dev.github.tfvars + secrets above (no secrets in repo)
+# CI uses dev.github.tfvars + TF_VAR_* secrets (no secrets in repo)
