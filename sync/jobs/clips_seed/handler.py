@@ -46,16 +46,30 @@ _SKIP_THRESHOLD = 100
 
 
 def _strip_psql_metacommands(sql: str) -> str:
-    """Remove psql-specific `\\restrict`/`\\unrestrict` lines that pg_dump 16 emits.
+    """Strip pg_dump 16 output that RDS-restricted roles cannot execute.
 
-    asyncpg speaks the wire protocol directly, not psql, so backslash commands
-    are syntax errors. Every other statement (INSERTs, SETs, SELECT setval)
+    Two things get stripped:
+
+    1. `\\restrict` / `\\unrestrict` lines are psql-only metacommands.
+       asyncpg speaks the wire protocol directly, not psql, so backslash
+       commands are syntax errors.
+
+    2. `ALTER TABLE ... DISABLE/ENABLE TRIGGER ALL` requires superuser to
+       toggle the system-owned RI (referential-integrity) triggers on FK
+       constraints. RDS masters are not real superusers. Since our dump
+       INSERTs in FK-safe order (shoots, clips, posts), we do not need
+       to disable triggers at all.
+
+    Every other statement (INSERTs, SETs, SELECT setval, transaction bounds)
     is standard SQL and passes through untouched.
     """
     kept = []
     for line in sql.splitlines(keepends=True):
         stripped = line.lstrip()
         if stripped.startswith("\\restrict") or stripped.startswith("\\unrestrict"):
+            continue
+        # Skip the trigger-disable statements that need superuser on RDS.
+        if "DISABLE TRIGGER ALL" in stripped or "ENABLE TRIGGER ALL" in stripped:
             continue
         kept.append(line)
     return "".join(kept)
