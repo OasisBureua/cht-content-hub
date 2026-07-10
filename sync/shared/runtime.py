@@ -38,8 +38,41 @@ def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+def configure_logging(level: str = "INFO") -> None:
+    """Configure root logger with JSON output to stdout.
+
+    Matches the ECS API's structured format (backend/src/logging_config.py)
+    so CloudWatch Logs Insights queries can `fields @timestamp, level, name,
+    message` uniformly across the whole platform.
+
+    AWS Lambda's runtime pre-installs a LambdaLoggerHandler on the root logger
+    before user code runs. Skipping setup when handlers exist (previous
+    behavior) meant the runtime's plain-text handler was never replaced and
+    logs stayed unformatted. Adding another handler alongside would emit
+    each log line twice. Instead we retrofit whatever handlers are already
+    present with the JSON formatter, and add our own StreamHandler only
+    when nothing is registered (local dev, unit tests).
+
+    Falls back to a plain formatter if pythonjsonlogger is not importable.
+    """
+    try:
+        from logging_config import CustomJsonFormatter
+
+        formatter: logging.Formatter = CustomJsonFormatter(
+            "%(asctime)s %(name)s %(levelname)s %(message)s"
+        )
+    except ImportError:
+        formatter = logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s"
+        )
+
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    if root.handlers:
+        for handler in root.handlers:
+            handler.setFormatter(formatter)
+    else:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
