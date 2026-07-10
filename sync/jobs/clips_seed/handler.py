@@ -96,7 +96,7 @@ async def _restore(bucket: str, key: str) -> dict[str, Any]:
 
     conn = await asyncpg.connect(database_url)
     try:
-        existing = await conn.fetchval("SELECT COUNT(*) FROM clips")
+        existing = await conn.fetchval("SELECT COUNT(*) FROM public.clips")
         if existing >= _SKIP_THRESHOLD:
             log.info(
                 "Skipping seed - clips already has %d rows (threshold %d)",
@@ -113,10 +113,11 @@ async def _restore(bucket: str, key: str) -> dict[str, Any]:
         async with conn.transaction():
             await conn.execute(sql)
 
+        # The pg_dump preamble sets search_path='' - re-qualify counts with `public.`
         counts = {
-            "shoots": await conn.fetchval("SELECT COUNT(*) FROM shoots"),
-            "clips": await conn.fetchval("SELECT COUNT(*) FROM clips"),
-            "posts": await conn.fetchval("SELECT COUNT(*) FROM posts"),
+            "shoots": await conn.fetchval("SELECT COUNT(*) FROM public.shoots"),
+            "clips": await conn.fetchval("SELECT COUNT(*) FROM public.clips"),
+            "posts": await conn.fetchval("SELECT COUNT(*) FROM public.posts"),
         }
         log.info("Seed complete: %s", counts)
         return {"status": "inserted", "counts": counts}
