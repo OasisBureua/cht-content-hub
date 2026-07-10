@@ -1,7 +1,6 @@
 # Content Hub — dev.github.tfvars
 # Non-secret infra for GitHub Actions deploy-dev.yml (committed).
 # Secrets: GitHub Environment "development" → TF_VAR_* (see .github/CI_CD.md).
-# Local dev: copy dev.tfvars.example → dev.tfvars and add secrets inline or TF_VAR_*.
 
 project     = "contenthub"
 environment = "dev"

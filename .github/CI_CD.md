@@ -73,12 +73,6 @@ release/vX.Y.Z  (cut from main → prod/platform deploy)
  PR release/* → main  (after prod validated)
 ```
 
-For Content Hub dev deploys: push to `develop` or `feature/**` triggers `deploy-dev.yml` (or run manually).
-
-### 4. Optional — block direct pushes to main
-
-In the `main` ruleset, ensure **Restrict updates** is on so nobody pushes to `main` without a PR (except bypass actors you trust).
-
 ## Development deploy
 
 - **Environment:** `development` (GitHub Environment secrets)
