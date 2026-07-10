@@ -6,9 +6,21 @@
 |----------|---------|---------|
 | `pr-validation.yml` | Pull requests | Terraform validate |
 | `branch-policy.yml` | PRs → `main` | Require head branch `release/*` (and based on `main`) |
-| `deploy-dev.yml` | Push to `develop` or `feature/**` (app/infra paths), manual | Build images, semver tag, Terraform apply dev |
+| `deploy-dev.yml` | Push to `develop` / `feature/**`, manual | Build API → `contenthub-dev-api`, Terraform apply dev |
+| `deploy-prod.yml` | Push to `main` / `release/**`, manual | Build API → `contenthub-api`, Terraform apply prod |
 
-Docs-only changes under `docs/**` do not trigger dev deploy.
+Docs-only changes under `docs/**` do not trigger deploys.
+
+## ECR repositories
+
+| Repo | Environment | Rolling alias |
+|------|-------------|---------------|
+| `contenthub-dev-api` | dev | `dev-latest` |
+| `contenthub-api` | prod | `prod-latest` |
+
+Each repo maintains its own semver counter. **develop** and **feature/** deploys both use `contenthub-dev-api` — one shared sequence (not per-branch tags). Prod uses `contenthub-api` independently.
+
+Bump rule: increment the patch digit each deploy (`1.0.0` → `1.0.1` → … → `1.0.9` → `1.1.0` → … → `1.9.9` → `2.0.0`). The ECS worker image is retired — only the API image is built and pushed.
 
 ## Branch flow (main ← release only)
 
@@ -31,20 +43,6 @@ Repo → **Settings → Rules → Rulesets → New branch ruleset**
 
 Do **not** allow broad bypass on this ruleset.
 
-**Status checks (important):** GitHub only lets you pick checks that have **run at least once** on the repo. Until then:
-
-1. Save the ruleset **without** “Require status checks”, **or**
-2. Run workflows once (`workflow_dispatch` on **Branch policy** + merge a test PR), then edit the ruleset and add:
-
-| Check name (exact) |
-|--------------------|
-| `main-from-release-only` |
-| `release-contains-main` |
-
-(Shown as **Branch policy / …** in the PR checks UI — pick from the dropdown after the first run.)
-
-Optional: also require **PR Validation / Validate PR** from `pr-validation.yml`.
-
 ### 2. Ruleset — protect `release/*`
 
 New ruleset:
@@ -66,7 +64,7 @@ New ruleset:
 ### 3. Recommended git flow (matches CHT)
 
 ```text
-feature/*  →  dev  (integrate + deploy dev)
+feature/*  →  develop  (integrate + deploy dev)
        ↓
     main     (stable integration — PRs only from release/*)
        ↓
@@ -75,34 +73,28 @@ release/vX.Y.Z  (cut from main → prod/platform deploy)
  PR release/* → main  (after prod validated)
 ```
 
-For Content Hub dev deploys: push to `develop` or `feature/**` triggers `deploy-dev.yml` (or run manually).
-
-### 4. Optional — block direct pushes to main
-
-In the `main` ruleset, ensure **Restrict updates** is on so nobody pushes to `main` without a PR (except bypass actors you trust).
-
 ## Development deploy
 
 - **Environment:** `development` (GitHub Environment secrets)
+- **ECR:** `contenthub-dev-api`
 - **API domain:** `devhub.communityhealth.media`
 - **Terraform:** `infrastructure/terraform/environments/us-east-1`
-- **Var file (CI):** `infrastructure/terraform/environments/variables/dev.github.tfvars` (non-secrets, committed)
+- **Var file (CI):** `infrastructure/terraform/environments/variables/dev.github.tfvars`
 - **Var file (local):** `dev.tfvars` (gitignored — copy from `dev.tfvars.example`)
-- **Image tags:** semver `1.0.0`, `1.0.1`, … (auto-increment patch on each deploy); also pushes `dev-latest`
 
-### One-time GitHub setup
+### One-time GitHub setup (dev)
 
 1. **Create Environment** — Repo → Settings → Environments → **development**
 
-2. **Add Environment secrets** (same values you use locally as `TF_VAR_*`):
+2. **Add Environment secrets:**
 
-| GitHub secret | Terraform variable | Local equivalent |
-|---------------|-------------------|------------------|
-| `AWS_ROLE_ARN` | (OIDC only) | Your IAM role ARN for GitHub Actions |
-| `PUBLIC_API_KEY` | `TF_VAR_public_api_key` | `export TF_VAR_public_api_key=...` |
-| `WEBHOOK_API_KEY` | `TF_VAR_webhook_api_key` | `export TF_VAR_webhook_api_key=...` |
-| `JWT_SECRET` | `TF_VAR_jwt_secret` | `export TF_VAR_jwt_secret=...` |
-| `INTERNAL_CACHE_SECRET` | `TF_VAR_internal_cache_secret` | `export TF_VAR_internal_cache_secret=...` |
+| GitHub secret | Terraform variable |
+|---------------|-------------------|
+| `AWS_ROLE_ARN` | (OIDC only) |
+| `PUBLIC_API_KEY` | `TF_VAR_public_api_key` |
+| `WEBHOOK_API_KEY` | `TF_VAR_webhook_api_key` |
+| `JWT_SECRET` | `TF_VAR_jwt_secret` |
+| `INTERNAL_CACHE_SECRET` | `TF_VAR_internal_cache_secret` |
 
 **Platform integrations (optional — add when enabling LinkedIn/YouTube sync or AI insights):**
 
@@ -133,12 +125,11 @@ Empty optional secrets are OK — deploy still succeeds; platform sync features 
 
 ```bash
 chmod +x infrastructure/aws-github-oidc-setup.sh
-GITHUB_USER=<your-github-org> ./infrastructure/aws-github-oidc-setup.sh
+GITHUB_USER=<your-github-org> GITHUB_ENVIRONMENTS=development,production \
+  ./infrastructure/aws-github-oidc-setup.sh
 ```
 
-Paste the printed `AWS_ROLE_ARN` into the **development** environment secret of the same name.
-
-Uses a **dedicated** role (`GitHubActions-ContentHub-Deploy`) — do not reuse CHT's `GitHubActions-CHT-Platform` role (wrong repo trust + ECR/state prefixes).
+Paste the printed `AWS_ROLE_ARN` into **both** `development` and `production` environment secrets (same role; trust allows both environments).
 
 4. **Verify secrets** (optional):
 
@@ -147,26 +138,38 @@ AWS_ROLE_ARN=... PUBLIC_API_KEY=... WEBHOOK_API_KEY=... JWT_SECRET=... INTERNAL_
   ./scripts/verify-github-env-secrets.sh development
 ```
 
-### Semver image tags
+### Semver image tags (dev)
 
 Each dev deploy:
 
-1. Reads existing `x.y.z` tags on ECR `contenthub-api` (ignores `dev-latest`, `v0.0.9`, sha tags)
-2. First deploy → **1.0.0**; each later deploy bumps patch (**1.0.1**, **1.0.2**, …)
-3. Pushes `contenthub-api:{tag}` and `contenthub-worker:{tag}` plus `dev-latest` aliases
-4. Passes exact semver to Terraform `api_image` / `worker_image`
+1. Reads existing semver tags on ECR **`contenthub-dev-api`** (highest `x.y.z`)
+2. First deploy after reset → **1.0.0**; each later deploy bumps one step (`1.0.9` → `1.1.0`)
+3. Pushes `{tag}` and `dev-latest`
+4. Passes exact semver to Terraform `api_image`
 
-**Note:** `scripts/smoke.sh` against `devhub` only works from CHT/VPC (ALB SG is locked down). CI waits for ECS steady state instead.
-
-Preview next tag locally:
+Preview next tag:
 
 ```bash
-./scripts/next-dev-image-tag.sh contenthub-api us-east-1
+./scripts/next-ecr-image-tag.sh contenthub-dev-api us-east-1
+```
+
+## Production deploy
+
+- **Environment:** `production` (separate GitHub Environment secrets)
+- **ECR:** `contenthub-api`
+- **API domain:** `contenthub.communityhealth.media`
+- **Var file (CI):** `prod.github.tfvars` — fill VPC, subnets, SG, and ACM ARN before first prod apply
+
+Semver works the same as dev but against **`contenthub-api`** independently:
+
+```bash
+./scripts/next-ecr-image-tag.sh contenthub-api us-east-1
 ```
 
 ### Manual trigger
 
-Actions → **Deploy to Development** → Run workflow
+- Dev: Actions → **Deploy to Development**
+- Prod: Actions → **Deploy to Production**
 
 ### Local parity
 
@@ -176,10 +179,9 @@ export TF_VAR_webhook_api_key="..."
 export TF_VAR_jwt_secret="..."
 export TF_VAR_internal_cache_secret="..."
 
-TAG=$(./scripts/next-dev-image-tag.sh)
+TAG=$(./scripts/next-ecr-image-tag.sh contenthub-dev-api us-east-1)
 ./scripts/build-images.sh "$TAG"
 ./scripts/push-images.sh "$TAG" us-east-1 dev
-# Edit dev.tfvars api_image/worker_image to :$TAG or :dev-latest
 ./scripts/deploy-primary.sh dev
 ```
 

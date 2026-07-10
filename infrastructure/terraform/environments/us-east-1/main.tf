@@ -71,10 +71,11 @@ module "iam" {
 module "s3_assets" {
   source = "../../modules/storage/s3-assets"
 
-  project        = var.project
-  environment    = var.environment
-  aws_account_id = data.aws_caller_identity.current.account_id
-  task_role_arn  = module.iam.task_role_arn
+  project                 = var.project
+  environment             = var.environment
+  aws_account_id          = data.aws_caller_identity.current.account_id
+  task_role_arn           = module.iam.task_role_arn
+  attach_task_role_policy = true
 }
 
 module "app_secrets" {
@@ -106,21 +107,6 @@ module "app_secrets" {
   x_bearer_token             = var.x_bearer_token
   x_account_handle           = var.x_account_handle
   wordpress_webhook_secret   = var.wordpress_webhook_secret
-}
-
-module "rds" {
-  source = "../../modules/database/rds"
-
-  project                 = var.project
-  environment             = var.environment
-  vpc_id                  = var.vpc_id
-  private_subnet_ids      = var.private_subnet_ids
-  allowed_security_groups = []
-  engine_version          = var.rds_engine_version
-  instance_class          = var.rds_instance_class
-  allocated_storage       = var.rds_allocated_storage
-  multi_az                = var.rds_multi_az
-  backup_retention_period = var.rds_backup_retention
 }
 
 module "alb_api" {
@@ -179,15 +165,16 @@ module "ecs_api" {
   log_group_name        = local.log_group_name
   container_image       = var.api_image
   app_version           = local.api_image_tag
-  database_secret_arn   = module.rds.database_secret_arn
+  database_secret_arn   = local.database_secret_arn
   app_secrets_arn       = module.app_secrets.app_secrets_arn
   task_cpu              = var.api_task_cpu
   task_memory           = var.api_task_memory
   desired_count         = var.api_desired_count
   min_capacity          = var.api_min_capacity
   max_capacity          = var.api_max_capacity
+  create_service        = var.deploy_api_ecs_service
 
-  depends_on = [module.rds, module.app_secrets]
+  depends_on = [module.app_secrets]
 }
 
 module "ecs_worker" {
@@ -205,7 +192,7 @@ module "ecs_worker" {
   task_role_arn       = module.iam.task_role_arn
   log_group_name      = local.log_group_name
   container_image     = var.worker_image
-  database_secret_arn = module.rds.database_secret_arn
+  database_secret_arn = local.database_secret_arn
   app_secrets_arn     = module.app_secrets.app_secrets_arn
   cht_cache_clear_url = var.cht_cache_clear_url
   task_cpu            = var.worker_task_cpu
@@ -216,7 +203,7 @@ module "ecs_worker" {
 # ECS → RDS (separate rules avoid Terraform cycle: rds secrets ↔ ecs_api SG)
 resource "aws_vpc_security_group_ingress_rule" "rds_from_api" {
   description                  = "PostgreSQL from contenthub-api ECS tasks"
-  security_group_id            = module.rds.security_group_id
+  security_group_id            = local.database_security_group_id
   referenced_security_group_id = module.ecs_api.security_group_id
   from_port                    = 5432
   to_port                      = 5432
@@ -227,7 +214,7 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_worker" {
   count = var.worker_desired_count > 0 ? 1 : 0
 
   description                  = "PostgreSQL from contenthub-worker ECS tasks"
-  security_group_id            = module.rds.security_group_id
+  security_group_id            = local.database_security_group_id
   referenced_security_group_id = module.ecs_worker[0].security_group_id
   from_port                    = 5432
   to_port                      = 5432

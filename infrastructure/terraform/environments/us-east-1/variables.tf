@@ -85,7 +85,9 @@ variable "api_image" {
 }
 
 variable "worker_image" {
-  type = string
+  type        = string
+  default     = "233636046512.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:unused"
+  description = "Unused when worker_desired_count = 0 (ECS worker retired; Lambdas handle async work)."
 }
 
 # RDS
@@ -112,6 +114,41 @@ variable "rds_multi_az" {
 variable "rds_backup_retention" {
   type    = number
   default = 7
+}
+
+variable "enable_aurora_global" {
+  description = "Provision Aurora PostgreSQL Global Database (parallel to RDS until cutover)"
+  type        = bool
+  default     = false
+}
+
+variable "aurora_instance_class" {
+  description = "Aurora instance class for Global Database primary"
+  type        = string
+  default     = "db.r6g.large"
+}
+
+variable "aurora_engine_version" {
+  description = "Aurora PostgreSQL engine version"
+  type        = string
+  default     = "15.17"
+}
+
+variable "aurora_use_for_app" {
+  description = "Point ECS/Lambdas at Aurora credentials (requires enable_aurora_global)"
+  type        = bool
+  default     = false
+}
+
+variable "decommission_rds" {
+  description = "Remove standalone RDS after Aurora cutover (requires enable_aurora_global and aurora_use_for_app)"
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.decommission_rds || (var.enable_aurora_global && var.aurora_use_for_app)
+    error_message = "decommission_rds requires enable_aurora_global = true and aurora_use_for_app = true."
+  }
 }
 
 variable "log_retention_days" {
@@ -152,6 +189,12 @@ variable "api_max_capacity" {
   default = 2
 }
 
+variable "deploy_api_ecs_service" {
+  type        = bool
+  default     = true
+  description = "When false, Terraform creates ECS task definition + SG but not the running service (deploy API locally)."
+}
+
 # ECS sizing — worker
 variable "worker_task_cpu" {
   type    = number
@@ -190,31 +233,7 @@ variable "internal_cache_secret" {
   default   = ""
 }
 
-variable "manage_route53" {
-  type        = bool
-  default     = true
-  description = "Create Route53 hosted zone + ALB alias for api_domain (R53 → ALB → ECS → RDS)"
-}
-
-variable "cht_cache_clear_url" {
-  type    = string
-  default = ""
-}
-
-variable "sync_lambda_package_path" {
-  type        = string
-  default     = ""
-  description = "Path to dist/sync-lambda.zip — default: repo dist/sync-lambda.zip (run ./scripts/build-sync-lambda.sh before apply)"
-}
-
-variable "sync_jobs_enabled" {
-  type        = map(bool)
-  default     = {}
-  description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
-}
-
-# Platform integration secrets — pass via dev.tfvars (local) or TF_VAR_* (GitHub Actions).
-# See infrastructure/terraform/environments/variables/dev.tfvars.example
+# Platform integration secrets — pass via dev.tfvars / prod.tfvars or TF_VAR_* (GitHub Actions).
 
 variable "openai_api_key" {
   type      = string
@@ -319,4 +338,27 @@ variable "wordpress_webhook_secret" {
   type      = string
   sensitive = true
   default   = ""
+}
+
+variable "manage_route53" {
+  type        = bool
+  default     = true
+  description = "Create Route53 hosted zone + ALB alias for api_domain (R53 → ALB → ECS → RDS)"
+}
+
+variable "cht_cache_clear_url" {
+  type    = string
+  default = ""
+}
+
+variable "sync_lambda_package_path" {
+  type        = string
+  default     = ""
+  description = "Path to dist/sync-lambda.zip — default: repo dist/sync-lambda.zip (run ./scripts/build-sync-lambda.sh before apply)"
+}
+
+variable "sync_jobs_enabled" {
+  type        = map(bool)
+  default     = {}
+  description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
 }

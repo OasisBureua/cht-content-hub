@@ -17,6 +17,7 @@ from path_setup import install  # noqa: E402
 
 install()
 
+from migrations.helpers import column_exists, index_exists  # noqa: E402
 from models.kol import KOL  # noqa: E402
 from services.kol_slugs import assign_slugs  # noqa: E402
 
@@ -28,9 +29,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def _backfill_kol_slugs(connection: sa.Connection) -> None:
     rows = connection.execute(
-        sa.text(
-            "SELECT id, name FROM kols ORDER BY name ASC"
-        )
+        sa.text("SELECT id, name FROM kols ORDER BY name ASC")
     ).mappings().all()
     if not rows:
         return
@@ -44,21 +43,32 @@ def _backfill_kol_slugs(connection: sa.Connection) -> None:
 
 
 def upgrade() -> None:
-    op.add_column("kols", sa.Column("slug", sa.String(length=128), nullable=True))
-    _backfill_kol_slugs(op.get_bind())
-    op.alter_column("kols", "slug", nullable=False)
-    op.create_index("ix_kols_slug", "kols", ["slug"], unique=True)
+    bind = op.get_bind()
 
-    op.create_index(
-        "ix_signals_hcp_type_observed",
-        "hcp_signals",
-        ["hcp_npi", "signal_type", "observed_at"],
-        unique=False,
-        postgresql_ops={"observed_at": "DESC"},
-    )
+    if not column_exists("kols", "slug"):
+        op.add_column("kols", sa.Column("slug", sa.String(length=128), nullable=True))
+        _backfill_kol_slugs(bind)
+        op.alter_column("kols", "slug", nullable=False)
+    else:
+        _backfill_kol_slugs(bind)
+
+    if not index_exists("kols", "ix_kols_slug"):
+        op.create_index("ix_kols_slug", "kols", ["slug"], unique=True)
+
+    if not index_exists("hcp_signals", "ix_signals_hcp_type_observed"):
+        op.create_index(
+            "ix_signals_hcp_type_observed",
+            "hcp_signals",
+            ["hcp_npi", "signal_type", "observed_at"],
+            unique=False,
+            postgresql_ops={"observed_at": "DESC"},
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_signals_hcp_type_observed", table_name="hcp_signals")
-    op.drop_index("ix_kols_slug", table_name="kols")
-    op.drop_column("kols", "slug")
+    if index_exists("hcp_signals", "ix_signals_hcp_type_observed"):
+        op.drop_index("ix_signals_hcp_type_observed", table_name="hcp_signals")
+    if index_exists("kols", "ix_kols_slug"):
+        op.drop_index("ix_kols_slug", table_name="kols")
+    if column_exists("kols", "slug"):
+        op.drop_column("kols", "slug")

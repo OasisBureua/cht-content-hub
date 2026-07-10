@@ -97,3 +97,9 @@ variable "max_capacity" {
   type    = number
   default = 2
 }
+
+variable "create_service" {
+  type        = bool
+  default     = true
+  description = "When false, create task definition + SG only (no ECS service or autoscaling)."
+}

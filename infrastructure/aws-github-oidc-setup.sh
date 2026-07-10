@@ -10,6 +10,7 @@
 #   ./infrastructure/aws-github-oidc-setup.sh
 #   GITHUB_USER=myorg REPO_NAME=cht-content-hub ./infrastructure/aws-github-oidc-setup.sh
 #   GITHUB_ENVIRONMENT=development ./infrastructure/aws-github-oidc-setup.sh
+#   GITHUB_ENVIRONMENTS=development,production ./infrastructure/aws-github-oidc-setup.sh
 #
 # Then add AWS_ROLE_ARN to GitHub → Settings → Environments → development → Secrets
 set -euo pipefail
@@ -21,6 +22,7 @@ echo ""
 GITHUB_USER="${GITHUB_USER:-}"
 REPO_NAME="${REPO_NAME:-cht-content-hub}"
 GITHUB_ENVIRONMENT="${GITHUB_ENVIRONMENT:-development}"
+GITHUB_ENVIRONMENTS="${GITHUB_ENVIRONMENTS:-${GITHUB_ENVIRONMENT}}"
 ROLE_NAME="GitHubActions-ContentHub-Deploy"
 POLICY_NAME="GitHubActions-ContentHub-Deploy"
 
@@ -35,12 +37,21 @@ echo ""
 echo "📋 Configuration:"
 echo "  AWS Account:  $AWS_ACCOUNT_ID"
 echo "  GitHub repo:  ${GITHUB_USER}/${REPO_NAME}"
-echo "  Environment:  ${GITHUB_ENVIRONMENT} (trust sub filter)"
+echo "  Environment:  ${GITHUB_ENVIRONMENTS} (trust sub filter)"
 echo "  IAM role:     ${ROLE_NAME}"
 echo ""
 
 TRUST_FILE="$(mktemp)"
 trap 'rm -f "$TRUST_FILE"' EXIT
+
+SUB_PATTERNS=""
+IFS=',' read -r -a ENV_LIST <<< "$GITHUB_ENVIRONMENTS"
+for env_name in "${ENV_LIST[@]}"; do
+  env_name="$(echo "$env_name" | xargs)"
+  [ -z "$env_name" ] && continue
+  SUB_PATTERNS="${SUB_PATTERNS}\"repo:${GITHUB_USER}/${REPO_NAME}:environment:${env_name}\","
+done
+SUB_PATTERNS="${SUB_PATTERNS%,}"
 
 cat > "$TRUST_FILE" <<EOF
 {
@@ -56,8 +67,10 @@ cat > "$TRUST_FILE" <<EOF
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:${GITHUB_USER}/${REPO_NAME}:environment:${GITHUB_ENVIRONMENT}"
+        "ForAnyValue:StringLike": {
+          "token.actions.githubusercontent.com:sub": [
+            ${SUB_PATTERNS}
+          ]
         }
       }
     }
@@ -113,7 +126,7 @@ aws iam attach-role-policy \
 echo ""
 echo "✅ Setup complete"
 echo ""
-echo "Add to GitHub → Settings → Environments → ${GITHUB_ENVIRONMENT} → Environment secrets:"
+echo "Add to GitHub → Settings → Environments → development / production → Environment secrets:"
 echo ""
 echo "  AWS_ROLE_ARN=${ROLE_ARN}"
 echo ""
@@ -127,5 +140,7 @@ echo "Verify:"
 echo "  PUBLIC_API_KEY=... WEBHOOK_API_KEY=... JWT_SECRET=... INTERNAL_CACHE_SECRET=... \\"
 echo "    AWS_ROLE_ARN=${ROLE_ARN} ./scripts/verify-github-env-secrets.sh ${GITHUB_ENVIRONMENT}"
 echo ""
-echo "First deploy: Actions → Deploy to Development → Run workflow"
-echo "  Image tag will be 1.0.0 (then 1.0.1, ...) — see scripts/next-dev-image-tag.sh"
+echo "First deploy:"
+echo "  Dev:  Actions → Deploy to Development → Run workflow"
+echo "  Prod: Actions → Deploy to Production → Run workflow"
+echo "  Image tags start at 1.0.0 per ECR repo — see scripts/next-ecr-image-tag.sh"

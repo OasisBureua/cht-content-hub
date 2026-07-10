@@ -51,7 +51,7 @@ locals {
     Value: Add 4 records, one per nameserver:
     ${join("\n    ", module.route53_api[0].name_servers)}
 
-    This delegates ${var.api_domain} to Route53 -> ALB -> ECS -> RDS.
+    This delegates ${var.api_domain} to Route53 -> ALB -> ECS -> Aurora/RDS.
 
     CHT CONTENTHUB_BASE_URL: ${module.alb_api.api_base_url}/api/public
     Smoke test: ./scripts/smoke.sh https://${var.api_domain}
@@ -85,12 +85,31 @@ output "worker_service_name" {
 }
 
 output "rds_endpoint" {
-  value     = module.rds.db_endpoint
+  value = local.aurora_app_active ? module.aurora_global[0].cluster_endpoint : (
+    length(module.rds) > 0 ? module.rds[0].db_endpoint : null
+  )
   sensitive = true
 }
 
+output "aurora_global_cluster_id" {
+  description = "Aurora Global cluster identifier (null when enable_aurora_global = false)"
+  value       = var.enable_aurora_global ? module.aurora_global[0].global_cluster_id : null
+}
+
+output "aurora_cluster_endpoint" {
+  description = "Aurora writer endpoint (null when enable_aurora_global = false)"
+  value       = var.enable_aurora_global ? module.aurora_global[0].cluster_endpoint : null
+  sensitive   = true
+}
+
+output "aurora_reader_endpoint" {
+  description = "Aurora regional reader endpoint"
+  value       = var.enable_aurora_global ? module.aurora_global[0].cluster_reader_endpoint : null
+  sensitive   = true
+}
+
 output "database_secret_arn" {
-  value = module.rds.database_secret_arn
+  value = local.database_secret_arn
 }
 
 output "assets_bucket_name" {

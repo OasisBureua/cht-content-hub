@@ -8,6 +8,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from migrations.helpers import index_exists, table_exists
+
 revision: str = "0006_campaign_platform_data"
 down_revision: Union[str, None] = "0005_platform_snapshots"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -15,8 +17,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "campaign_platform_data",
+    if not table_exists("campaign_platform_data"):
+        op.create_table(
+            "campaign_platform_data",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("campaign_id", sa.Integer(), nullable=False),
         sa.Column("platform", sa.String(length=32), nullable=False),
@@ -44,12 +47,13 @@ def upgrade() -> None:
             "fetch_date",
             name="uix_campaign_platform_fetch_date",
         ),
-    )
-    op.create_index(
-        "ix_campaign_platform_data_campaign_id",
-        "campaign_platform_data",
-        ["campaign_id"],
-    )
+        )
+    if not index_exists("campaign_platform_data", "ix_campaign_platform_data_campaign_id"):
+        op.create_index(
+            "ix_campaign_platform_data_campaign_id",
+            "campaign_platform_data",
+            ["campaign_id"],
+        )
 
     bind = op.get_bind()
     inspector = sa.inspect(bind)

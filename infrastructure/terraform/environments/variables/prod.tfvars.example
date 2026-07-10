@@ -13,14 +13,22 @@ vpc_id = "vpc-xxxxxxxx"
 private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
 
-api_image    = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:prod-latest"
-worker_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-worker:prod-latest"
+# false for infra-only apply; true when ./scripts/deploy-api-service.sh runs
+deploy_api_ecs_service = false
+
+api_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:1.0.0"
 
 rds_instance_class    = "db.r6g.large"
 rds_engine_version    = "15.17"
 rds_allocated_storage = 100
 rds_multi_az          = true
 rds_backup_retention  = 30
+
+enable_aurora_global  = true
+aurora_instance_class   = "db.r6g.large"
+aurora_engine_version   = "15.17"
+aurora_use_for_app      = true
+decommission_rds        = true
 
 api_task_cpu      = 1024
 api_task_memory   = 2048
@@ -32,4 +40,4 @@ worker_task_cpu      = 1024
 worker_task_memory   = 2048
 worker_desired_count = 0
 
-cht_cache_clear_url = "https://contenthub.communityhealth.media/internal/cache/catalog/clear"
+cht_cache_clear_url = "https://testapp.communityhealth.media/api/internal/cache/catalog/clear"

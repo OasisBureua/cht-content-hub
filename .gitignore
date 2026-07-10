@@ -34,7 +34,10 @@ backend/reports/
 .terraform/
 .terraform.lock.hcl
 *.tfplan
+infrastructure/terraform/environments/variables/dev.tfvars
+infrastructure/terraform/environments/variables/prod.tfvars
 infrastructure/terraform/environments/variables/*.tfvars
+!infrastructure/terraform/environments/variables/*.github.tfvars
 infrastructure/terraform/environments/variables/.cert-arns*
 
 # Testing
