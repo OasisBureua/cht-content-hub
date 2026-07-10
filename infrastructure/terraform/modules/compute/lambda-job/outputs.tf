@@ -17,3 +17,11 @@ output "sqs_queue_arn" {
 output "sqs_queue_url" {
   value = try(aws_sqs_queue.job[0].url, null)
 }
+
+output "iam_role_name" {
+  value = aws_iam_role.lambda.name
+}
+
+output "iam_role_arn" {
+  value = aws_iam_role.lambda.arn
+}

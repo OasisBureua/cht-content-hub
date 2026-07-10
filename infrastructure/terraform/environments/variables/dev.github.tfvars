@@ -66,6 +66,7 @@ sync_jobs_enabled = {
   post_tagging           = false
   playlist_doctor_tagger = false
   wordpress_ingest       = true
+  clips_seed             = true
 }
 
 # Platform integration secrets are NOT stored here (committed file).
