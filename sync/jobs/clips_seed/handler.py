@@ -1,27 +1,25 @@
-"""clips_seed — one-shot Lambda that restores mediahub prod clip data into contenthub RDS.
+"""clips_seed - one-shot Lambda that restores mediahub prod clip data into contenthub RDS.
 
-Triggered manually (no schedule, no SQS). Reads a pg_dump SQL file from S3 —
-generated with `pg_dump --data-only --column-inserts --disable-triggers` against
-mediahub prod (see `.claude/plans/clip-data-seed.md` for the exact command) —
+Triggered manually (no schedule, no SQS). Reads a pg_dump SQL file from S3
+(generated with `pg_dump --data-only --column-inserts --disable-triggers` against
+mediahub prod - see `.claude/plans/clip-data-seed.md` for the exact command)
 and applies it to the contenthub RDS instance in a single transaction.
 
 Design:
-- **Idempotent**: skips the restore if `clips` already has ≥ SKIP_THRESHOLD rows.
-  The dump is meant to be a one-time bootstrap; re-invocations return `status=skipped`.
-- **Transactional**: entire dump runs inside `BEGIN ... COMMIT`. If any statement
-  fails, the whole thing rolls back — the DB stays in the pre-seed state.
-- **psql-metacommand-safe**: strips `\restrict`/`\unrestrict` lines (pg_dump 16+
+- Idempotent: skips the restore if `clips` already has >= SKIP_THRESHOLD rows.
+  The dump is meant to be a one-time bootstrap; re-invocations return status=skipped.
+- Transactional: entire dump runs inside `BEGIN ... COMMIT`. If any statement
+  fails, the whole thing rolls back - the DB stays in the pre-seed state.
+- psql-metacommand-safe: strips `\\restrict`/`\\unrestrict` lines (pg_dump 16+
   emits these; they are psql-only, asyncpg cannot parse them).
-- **--disable-triggers is baked into the dump** so FK ordering doesn't matter,
-  but the standard order (shoots → clips → posts) is what pg_dump produces anyway.
+- --disable-triggers is baked into the dump so FK ordering doesn't matter,
+  but the standard order (shoots, clips, posts) is what pg_dump produces anyway.
 
 Invocation:
     aws lambda invoke \\
       --function-name contenthub-dev-sync-clips-seed \\
       --payload '{"bucket":"contenthub-dev-assets","key":"seeds/mediahub-clips-posts-2026-07-10.sql"}' \\
       /tmp/resp.json && cat /tmp/resp.json
-
-Empty payload uses the DEFAULT_BUCKET + DEFAULT_KEY constants below.
 """
 
 from __future__ import annotations
@@ -36,14 +34,14 @@ from shared.runtime import configure_logging, install_paths, run_async
 
 log = logging.getLogger(__name__)
 
-# When the payload doesn't specify — matches the seed we upload during initial rollout.
+# When the payload doesn't specify - matches the seed we upload during initial rollout.
 _DEFAULT_BUCKET_ENV = "CLIPS_SEED_BUCKET"
 _DEFAULT_KEY_ENV = "CLIPS_SEED_KEY"
 
-# If clips already has ≥ this many rows, treat the DB as already-seeded and skip.
+# If clips already has >= this many rows, treat the DB as already-seeded and skip.
 # Chosen well below the ~3.1k mediahub prod count so a partial seed still triggers
 # a re-run (the transaction guarantees "all or nothing", so a partial state
-# shouldn't exist — but the guard is cheap safety).
+# shouldn't exist - but the guard is cheap safety).
 _SKIP_THRESHOLD = 100
 
 
@@ -87,7 +85,7 @@ async def _restore(bucket: str, key: str) -> dict[str, Any]:
         existing = await conn.fetchval("SELECT COUNT(*) FROM clips")
         if existing >= _SKIP_THRESHOLD:
             log.info(
-                "Skipping seed — clips already has %d rows (threshold %d)",
+                "Skipping seed - clips already has %d rows (threshold %d)",
                 existing,
                 _SKIP_THRESHOLD,
             )
@@ -128,7 +126,7 @@ async def _run(event: dict) -> dict:
         return {
             "status": "error",
             "reason": (
-                "bucket and key required — pass in payload or set "
+                "bucket and key required - pass in payload or set "
                 f"{_DEFAULT_BUCKET_ENV} / {_DEFAULT_KEY_ENV} env vars"
             ),
         }
