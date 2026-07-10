@@ -66,7 +66,7 @@ module "ecr_replication" {
   source = "../../modules/compute/ecr-replication"
 
   destination_region = var.ecr_replication_destination_region
-  repository_prefix  = "contenthub"
+  repository_prefix  = "contenthub-api"
   repository_names   = local.ecr_replication_repository_names
 }
 
