@@ -66,10 +66,11 @@ sync_jobs_enabled = {
   post_tagging           = false
   playlist_doctor_tagger = false
   wordpress_ingest       = true
+  clips_seed             = true
 }
 
 # Platform integration secrets are NOT stored here (committed file).
 # Add GitHub Environment "development" secrets → TF_VAR_* on deploy.
 # See .github/CI_CD.md — e.g. LINKEDIN_ADS_CLIENT_ID, YOUTUBE_API_KEY, OPENAI_API_KEY.
 
-cht_cache_clear_url = "https://devapp.communityhealth.media/api/internal/cache/catalog/clear"
+cht_cache_clear_url = "https://devapp.communityhealth.media/api/internal/cache/clear/all"

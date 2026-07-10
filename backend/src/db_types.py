@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from sqlalchemy import JSON, String
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.types import TypeDecorator
 

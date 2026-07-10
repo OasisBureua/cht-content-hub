@@ -70,12 +70,13 @@ sync_jobs_enabled = {
   post_tagging           = false
   playlist_doctor_tagger = false
   wordpress_ingest       = false
+  clips_seed             = true
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
 wordpress_ingress_cidr_blocks = []
 
-cht_cache_clear_url = "https://testapp.communityhealth.media/api/internal/cache/catalog/clear"
+cht_cache_clear_url = "https://testapp.communityhealth.media/api/internal/cache/clear/all"
 
 # ── DR (us-east-2) — applied by deploy-prod.yml after use1 ───────────────────
 dr_vpc_id = "vpc-0fbc2514f4e3467f2"
