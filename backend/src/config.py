@@ -63,6 +63,21 @@ class Settings(BaseSettings):
         validation_alias="YOUTUBE_CHANNEL_HANDLE",
     )
 
+    # WordPress webhook — shared secret with Andrew's wp-config.php, used for
+    # HMAC-SHA256 signature validation on POST /api/wordpress/webhook.
+    wordpress_webhook_secret: str = Field(
+        default="",
+        validation_alias="WORDPRESS_WEBHOOK_SECRET",
+    )
+
+    # SQS queue receiving validated WordPress webhook payloads. ECS route
+    # enqueues here; Lambda consumer drains it. Empty in local dev — the
+    # webhook route no-ops the SQS call and returns 200 for testing.
+    wordpress_events_queue_url: str = Field(
+        default="",
+        validation_alias="WORDPRESS_EVENTS_QUEUE_URL",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

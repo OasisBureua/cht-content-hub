@@ -8,6 +8,12 @@ locals {
   ])
 }
 
+data "aws_ip_ranges" "route53_healthchecks" {
+  count = var.allow_route53_health_check_ingress ? 1 : 0
+
+  services = ["ROUTE53_HEALTHCHECKS"]
+}
+
 resource "aws_security_group" "alb" {
   name        = "${local.prefix}-api-alb-sg"
   description = "Internet-facing ALB for contenthub-api (CHT consumer)"
@@ -81,6 +87,28 @@ resource "aws_vpc_security_group_ingress_rule" "https_from_cidr" {
   ip_protocol       = "tcp"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "https_from_route53_healthchecks" {
+  for_each = var.allow_route53_health_check_ingress ? toset(data.aws_ip_ranges.route53_healthchecks[0].cidr_blocks) : toset([])
+
+  description       = "HTTPS from Route53 health checkers"
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = each.value
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "http_from_route53_healthchecks" {
+  for_each = var.allow_route53_health_check_ingress ? toset(data.aws_ip_ranges.route53_healthchecks[0].cidr_blocks) : toset([])
+
+  description       = "HTTP /health from Route53 health checkers"
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = each.value
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+}
+
 resource "aws_lb" "main" {
   name               = "${local.prefix}-api-alb"
   internal           = false
@@ -133,6 +161,26 @@ resource "aws_lb_listener" "http_redirect" {
       port        = "443"
       protocol    = "HTTPS"
       status_code = "HTTP_301"
+    }
+  }
+}
+
+# Route53 health checks probe primary ALB DNS on HTTP :80 /health (not api_domain).
+# Forward /health to targets so 503 reflects unhealthy ECS; default action stays redirect.
+resource "aws_lb_listener_rule" "http_health_forward" {
+  count = var.certificate_arn != "" ? 1 : 0
+
+  listener_arn = aws_lb_listener.http_redirect[0].arn
+  priority     = 1
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/health", "/health/*"]
     }
   }
 }

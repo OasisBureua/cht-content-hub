@@ -103,6 +103,12 @@ variable "enhanced_monitoring_interval" {
   }
 }
 
+variable "enhanced_monitoring_role_name" {
+  description = "Override IAM role name for RDS Enhanced Monitoring (secondary clusters default to {project}-aurora-enhanced-monitoring)"
+  type        = string
+  default     = ""
+}
+
 variable "iam_database_authentication_enabled" {
   description = "Enable IAM database authentication (password auth continues to work)"
   type        = bool

@@ -65,9 +65,9 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([
     {
-      name      = "contenthub-api"
-      image     = var.container_image
-      essential = true
+      name         = "contenthub-api"
+      image        = var.container_image
+      essential    = true
       portMappings = [{ containerPort = 8000, protocol = "tcp" }]
       environment = concat(
         [
@@ -77,7 +77,8 @@ resource "aws_ecs_task_definition" "api" {
           { name = "APP_VERSION", value = var.app_version },
           { name = "CONTAINER_IMAGE", value = var.container_image },
         ],
-        var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : []
+        var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : [],
+        var.wordpress_events_queue_url != "" ? [{ name = "WORDPRESS_EVENTS_QUEUE_URL", value = var.wordpress_events_queue_url }] : [],
       )
       secrets = concat(
         [

@@ -5,7 +5,16 @@ locals {
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${local.prefix}-app-secrets"
   description             = "Application secrets for Content Hub ${var.environment}"
-  recovery_window_in_days = 7
+  kms_key_id              = var.kms_key_id != "" ? var.kms_key_id : null
+  recovery_window_in_days = contains(["prod", "platform"], var.environment) ? 30 : 7
+
+  dynamic "replica" {
+    for_each = var.replica_regions
+    content {
+      region     = replica.value.region
+      kms_key_id = try(replica.value.kms_key_id, null)
+    }
+  }
 
   tags = {
     Name        = "${local.prefix}-app-secrets"

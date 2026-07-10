@@ -6,6 +6,21 @@ variable "environment" {
   type = string
 }
 
+variable "kms_key_id" {
+  description = "Optional KMS key ID/ARN for secrets encryption (omit for AWS-managed key)."
+  type        = string
+  default     = ""
+}
+
+variable "replica_regions" {
+  description = "Secrets Manager multi-region replicas (e.g. us-east-2 DR)."
+  type = list(object({
+    region     = string
+    kms_key_id = optional(string)
+  }))
+  default = []
+}
+
 variable "public_api_key" {
   type      = string
   sensitive = true

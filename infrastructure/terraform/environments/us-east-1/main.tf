@@ -38,11 +38,19 @@ data "aws_caller_identity" "current" {}
 
 locals {
   resource_prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
-  log_retention   = coalesce(
+  log_retention = coalesce(
     var.log_retention_days,
     contains(["prod", "platform"], var.environment) ? 365 : 7
   )
   api_image_tag   = try(element(split(":", var.api_image), 1), "unknown")
+  ecr_replication_repository_names = var.environment == "prod" ? ["contenthub-api"] : ["contenthub-dev-api"]
+
+  secrets_replica_regions = [
+    for region in var.secrets_replica_regions : {
+      region     = region
+      kms_key_id = lookup(var.secrets_replica_kms_key_ids, region, null)
+    }
+  ]
 }
 
 module "ecs_cluster" {
@@ -51,6 +59,15 @@ module "ecs_cluster" {
   project            = var.project
   environment        = var.environment
   log_retention_days = local.log_retention
+}
+
+module "ecr_replication" {
+  count  = var.enable_ecr_replication ? 1 : 0
+  source = "../../modules/compute/ecr-replication"
+
+  destination_region = var.ecr_replication_destination_region
+  repository_prefix  = "contenthub"
+  repository_names   = local.ecr_replication_repository_names
 }
 
 locals {
@@ -62,10 +79,12 @@ locals {
 module "iam" {
   source = "../../modules/security/iam"
 
-  project         = var.project
-  environment     = var.environment
-  aws_region      = "us-east-1"
-  aws_account_id  = data.aws_caller_identity.current.account_id
+  project                    = var.project
+  environment                = var.environment
+  aws_region                 = "us-east-1"
+  aws_account_id             = data.aws_caller_identity.current.account_id
+  wordpress_ingest_enabled   = lookup(var.sync_jobs_enabled, "wordpress_ingest", false)
+  wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
 }
 
 module "s3_assets" {
@@ -81,8 +100,11 @@ module "s3_assets" {
 module "app_secrets" {
   source = "../../modules/security/secrets-manager"
 
-  project               = var.project
-  environment           = var.environment
+  project         = var.project
+  environment     = var.environment
+  kms_key_id      = var.secrets_kms_key_id
+  replica_regions = local.secrets_replica_regions
+
   public_api_key        = var.public_api_key
   webhook_api_key       = var.webhook_api_key
   jwt_secret            = var.jwt_secret
@@ -123,7 +145,10 @@ module "alb_api" {
   allowed_ingress_security_group_ids = compact([
     var.cht_backend_security_group_id,
   ])
-  allowed_ingress_cidr_blocks = var.cht_nat_gateway_cidr_blocks
+  allowed_ingress_cidr_blocks = concat(
+    var.cht_nat_gateway_cidr_blocks,
+    var.wordpress_ingress_cidr_blocks,
+  )
 }
 
 module "waf_alb" {
@@ -145,36 +170,43 @@ module "route53_api" {
 
   alb_dns_name = module.alb_api.alb_dns_name
   alb_zone_id  = module.alb_api.alb_zone_id
+
+  enable_failover          = var.enable_route53_failover
+  secondary_alb_dns_name   = local.route53_failover_secondary_alb_dns_name
+  secondary_alb_zone_id    = local.route53_failover_secondary_alb_zone_id
+  failover_alarm_actions   = var.route53_failover_alarm_actions
 }
 
 module "ecs_api" {
   source = "../../modules/compute/ecs-api"
 
-  project               = var.project
-  environment           = var.environment
-  aws_region            = "us-east-1"
-  vpc_id                = var.vpc_id
-  private_subnet_ids    = var.private_subnet_ids
-  cluster_id            = local.cluster_id
-  cluster_name          = local.cluster_name
-  execution_role_arn    = module.iam.execution_role_arn
-  task_role_arn         = module.iam.task_role_arn
-  alb_security_group_id = module.alb_api.alb_security_group_id
-  target_group_arn      = module.alb_api.target_group_arn
-  alb_listener_arn      = module.alb_api.listener_arn
-  log_group_name        = local.log_group_name
-  container_image       = var.api_image
-  app_version           = local.api_image_tag
-  database_secret_arn   = local.database_secret_arn
-  app_secrets_arn       = module.app_secrets.app_secrets_arn
-  task_cpu              = var.api_task_cpu
-  task_memory           = var.api_task_memory
-  desired_count         = var.api_desired_count
-  min_capacity          = var.api_min_capacity
-  max_capacity          = var.api_max_capacity
-  create_service        = var.deploy_api_ecs_service
+  project                    = var.project
+  environment                = var.environment
+  aws_region                 = "us-east-1"
+  vpc_id                     = var.vpc_id
+  private_subnet_ids         = var.private_subnet_ids
+  cluster_id                 = local.cluster_id
+  cluster_name               = local.cluster_name
+  execution_role_arn         = module.iam.execution_role_arn
+  task_role_arn              = module.iam.task_role_arn
+  alb_security_group_id      = module.alb_api.alb_security_group_id
+  target_group_arn           = module.alb_api.target_group_arn
+  alb_listener_arn           = module.alb_api.listener_arn
+  log_group_name             = local.log_group_name
+  container_image            = var.api_image
+  app_version                = local.api_image_tag
+  database_secret_arn        = local.database_secret_arn
+  app_secrets_arn            = module.app_secrets.app_secrets_arn
+  task_cpu                   = var.api_task_cpu
+  task_memory                = var.api_task_memory
+  desired_count              = var.api_desired_count
+  min_capacity               = var.api_min_capacity
+  max_capacity               = var.api_max_capacity
+  create_service             = var.deploy_api_ecs_service
+  wordpress_events_queue_url = try(module.sync_lambda["wordpress_ingest"].sqs_queue_url, "")
+  wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
 
-  depends_on = [module.app_secrets]
+  depends_on = [module.app_secrets, module.sync_lambda]
 }
 
 module "ecs_worker" {

@@ -5,9 +5,9 @@
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `pr-validation.yml` | Pull requests | Terraform validate |
-| `branch-policy.yml` | PRs → `main` | Require head branch `release/*` (and based on `main`) |
+| `branch-policy.yml` | PRs → `main`, push `release/**` | Require `release/*` head; release must branch from `develop` |
 | `deploy-dev.yml` | Push to `develop` / `feature/**`, manual | Build API → `contenthub-dev-api`, Terraform apply dev |
-| `deploy-prod.yml` | Push to `main` / `release/**`, manual | Build API → `contenthub-api`, Terraform apply prod |
+| `deploy-prod.yml` | Merged `release/*` → `main`, manual | Build API → Terraform apply prod (use1 + use2 DR) |
 
 Docs-only changes under `docs/**` do not trigger deploys.
 
@@ -38,7 +38,7 @@ Repo → **Settings → Rules → Rulesets → New branch ruleset**
 | Restrict deletions | ✓ |
 | Block force pushes | ✓ |
 | Require a pull request | ✓ (1 approval, optional code owners) |
-| Require status checks | ✓ — add **`main-from-release-only`** and **`release-contains-main`** (after first workflow run) |
+| Require status checks | ✓ — add **`main-from-release-only`** and **`release-from-develop`** (after first workflow run) |
 | Require branches up to date | ✓ (recommended) |
 
 Do **not** allow broad bypass on this ruleset.
@@ -58,20 +58,18 @@ New ruleset:
 
 **Creating `release/*` from `main`:** GitHub has no single “must branch off main” toggle. Enforce with:
 
-- Team process: `git checkout main && git pull && git checkout -b release/v1.0.0`
-- CI job **`release branch includes main`** (in `branch-policy.yml`) on PRs to `main`
+- Team process: `git checkout develop && git pull && git checkout -b release/v1.0.0`
+- CI job **`release-from-develop`** (in `branch-policy.yml`) on PRs to `main`
 
-### 3. Recommended git flow (matches CHT)
+### 3. Recommended git flow
 
 ```text
-feature/*  →  develop  (integrate + deploy dev)
-       ↓
-    main     (stable integration — PRs only from release/*)
-       ↓
-release/vX.Y.Z  (cut from main → prod/platform deploy)
-       ↓
- PR release/* → main  (after prod validated)
+feature/*  →  develop           (integrate + deploy dev)
+develop    →  release/vX.Y.Z    (cut release branch)
+release/*  →  main              (merge PR → deploy-prod.yml)
 ```
+
+Prod deploy runs when a **`release/*` PR merges to `main`**, or via manual **Deploy to Production**. Pushing to `main` or `release/*` alone does not deploy prod.
 
 ## Development deploy
 
@@ -155,12 +153,78 @@ Preview next tag:
 
 ## Production deploy
 
-- **Environment:** `production` (separate GitHub Environment secrets)
-- **ECR:** `contenthub-api`
+- **GitHub Environment:** `production` (required — workflow job uses `environment: production`)
+- **ECR:** `contenthub-api` (replicated to us-east-2)
 - **API domain:** `contenthub.communityhealth.media`
-- **Var file (CI):** `prod.github.tfvars` — fill VPC, subnets, SG, and ACM ARN before first prod apply
+- **Terraform:** `us-east-1` + `us-east-2` DR stacks
+- **Var file (CI):** `infrastructure/terraform/environments/variables/prod.github.tfvars`
+- **Secrets (CI):** GitHub Environment **production** → `TF_VAR_*` (see below)
+- **Local secrets:** `prod.tfvars` (gitignored) — not used by CI
 
-Semver works the same as dev but against **`contenthub-api`** independently:
+### Trigger
+
+| Trigger | Deploys? |
+|---------|----------|
+| Merge PR `release/v1.0.0` → `main` | Yes |
+| Manual **Deploy to Production** | Yes |
+| Push to `release/*` (no merge) | No |
+| Push to `main` directly | No |
+
+### One-time GitHub setup (production)
+
+1. **Create Environment** — Repo → Settings → Environments → **production**
+
+2. **Required Environment secrets:**
+
+| GitHub secret | Terraform variable | Notes |
+|---------------|-------------------|--------|
+| `AWS_ROLE_ARN` | (OIDC) | Same role as dev if OIDC script used both envs |
+| `PUBLIC_API_KEY` | `TF_VAR_public_api_key` | Must match CHT `CONTENTHUB_API_KEY` |
+| `WEBHOOK_API_KEY` | `TF_VAR_webhook_api_key` | |
+| `JWT_SECRET` | `TF_VAR_jwt_secret` | |
+| `INTERNAL_CACHE_SECRET` | `TF_VAR_internal_cache_secret` | Shared with CHT cache clear |
+
+3. **Optional** (platform sync / AI — same as dev):
+
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LINKEDIN_*`, `YOUTUBE_*`, `X_*`, `WORDPRESS_WEBHOOK_SECRET`, `LINKEDIN_ADS_ACCESS_TOKEN`
+
+4. **OIDC** (if not done for dev):
+
+```bash
+GITHUB_USER=<org> GITHUB_ENVIRONMENTS=development,production \
+  ./infrastructure/aws-github-oidc-setup.sh
+```
+
+5. **Verify:**
+
+```bash
+./scripts/verify-github-env-secrets.sh production
+```
+
+### First prod release (recommended)
+
+```bash
+git checkout develop && git pull
+git checkout -b release/v1.0.0
+# merge feature branch if needed
+git push -u origin release/v1.0.0
+# Open PR release/v1.0.0 → main (passes main-from-release-only + release-from-develop)
+# After merge → deploy-prod.yml runs automatically
+```
+
+Or dry-run first: Actions → **Deploy to Production** → check **Plan only**.
+
+### What deploy-prod does
+
+1. Build + push `contenthub-api` image (use1)
+2. Wait for ECR replication to use2
+3. `terraform plan` use1 + use2 DR (with approval gate)
+4. `terraform apply` both regions (`deploy_api_ecs_service` / `dr_deploy_api_ecs_service` from `prod.github.tfvars`)
+5. Wait for ECS services stable
+
+`enable_route53_failover` stays **false** in `prod.github.tfvars` until you arm failover manually (`./scripts/arm-route53-failover.sh`).
+
+Semver works the same as dev but against **`contenthub-api`**:
 
 ```bash
 ./scripts/next-ecr-image-tag.sh contenthub-api us-east-1
@@ -169,20 +233,16 @@ Semver works the same as dev but against **`contenthub-api`** independently:
 ### Manual trigger
 
 - Dev: Actions → **Deploy to Development**
-- Prod: Actions → **Deploy to Production**
+- Prod: Actions → **Deploy to Production** (optional **Plan only** checkbox)
 
-### Local parity
+### Local parity (infra-only; ECS via CI)
 
 ```bash
-export TF_VAR_public_api_key="..."
-export TF_VAR_webhook_api_key="..."
-export TF_VAR_jwt_secret="..."
-export TF_VAR_internal_cache_secret="..."
+# Infra without ECS service (overrides prod.github.tfvars deploy flags):
+./scripts/deploy-contenthub-infra-local.sh plan-only
+./scripts/deploy-contenthub-secondary.sh plan-only
 
-TAG=$(./scripts/next-ecr-image-tag.sh contenthub-dev-api us-east-1)
-./scripts/build-images.sh "$TAG"
-./scripts/push-images.sh "$TAG" us-east-1 dev
-./scripts/deploy-primary.sh dev
+# Or export TF_VAR_* and use deploy-primary.sh with prod.github.tfvars + prod.tfvars
 ```
 
 ## Local verification

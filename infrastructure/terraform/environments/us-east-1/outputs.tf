@@ -31,6 +31,16 @@ output "route53_nameservers" {
   value       = var.manage_route53 ? module.route53_api[0].name_servers : []
 }
 
+output "route53_failover_enabled" {
+  description = "Whether PRIMARY/SECONDARY failover records are active for api_domain"
+  value       = var.manage_route53 ? module.route53_api[0].failover_enabled : false
+}
+
+output "route53_primary_health_check_id" {
+  description = "Route53 health check ID for primary ALB (null when failover disabled)"
+  value       = var.manage_route53 ? module.route53_api[0].primary_health_check_id : null
+}
+
 output "dns_delegation_hint" {
   description = "After apply: add NS delegation in GoDaddy parent zone (communityhealth.media)"
   value = var.manage_route53 ? join("\n", [
@@ -96,6 +106,11 @@ output "aurora_global_cluster_id" {
   value       = var.enable_aurora_global ? module.aurora_global[0].global_cluster_id : null
 }
 
+output "aurora_engine_version" {
+  description = "Aurora PostgreSQL engine version"
+  value       = var.enable_aurora_global ? var.aurora_engine_version : null
+}
+
 output "aurora_cluster_endpoint" {
   description = "Aurora writer endpoint (null when enable_aurora_global = false)"
   value       = var.enable_aurora_global ? module.aurora_global[0].cluster_endpoint : null
@@ -124,4 +139,9 @@ output "kol_headshots_base_url" {
 output "sync_lambda_functions" {
   description = "Sync job Lambda function names (one per job per environment)"
   value       = { for name, mod in module.sync_lambda : name => mod.function_name }
+}
+
+output "ecr_dr_registry_url" {
+  description = "Regional ECR registry in the DR region (images replicated from us-east-1 when enable_ecr_replication = true)."
+  value       = try(module.ecr_replication[0].dr_registry_url, null)
 }

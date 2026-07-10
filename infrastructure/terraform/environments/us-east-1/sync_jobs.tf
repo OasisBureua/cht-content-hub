@@ -58,6 +58,15 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    wordpress_ingest = {
+      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_ingest", false)
+      handler                        = "jobs.wordpress_ingest.handler.handler"
+      timeout                        = 60
+      memory_size                    = 512
+      schedule_expression            = null
+      sqs_trigger                    = true
+      reserved_concurrent_executions = -1
+    }
   }
 }
 
@@ -66,24 +75,24 @@ module "sync_lambda" {
 
   source = "../../modules/compute/lambda-job"
 
-  project                 = var.project
-  environment             = var.environment
-  aws_region              = "us-east-1"
-  job_name                = each.key
-  handler                 = each.value.handler
-  deployment_package_path = local.sync_lambda_package
-  timeout                 = each.value.timeout
-  memory_size             = each.value.memory_size
-  schedule_expression     = each.value.schedule_expression
-  sqs_trigger             = each.value.sqs_trigger
+  project                        = var.project
+  environment                    = var.environment
+  aws_region                     = "us-east-1"
+  job_name                       = each.key
+  handler                        = each.value.handler
+  deployment_package_path        = local.sync_lambda_package
+  timeout                        = each.value.timeout
+  memory_size                    = each.value.memory_size
+  schedule_expression            = each.value.schedule_expression
+  sqs_trigger                    = each.value.sqs_trigger
   reserved_concurrent_executions = each.value.reserved_concurrent_executions
-  vpc_id                  = var.vpc_id
-  private_subnet_ids      = var.private_subnet_ids
-  database_secret_arn     = local.database_secret_arn
-  app_secrets_arn         = module.app_secrets.app_secrets_arn
-  cht_cache_clear_url     = var.cht_cache_clear_url
-  log_retention_days      = local.log_retention
-  enabled                 = true
+  vpc_id                         = var.vpc_id
+  private_subnet_ids             = var.private_subnet_ids
+  database_secret_arn            = local.database_secret_arn
+  app_secrets_arn                = module.app_secrets.app_secrets_arn
+  cht_cache_clear_url            = var.cht_cache_clear_url
+  log_retention_days             = local.log_retention
+  enabled                        = true
 
   depends_on = [module.app_secrets]
 }

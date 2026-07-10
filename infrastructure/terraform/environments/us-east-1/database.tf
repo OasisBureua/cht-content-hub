@@ -48,7 +48,16 @@ resource "aws_secretsmanager_secret" "aurora_app" {
 
   name                    = "${local.resource_prefix}-aurora-database-credentials"
   description             = "Aurora Global writer credentials for Content Hub ${var.environment}"
+  kms_key_id              = var.secrets_kms_key_id != "" ? var.secrets_kms_key_id : null
   recovery_window_in_days = contains(["prod", "platform"], var.environment) ? 30 : 7
+
+  dynamic "replica" {
+    for_each = local.secrets_replica_regions
+    content {
+      region     = replica.value.region
+      kms_key_id = try(replica.value.kms_key_id, null)
+    }
+  }
 
   tags = {
     Name        = "${local.resource_prefix}-aurora-database-credentials"
@@ -76,7 +85,16 @@ resource "aws_secretsmanager_secret" "aurora_migration" {
 
   name                    = "${local.resource_prefix}-aurora-migration-credentials"
   description             = "Aurora Global writer credentials for RDS → Aurora migration (not used by ECS until cutover)"
+  kms_key_id              = var.secrets_kms_key_id != "" ? var.secrets_kms_key_id : null
   recovery_window_in_days = 7
+
+  dynamic "replica" {
+    for_each = local.secrets_replica_regions
+    content {
+      region     = replica.value.region
+      kms_key_id = try(replica.value.kms_key_id, null)
+    }
+  }
 
   tags = {
     Name        = "${local.resource_prefix}-aurora-migration-credentials"
