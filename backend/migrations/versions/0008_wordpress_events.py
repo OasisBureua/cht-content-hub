@@ -31,6 +31,7 @@ from path_setup import install  # noqa: E402
 
 install()
 
+from migrations.helpers import index_exists, table_exists  # noqa: E402
 
 revision: str = "0008_wordpress_events"
 down_revision: Union[str, None] = "0007_playlist_tags"
@@ -39,57 +40,65 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "wordpress_events",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, primary_key=True),
-        sa.Column("post_id", sa.Integer(), nullable=False),
-        sa.Column("modified_gmt", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("event", sa.String(length=16), nullable=False),
-        sa.Column("post_type", sa.String(length=64), nullable=False),
-        sa.Column("slug", sa.String(length=500), nullable=False),
-        sa.Column("title", sa.Text(), nullable=False),
-        sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column("permalink", sa.String(length=1000), nullable=False),
-        sa.Column(
-            "categories",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=False,
-            server_default="[]",
-        ),
-        sa.Column(
-            "tags",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=False,
-            server_default="[]",
-        ),
-        sa.Column("site_url", sa.String(length=500), nullable=False),
-        sa.Column("acf", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column(
-            "raw_payload",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=False,
-        ),
-        sa.Column(
-            "signature_verified",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.text("true"),
-        ),
-        sa.Column(
-            "received_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.UniqueConstraint(
-            "post_id", "modified_gmt", name="uix_wordpress_events_post_modified"
-        ),
-    )
-    op.create_index("ix_wordpress_events_post_id", "wordpress_events", ["post_id"])
-    op.create_index("ix_wordpress_events_event", "wordpress_events", ["event"])
-    op.create_index(
-        "ix_wordpress_events_received_at", "wordpress_events", ["received_at"]
-    )
+    # 0001 baseline uses ORM create_all (head schema), so this table may
+    # already exist on fresh databases — same pattern as 0007_playlist_tags.
+    if not table_exists("wordpress_events"):
+        op.create_table(
+            "wordpress_events",
+            sa.Column("id", sa.BigInteger(), autoincrement=True, primary_key=True),
+            sa.Column("post_id", sa.Integer(), nullable=False),
+            sa.Column("modified_gmt", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("event", sa.String(length=16), nullable=False),
+            sa.Column("post_type", sa.String(length=64), nullable=False),
+            sa.Column("slug", sa.String(length=500), nullable=False),
+            sa.Column("title", sa.Text(), nullable=False),
+            sa.Column("status", sa.String(length=32), nullable=False),
+            sa.Column("permalink", sa.String(length=1000), nullable=False),
+            sa.Column(
+                "categories",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default="[]",
+            ),
+            sa.Column(
+                "tags",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default="[]",
+            ),
+            sa.Column("site_url", sa.String(length=500), nullable=False),
+            sa.Column("acf", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            sa.Column(
+                "raw_payload",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+            ),
+            sa.Column(
+                "signature_verified",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.text("true"),
+            ),
+            sa.Column(
+                "received_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.func.now(),
+                nullable=False,
+            ),
+            sa.UniqueConstraint(
+                "post_id", "modified_gmt", name="uix_wordpress_events_post_modified"
+            ),
+        )
+    if not index_exists("wordpress_events", "ix_wordpress_events_post_id"):
+        op.create_index(
+            "ix_wordpress_events_post_id", "wordpress_events", ["post_id"]
+        )
+    if not index_exists("wordpress_events", "ix_wordpress_events_event"):
+        op.create_index("ix_wordpress_events_event", "wordpress_events", ["event"])
+    if not index_exists("wordpress_events", "ix_wordpress_events_received_at"):
+        op.create_index(
+            "ix_wordpress_events_received_at", "wordpress_events", ["received_at"]
+        )
 
 
 def downgrade() -> None:
