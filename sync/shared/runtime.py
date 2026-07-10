@@ -38,8 +38,31 @@ def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+def configure_logging(level: str = "INFO") -> None:
+    """Configure root logger with JSON output to stdout.
+
+    Matches the ECS API's structured format (backend/src/logging_config.py)
+    so CloudWatch Logs Insights queries can `fields @timestamp, level, name,
+    message` uniformly across the whole platform. Falls back to a plain
+    formatter if the ECS logging_config module (which ships in the
+    sync-lambda zip via the backend/src copy) is not importable — that
+    keeps unit tests and local dev functional.
+    """
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    if root.handlers:
+        return
+
+    handler = logging.StreamHandler(sys.stdout)
+    try:
+        from logging_config import CustomJsonFormatter
+
+        handler.setFormatter(
+            CustomJsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
+    except ImportError:
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+    root.addHandler(handler)
