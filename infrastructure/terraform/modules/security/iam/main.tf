@@ -52,3 +52,21 @@ resource "aws_iam_role_policy" "execution_secrets" {
     }]
   })
 }
+
+# WordPress webhook — grant sqs:SendMessage on the ECS task role when the
+# queue ARN is provided. Scoped to the specific queue; safe to enable in
+# every environment because it's a no-op when the ARN is empty.
+resource "aws_iam_role_policy" "task_wordpress_sqs" {
+  count = var.wordpress_events_queue_arn != "" ? 1 : 0
+
+  name = "${local.prefix}-wordpress-sqs-send"
+  role = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["sqs:SendMessage", "sqs:GetQueueAttributes"]
+      Resource = var.wordpress_events_queue_arn
+    }]
+  })
+}

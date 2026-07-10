@@ -24,8 +24,16 @@ cht_nat_gateway_cidr_blocks = [
   "18.233.236.119/32",
   "44.223.243.240/32",
 ]
+
+# Andrew's WordPress egress IP (WordKeeper hosting, no Cloudflare in front —
+# verified via headers + reverse DNS: simplemultimedia.wordkeeper.net).
+# Enables POST /api/wordpress/webhook from Andrew's WordPress mu-plugin.
+wordpress_ingress_cidr_blocks = [
+  "152.44.37.10/32",
+]
+
 alb_allow_public_ingress = false
-enable_waf             = true
+enable_waf               = true
 
 # Overridden per deploy by workflow (-var api_image)
 api_image = "233636046512.dkr.ecr.us-east-1.amazonaws.com/contenthub-dev-api:1.0.0"
@@ -57,6 +65,7 @@ sync_jobs_enabled = {
   kol_hcp_matcher        = false
   post_tagging           = false
   playlist_doctor_tagger = false
+  wordpress_ingest       = true
 }
 
 # Platform integration secrets are NOT stored here (committed file).

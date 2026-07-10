@@ -57,6 +57,12 @@ variable "cht_nat_gateway_cidr_blocks" {
   default     = []
 }
 
+variable "wordpress_ingress_cidr_blocks" {
+  type        = list(string)
+  description = "Andrew's WordPress egress IP(s) (/32) — ALB accepts HTTPS for POST /api/wordpress/webhook. Empty by default; populate per-environment tfvars."
+  default     = []
+}
+
 variable "alb_allow_public_ingress" {
   type        = bool
   description = "Allow 0.0.0.0/0 on ALB ports 80/443. Set false with cht_backend_security_group_id for CHT-only access."

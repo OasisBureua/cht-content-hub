@@ -38,11 +38,11 @@ data "aws_caller_identity" "current" {}
 
 locals {
   resource_prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
-  log_retention   = coalesce(
+  log_retention = coalesce(
     var.log_retention_days,
     contains(["prod", "platform"], var.environment) ? 365 : 7
   )
-  api_image_tag   = try(element(split(":", var.api_image), 1), "unknown")
+  api_image_tag = try(element(split(":", var.api_image), 1), "unknown")
 }
 
 module "ecs_cluster" {
@@ -62,10 +62,11 @@ locals {
 module "iam" {
   source = "../../modules/security/iam"
 
-  project         = var.project
-  environment     = var.environment
-  aws_region      = "us-east-1"
-  aws_account_id  = data.aws_caller_identity.current.account_id
+  project                    = var.project
+  environment                = var.environment
+  aws_region                 = "us-east-1"
+  aws_account_id             = data.aws_caller_identity.current.account_id
+  wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
 }
 
 module "s3_assets" {
@@ -123,7 +124,10 @@ module "alb_api" {
   allowed_ingress_security_group_ids = compact([
     var.cht_backend_security_group_id,
   ])
-  allowed_ingress_cidr_blocks = var.cht_nat_gateway_cidr_blocks
+  allowed_ingress_cidr_blocks = concat(
+    var.cht_nat_gateway_cidr_blocks,
+    var.wordpress_ingress_cidr_blocks,
+  )
 }
 
 module "waf_alb" {
@@ -150,31 +154,33 @@ module "route53_api" {
 module "ecs_api" {
   source = "../../modules/compute/ecs-api"
 
-  project               = var.project
-  environment           = var.environment
-  aws_region            = "us-east-1"
-  vpc_id                = var.vpc_id
-  private_subnet_ids    = var.private_subnet_ids
-  cluster_id            = local.cluster_id
-  cluster_name          = local.cluster_name
-  execution_role_arn    = module.iam.execution_role_arn
-  task_role_arn         = module.iam.task_role_arn
-  alb_security_group_id = module.alb_api.alb_security_group_id
-  target_group_arn      = module.alb_api.target_group_arn
-  alb_listener_arn      = module.alb_api.listener_arn
-  log_group_name        = local.log_group_name
-  container_image       = var.api_image
-  app_version           = local.api_image_tag
-  database_secret_arn   = local.database_secret_arn
-  app_secrets_arn       = module.app_secrets.app_secrets_arn
-  task_cpu              = var.api_task_cpu
-  task_memory           = var.api_task_memory
-  desired_count         = var.api_desired_count
-  min_capacity          = var.api_min_capacity
-  max_capacity          = var.api_max_capacity
-  create_service        = var.deploy_api_ecs_service
+  project                    = var.project
+  environment                = var.environment
+  aws_region                 = "us-east-1"
+  vpc_id                     = var.vpc_id
+  private_subnet_ids         = var.private_subnet_ids
+  cluster_id                 = local.cluster_id
+  cluster_name               = local.cluster_name
+  execution_role_arn         = module.iam.execution_role_arn
+  task_role_arn              = module.iam.task_role_arn
+  alb_security_group_id      = module.alb_api.alb_security_group_id
+  target_group_arn           = module.alb_api.target_group_arn
+  alb_listener_arn           = module.alb_api.listener_arn
+  log_group_name             = local.log_group_name
+  container_image            = var.api_image
+  app_version                = local.api_image_tag
+  database_secret_arn        = local.database_secret_arn
+  app_secrets_arn            = module.app_secrets.app_secrets_arn
+  task_cpu                   = var.api_task_cpu
+  task_memory                = var.api_task_memory
+  desired_count              = var.api_desired_count
+  min_capacity               = var.api_min_capacity
+  max_capacity               = var.api_max_capacity
+  create_service             = var.deploy_api_ecs_service
+  wordpress_events_queue_url = try(module.sync_lambda["wordpress_ingest"].sqs_queue_url, "")
+  wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
 
-  depends_on = [module.app_secrets]
+  depends_on = [module.app_secrets, module.sync_lambda]
 }
 
 module "ecs_worker" {
