@@ -23,12 +23,17 @@ resource "aws_security_group" "aurora" {
   description = "Security group for Aurora Global (${var.role})"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description     = "PostgreSQL from ECS tasks"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = var.allowed_security_groups
+  # Ingress is managed by environment-level aws_vpc_security_group_ingress_rule
+  # resources (avoids Terraform cycles with ECS). Match modules/database/rds.
+  dynamic "ingress" {
+    for_each = length(var.allowed_security_groups) > 0 ? [1] : []
+    content {
+      description     = "PostgreSQL from ECS tasks"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = var.allowed_security_groups
+    }
   }
 
   egress {
@@ -122,9 +127,13 @@ resource "aws_rds_cluster" "this" {
   db_cluster_parameter_group_name = var.role == "primary" ? aws_rds_cluster_parameter_group.aurora[0].name : null
 
   lifecycle {
-    # Secondary clusters are joined to the global cluster at create time; re-setting
-    # global_cluster_identifier on an existing cluster fails with InvalidParameterCombination.
-    ignore_changes = [master_password, global_cluster_identifier]
+    ignore_changes = [
+      master_password,
+      # AWS sets these on global secondary members; Terraform must not "correct"
+      # them on later applies or the cluster is detached from the global DB.
+      global_cluster_identifier,
+      replication_source_identifier,
+    ]
   }
 }
 
