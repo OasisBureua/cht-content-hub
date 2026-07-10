@@ -67,6 +67,18 @@ locals {
       sqs_trigger                    = true
       reserved_concurrent_executions = -1
     }
+    # One-shot: restore mediahub prod clips + posts + shoots into contenthub RDS.
+    # Manual invoke only. Idempotent (skips if `clips` already has ≥100 rows).
+    # 900s timeout for the ~12MB SQL apply; 1024MB memory sized for asyncpg + SQL string.
+    clips_seed = {
+      enabled                        = lookup(var.sync_jobs_enabled, "clips_seed", false)
+      handler                        = "jobs.clips_seed.handler.handler"
+      timeout                        = 900
+      memory_size                    = 1024
+      schedule_expression            = null
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
   }
 }
 

@@ -15,8 +15,10 @@ from models.campaign import (
     ReportTemplate,
 )
 from models.client import Client
+from models.clip import Clip
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.playlist_tag import PlaylistTag
+from models.post import Post
 from models.project import Project
 from models.shoot import Shoot
 
@@ -34,6 +36,8 @@ ORM_TABLES = [
     KOLGroupMember.__table__,
     PlaylistTag.__table__,
     Shoot.__table__,
+    Clip.__table__,
+    Post.__table__,
 ]
 
 _HCP_SIGNALS_DDL = """

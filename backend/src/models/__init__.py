@@ -3,8 +3,10 @@
 from database import Base
 
 from models.client import Client
+from models.clip import Clip, ClipStatus, ContentType, MediaType
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.playlist_tag import PlaylistTag
+from models.post import Post
 from models.project import Project
 from models.shoot import Shoot
 from models.user import User
@@ -40,11 +42,16 @@ from hcp_intel.models import (  # noqa: F401
 __all__ = [
     "Base",
     "Client",
+    "Clip",
+    "ClipStatus",
+    "ContentType",
+    "MediaType",
     "Project",
     "KOL",
     "KOLGroup",
     "KOLGroupMember",
     "PlaylistTag",
+    "Post",
     "Shoot",
     "User",
     "WordPressEvent",
