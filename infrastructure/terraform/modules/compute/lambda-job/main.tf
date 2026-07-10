@@ -87,7 +87,6 @@ resource "aws_lambda_function" "this" {
     variables = merge(
       {
         CONTENTHUB_SERVICE_ROLE = "sync-lambda"
-        AWS_REGION              = var.aws_region
         ENVIRONMENT             = var.environment
         DATABASE_SECRET_ARN     = var.database_secret_arn
         APP_SECRETS_ARN         = var.app_secrets_arn
