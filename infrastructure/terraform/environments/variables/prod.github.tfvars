@@ -97,4 +97,4 @@ dr_deploy_api_ecs_service  = true
 dr_api_image               = "233636046512.dkr.ecr.us-east-2.amazonaws.com/contenthub-api:prod-latest"
 
 # Route53 failover: keep false until ECS healthy in both regions; arm via ./scripts/arm-route53-failover.sh
-enable_route53_failover = true
+enable_route53_failover = false
