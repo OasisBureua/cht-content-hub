@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # deploy-primary.sh — Terraform plan + confirm + apply for contenthub producer stack
 #
+# Var files: {env}.github.tfvars (non-secret) + {env}.tfvars (secrets/overrides, optional).
+#
 # Usage:
 #   ./scripts/deploy-primary.sh dev          # plan, then yes/no to apply
 #   ./scripts/deploy-primary.sh dev plan     # plan only (no apply)
@@ -12,13 +14,18 @@ set -euo pipefail
 ENV="${1:-dev}"
 PLAN_ONLY="${2:-}"
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TF_DIR="$ROOT/infrastructure/terraform/environments/us-east-1"
-VAR_FILE="$ROOT/infrastructure/terraform/environments/variables/${ENV}.tfvars"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TF_DIR="$REPO_ROOT/infrastructure/terraform/environments/us-east-1"
 
-read_tfvar() {
-  grep -E "^${1}[[:space:]]*=" "$VAR_FILE" | head -1 | sed -E 's/^[^"]*"([^"]*)".*/\1/'
-}
+# shellcheck source=scripts/terraform-var-files.sh
+source "$REPO_ROOT/scripts/terraform-var-files.sh"
+terraform_var_files_init "$ENV"
+
+VAR_FILES=()
+for arg in "${TF_VAR_FILE_ARGS[@]}"; do
+  base="$(basename "${arg#-var-file=}")"
+  VAR_FILES+=(-var-file="../variables/$base")
+done
 
 case "$ENV" in
   dev|prod) ;;
@@ -35,10 +42,10 @@ if [ -n "$PLAN_ONLY" ] && [ "$PLAN_ONLY" != "plan" ]; then
   exit 1
 fi
 
-BACKEND_CONFIG="$ROOT/infrastructure/terraform/environments/backends/us-east-1-${ENV}.hcl"
+BACKEND_CONFIG="$REPO_ROOT/infrastructure/terraform/environments/backends/us-east-1-${ENV}.hcl"
 
-if [ ! -f "$BACKEND_CONFIG" ] || [ ! -f "$VAR_FILE" ]; then
-  echo "✗ Missing backend config or $VAR_FILE"
+if [ ! -f "$BACKEND_CONFIG" ]; then
+  echo "✗ Missing backend config $BACKEND_CONFIG"
   exit 1
 fi
 
@@ -49,6 +56,7 @@ echo "🚀 Content Hub — Deploy Primary Region (us-east-1)"
 echo "=================================================="
 echo ""
 echo "→ Environment: $ENV"
+echo "→ Var files:   ${TF_GITHUB_VAR_FILE##*/}$([ -f "$TF_LOCAL_VAR_FILE" ] && echo " + ${TF_LOCAL_VAR_FILE##*/}")"
 echo "→ State:       s3://cht-contenthub-terraform-state/${STATE_KEY}"
 if [ -n "$API_DOMAIN" ]; then
   echo "→ API domain:  $API_DOMAIN"
@@ -70,17 +78,21 @@ echo "✅ Validating configuration..."
 terraform validate
 
 if [ "$ENV" = "dev" ]; then
-  CERT_ARN="$(read_tfvar acm_certificate_arn)"
+  CERT_ARN="$(read_tfvar acm_certificate_arn || true)"
   if [ -z "$CERT_ARN" ] && [ "$PLAN_ONLY" != "plan" ]; then
-    echo "✗ Refusing deploy: set acm_certificate_arn in dev.tfvars after devhub cert is ISSUED."
+    echo "✗ Refusing deploy: set acm_certificate_arn in dev.github.tfvars or dev.tfvars after devhub cert is ISSUED."
     echo "  ./scripts/verify-certificate.sh devhub"
     exit 1
   fi
 fi
 
+if [ "$ENV" = "prod" ] && [ ! -f "$TF_LOCAL_VAR_FILE" ]; then
+  echo "⚠️  No prod.tfvars — ensure TF_VAR_* secrets are exported for apply"
+fi
+
 echo ""
 echo "📋 Planning deployment..."
-terraform plan -var-file="$VAR_FILE" -out=tfplan
+terraform plan "${VAR_FILES[@]}" -out=tfplan
 
 if command -v jq >/dev/null 2>&1; then
   echo ""

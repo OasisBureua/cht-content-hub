@@ -2,8 +2,10 @@ locals {
   prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
   name   = var.role == "primary" ? "${local.prefix}-aurora-primary" : "${local.prefix}-aurora-secondary"
 
-  # IAM roles are account-global; primary creates once, secondary references it.
-  enhanced_monitoring_role_name = "${local.prefix}-aurora-enhanced-monitoring"
+  # IAM roles are account-global; primary creates once, secondary references the prod primary role.
+  enhanced_monitoring_role_name = var.enhanced_monitoring_role_name != "" ? var.enhanced_monitoring_role_name : (
+    var.role == "secondary" ? "${var.project}-aurora-enhanced-monitoring" : "${local.prefix}-aurora-enhanced-monitoring"
+  )
 }
 
 resource "aws_db_subnet_group" "aurora" {

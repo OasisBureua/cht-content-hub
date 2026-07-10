@@ -43,6 +43,14 @@ locals {
     contains(["prod", "platform"], var.environment) ? 365 : 7
   )
   api_image_tag   = try(element(split(":", var.api_image), 1), "unknown")
+  ecr_replication_repository_names = var.environment == "prod" ? ["contenthub-api"] : ["contenthub-dev-api"]
+
+  secrets_replica_regions = [
+    for region in var.secrets_replica_regions : {
+      region     = region
+      kms_key_id = lookup(var.secrets_replica_kms_key_ids, region, null)
+    }
+  ]
 }
 
 module "ecs_cluster" {
@@ -51,6 +59,15 @@ module "ecs_cluster" {
   project            = var.project
   environment        = var.environment
   log_retention_days = local.log_retention
+}
+
+module "ecr_replication" {
+  count  = var.enable_ecr_replication ? 1 : 0
+  source = "../../modules/compute/ecr-replication"
+
+  destination_region = var.ecr_replication_destination_region
+  repository_prefix  = "contenthub"
+  repository_names   = local.ecr_replication_repository_names
 }
 
 locals {
@@ -81,8 +98,11 @@ module "s3_assets" {
 module "app_secrets" {
   source = "../../modules/security/secrets-manager"
 
-  project               = var.project
-  environment           = var.environment
+  project         = var.project
+  environment     = var.environment
+  kms_key_id      = var.secrets_kms_key_id
+  replica_regions = local.secrets_replica_regions
+
   public_api_key        = var.public_api_key
   webhook_api_key       = var.webhook_api_key
   jwt_secret            = var.jwt_secret
@@ -145,6 +165,11 @@ module "route53_api" {
 
   alb_dns_name = module.alb_api.alb_dns_name
   alb_zone_id  = module.alb_api.alb_zone_id
+
+  enable_failover          = var.enable_route53_failover
+  secondary_alb_dns_name   = local.route53_failover_secondary_alb_dns_name
+  secondary_alb_zone_id    = local.route53_failover_secondary_alb_zone_id
+  failover_alarm_actions   = var.route53_failover_alarm_actions
 }
 
 module "ecs_api" {

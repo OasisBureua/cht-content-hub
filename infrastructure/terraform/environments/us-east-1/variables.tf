@@ -346,6 +346,18 @@ variable "manage_route53" {
   description = "Create Route53 hosted zone + ALB alias for api_domain (R53 → ALB → ECS → RDS)"
 }
 
+variable "enable_route53_failover" {
+  type        = bool
+  default     = false
+  description = "PRIMARY/SECONDARY Route53 failover to us-east-2 DR ALB (DR ALB must exist in AWS)."
+}
+
+variable "route53_failover_alarm_actions" {
+  type        = list(string)
+  default     = []
+  description = "Optional SNS ARNs when primary Route53 health check fails."
+}
+
 variable "cht_cache_clear_url" {
   type    = string
   default = ""
@@ -361,4 +373,97 @@ variable "sync_jobs_enabled" {
   type        = map(bool)
   default     = {}
   description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
+}
+
+variable "enable_ecr_replication" {
+  description = "Replicate contenthub-* ECR repos to ecr_replication_destination_region (prod primary only)."
+  type        = bool
+  default     = false
+}
+
+variable "ecr_replication_destination_region" {
+  description = "Destination region for ECR replication."
+  type        = string
+  default     = "us-east-2"
+}
+
+variable "secrets_replica_regions" {
+  description = "Secrets Manager replica regions (e.g. [\"us-east-2\"] for prod DR)."
+  type        = list(string)
+  default     = []
+}
+
+variable "secrets_kms_key_id" {
+  description = "Optional KMS key for encrypting secrets in us-east-1 (omit for AWS-managed key)."
+  type        = string
+  default     = ""
+}
+
+variable "secrets_replica_kms_key_ids" {
+  description = "Optional per-region KMS keys for SM replicas (region => key id/arn)."
+  type        = map(string)
+  default     = {}
+}
+
+# ── DR (us-east-2) — defined in prod.github.tfvars; ignored by us-east-1 apply ──
+
+variable "dr_vpc_id" {
+  type    = string
+  default = ""
+}
+
+variable "dr_private_subnet_ids" {
+  type    = list(string)
+  default = []
+}
+
+variable "dr_public_subnet_ids" {
+  type    = list(string)
+  default = []
+}
+
+variable "dr_acm_certificate_arn" {
+  description = "ACM certificate ARN for us-east-2 DR ALB (us-east-2 apply only)."
+  type        = string
+  default     = ""
+}
+
+variable "dr_cht_backend_security_group_id" {
+  type    = string
+  default = ""
+}
+
+variable "dr_cht_nat_gateway_cidr_blocks" {
+  type    = list(string)
+  default = []
+}
+
+variable "dr_alb_allow_public_ingress" {
+  type    = bool
+  default = false
+}
+
+variable "dr_enable_waf" {
+  type    = bool
+  default = false
+}
+
+variable "dr_manage_route53" {
+  type    = bool
+  default = false
+}
+
+variable "dr_standby_scale_factor" {
+  type    = number
+  default = 0.5
+}
+
+variable "dr_deploy_api_ecs_service" {
+  type    = bool
+  default = false
+}
+
+variable "dr_api_image" {
+  type    = string
+  default = ""
 }
