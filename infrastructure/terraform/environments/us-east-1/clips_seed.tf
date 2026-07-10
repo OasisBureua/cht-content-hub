@@ -25,8 +25,3 @@ output "clips_seed_lambda_name" {
   description = "Function name for `aws lambda invoke` when seeding clip data"
   value       = try(module.sync_lambda["clips_seed"].function_name, null)
 }
-
-output "assets_bucket_name" {
-  description = "S3 bucket where seed SQL files are uploaded (seeds/ prefix)"
-  value       = module.s3_assets.bucket_name
-}
