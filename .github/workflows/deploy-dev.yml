@@ -115,6 +115,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build sync-lambda deployment package
+        run: |
+          chmod +x scripts/build-sync-lambda.sh
+          PYTHON=python3.12 ./scripts/build-sync-lambda.sh
+          ls -lah dist/sync-lambda.zip
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:

@@ -57,16 +57,19 @@ resource "aws_iam_role_policy" "execution_secrets" {
 # queue ARN is provided. Scoped to the specific queue; safe to enable in
 # every environment because it's a no-op when the ARN is empty.
 resource "aws_iam_role_policy" "task_wordpress_sqs" {
-  count = var.wordpress_events_queue_arn != "" ? 1 : 0
+  count = var.wordpress_ingest_enabled ? 1 : 0
 
   name = "${local.prefix}-wordpress-sqs-send"
   role = aws_iam_role.task.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["sqs:SendMessage", "sqs:GetQueueAttributes"]
-      Resource = var.wordpress_events_queue_arn
+      Effect = "Allow"
+      Action = ["sqs:SendMessage", "sqs:GetQueueAttributes"]
+      Resource = coalesce(
+        var.wordpress_events_queue_arn,
+        "arn:aws:sqs:${var.aws_region}:${var.aws_account_id}:${local.prefix}-wordpress-ingest-events",
+      )
     }]
   })
 }

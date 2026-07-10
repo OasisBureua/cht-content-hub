@@ -66,6 +66,7 @@ module "iam" {
   environment                = var.environment
   aws_region                 = "us-east-1"
   aws_account_id             = data.aws_caller_identity.current.account_id
+  wordpress_ingest_enabled   = lookup(var.sync_jobs_enabled, "wordpress_ingest", false)
   wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
 }
 
