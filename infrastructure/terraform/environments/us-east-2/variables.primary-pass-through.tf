@@ -32,6 +32,12 @@ variable "cht_nat_gateway_cidr_blocks" {
   default     = []
 }
 
+variable "wordpress_ingress_cidr_blocks" {
+  description = "Primary only: WordPress egress CIDRs for ALB webhook ingress."
+  type        = list(string)
+  default     = []
+}
+
 variable "alb_allow_public_ingress" {
   description = "Primary only: allow public ingress on us-east-1 ALB."
   type        = bool

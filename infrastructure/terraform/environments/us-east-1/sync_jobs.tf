@@ -59,7 +59,7 @@ locals {
       reserved_concurrent_executions = 1
     }
     wordpress_ingest = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_ingest", true)
+      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_ingest", false)
       handler                        = "jobs.wordpress_ingest.handler.handler"
       timeout                        = 60
       memory_size                    = 512

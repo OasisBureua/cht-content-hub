@@ -69,7 +69,11 @@ sync_jobs_enabled = {
   kol_hcp_matcher        = false
   post_tagging           = false
   playlist_doctor_tagger = false
+  wordpress_ingest       = false
 }
+
+# WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
+wordpress_ingress_cidr_blocks = []
 
 cht_cache_clear_url = "https://testapp.communityhealth.media/api/internal/cache/catalog/clear"
 
