@@ -63,3 +63,9 @@ variable "ingress_cidr_description" {
   description = "Description for HTTPS rules sourced from allowed_ingress_cidr_blocks."
   default     = "CHT NAT (ECS egress via public devhub URL)"
 }
+
+variable "allow_route53_health_check_ingress" {
+  type        = bool
+  default     = false
+  description = "Allow Route53 health checker IPs on HTTPS (for DR ALB when primary probes via api_domain after failover)."
+}

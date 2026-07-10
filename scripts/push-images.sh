@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Tag and push contenthub-api + contenthub-worker to ECR.
+# Tag and push contenthub-api to ECR.
 #
 # Usage:
 #   ./scripts/push-images.sh [VERSION] [AWS_REGION] [ENV]
 #
+# ENV selects the ECR repository and rolling alias:
+#   dev  → contenthub-dev-api + dev-latest
+#   prod → contenthub-api + prod-latest
+#
 # Examples:
-#   ./scripts/push-images.sh dev-latest us-east-1 dev
-#   ./scripts/push-images.sh $(git rev-parse --short HEAD) us-east-1 dev
+#   ./scripts/push-images.sh 1.0.0 us-east-1 dev
+#   TAG=$(./scripts/next-ecr-image-tag.sh contenthub-api us-east-1)
+#   ./scripts/push-images.sh "$TAG" us-east-1 prod
 set -euo pipefail
 
 VERSION="${1:-dev-latest}"
@@ -14,8 +19,14 @@ AWS_REGION="${2:-us-east-1}"
 ENV="${3:-dev}"
 
 case "$ENV" in
-  dev) ENV_TAG="dev-latest" ;;
-  prod) ENV_TAG="prod-latest" ;;
+  dev)
+    ECR_REPO="contenthub-dev-api"
+    ENV_TAG="dev-latest"
+    ;;
+  prod)
+    ECR_REPO="contenthub-api"
+    ENV_TAG="prod-latest"
+    ;;
   *)
     echo "❌ Unknown ENV: $ENV (use dev or prod)"
     exit 1
@@ -24,8 +35,7 @@ esac
 
 AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-ECR_API="${ECR_REGISTRY}/contenthub-api"
-ECR_WORKER="${ECR_REGISTRY}/contenthub-worker"
+ECR_URI="${ECR_REGISTRY}/${ECR_REPO}"
 
 ensure_ecr_repo() {
   local name="$1"
@@ -35,49 +45,34 @@ ensure_ecr_repo() {
   fi
 }
 
-echo "🚀 Pushing Content Hub images to ECR"
+echo "🚀 Pushing contenthub-api to ECR"
 echo "Version:   $VERSION"
 echo "Region:    $AWS_REGION"
+echo "Repo:      $ECR_REPO"
 echo "Env tag:   $ENV_TAG"
 echo ""
 
-ensure_ecr_repo contenthub-api
-ensure_ecr_repo contenthub-worker
+ensure_ecr_repo "$ECR_REPO"
 
 echo "🔐 Logging in to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | \
   docker login --username AWS --password-stdin "$ECR_REGISTRY"
 echo ""
 
-for LOCAL_NAME in contenthub-api contenthub-worker; do
-  if ! docker image inspect "${LOCAL_NAME}:${VERSION}" >/dev/null 2>&1; then
-    echo "❌ Local image ${LOCAL_NAME}:${VERSION} not found."
-    echo "   Run: ./scripts/build-images.sh ${VERSION}"
-    exit 1
-  fi
-done
+if ! docker image inspect "contenthub-api:${VERSION}" >/dev/null 2>&1; then
+  echo "❌ Local image contenthub-api:${VERSION} not found."
+  echo "   Run: ./scripts/build-images.sh ${VERSION}"
+  exit 1
+fi
 
-push_image() {
-  local local_name="$1"
-  local ecr_uri="$2"
-  echo "📤 Pushing ${local_name}..."
-  docker tag "${local_name}:${VERSION}" "${ecr_uri}:${VERSION}"
-  docker tag "${local_name}:${VERSION}" "${ecr_uri}:${ENV_TAG}"
-  docker push "${ecr_uri}:${VERSION}"
-  docker push "${ecr_uri}:${ENV_TAG}"
-  echo "✅ ${ecr_uri}:${ENV_TAG}"
-  echo ""
-}
-
-push_image contenthub-api "$ECR_API"
-push_image contenthub-worker "$ECR_WORKER"
-
-echo "✅ Push complete."
+echo "📤 Pushing contenthub-api..."
+docker tag "contenthub-api:${VERSION}" "${ECR_URI}:${VERSION}"
+docker tag "contenthub-api:${VERSION}" "${ECR_URI}:${ENV_TAG}"
+docker push "${ECR_URI}:${VERSION}"
+docker push "${ECR_URI}:${ENV_TAG}"
+echo "✅ ${ECR_URI}:${ENV_TAG}"
 echo ""
 echo "Update infrastructure/terraform/environments/variables/${ENV}.tfvars:"
-echo "  api_image    = \"${ECR_API}:${ENV_TAG}\""
-echo "  worker_image = \"${ECR_WORKER}:${ENV_TAG}\""
+echo "  api_image = \"${ECR_URI}:${VERSION}\""
 echo ""
-echo "Next:"
-echo "  ./scripts/deploy-primary.sh ${ENV}"
-echo "  ./scripts/smoke.sh https://devhub.communityhealth.media   # after DNS + apply"
+echo "Next: ./scripts/deploy-primary.sh ${ENV}"

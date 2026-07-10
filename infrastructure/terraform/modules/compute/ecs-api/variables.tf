@@ -73,6 +73,18 @@ variable "redis_url" {
   default = ""
 }
 
+variable "wordpress_events_queue_url" {
+  type        = string
+  description = "SQS queue URL — passed to contenthub-api as WORDPRESS_EVENTS_QUEUE_URL for /api/wordpress/webhook to enqueue events"
+  default     = ""
+}
+
+variable "wordpress_events_queue_arn" {
+  type        = string
+  description = "SQS queue ARN — used to scope the sqs:SendMessage IAM permission on the ECS task role"
+  default     = ""
+}
+
 variable "task_cpu" {
   type    = number
   default = 512
@@ -96,4 +108,10 @@ variable "min_capacity" {
 variable "max_capacity" {
   type    = number
   default = 2
+}
+
+variable "create_service" {
+  type        = bool
+  default     = true
+  description = "When false, create task definition + SG only (no ECS service or autoscaling)."
 }

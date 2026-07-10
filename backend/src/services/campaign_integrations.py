@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from models.campaign import IntegrationSetting, ReportTemplate
 from schemas.campaigns import (
     IntegrationPatchIn,
@@ -18,12 +19,30 @@ from schemas.campaigns import (
 )
 
 _PLATFORM_NOTES = {
-    Platform.LINKEDIN: "Configure LinkedIn Campaign Manager API credentials or upload CSV.",
+    Platform.LINKEDIN: (
+        "LinkedIn Ads: set accessToken + adAccountId (or env vars) and "
+        "campaignMap.linkedinCampaignIds per Hub campaign."
+    ),
     Platform.META: "Configure Meta Marketing API credentials or upload CSV.",
-    Platform.YOUTUBE: "Configure YouTube Analytics credentials or upload CSV.",
+    Platform.YOUTUBE: (
+        "YouTube Data API: set apiKey + channelId/channelHandle (or env vars). "
+        "Optional campaignMap.youtubeVideoIds to scope videos."
+    ),
     Platform.LIVESTREAM: "Configure livestream provider or upload CSV.",
     Platform.SURVEY: "Configure survey export source or upload CSV.",
 }
+
+
+def _env_credentials_ready(platform: Platform) -> bool:
+    settings = get_settings()
+    if platform == Platform.LINKEDIN:
+        return bool(settings.linkedin_ads_access_token and settings.linkedin_ad_account_id)
+    if platform == Platform.YOUTUBE:
+        return bool(
+            settings.youtube_api_key
+            and (settings.youtube_channel_id or settings.youtube_channel_handle)
+        )
+    return False
 
 
 async def list_templates(db: AsyncSession) -> list[TemplateOut]:
@@ -62,7 +81,9 @@ async def get_integrations(db: AsyncSession) -> IntegrationsOut:
     for platform in Platform:
         config = rows.get(platform.value, {})
         platforms[platform.value] = {
-            "configured": bool(config.get("enabled") or config.get("stub")),
+            "configured": bool(
+                config.get("enabled") or config.get("stub") or _env_credentials_ready(platform)
+            ),
             "enabled": bool(config.get("enabled")),
             "note": _PLATFORM_NOTES[platform],
             "lastTestedAt": config.get("lastTestedAt"),

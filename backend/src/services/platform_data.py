@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from models.campaign import (
     Campaign,
     CampaignPlatformData,
@@ -22,6 +23,7 @@ from schemas.campaigns import (
     PlatformSyncResultOut,
     PlatformSyncStatus,
 )
+from services.connectors import ConnectorError, fetch_linkedin_ads_metrics, fetch_youtube_metrics
 
 _PLATFORM_LABELS = {
     Platform.LINKEDIN: "LinkedIn",
@@ -228,6 +230,97 @@ async def _integration_config(db: AsyncSession, platform: str) -> dict | None:
     return row.value_json
 
 
+def _integration_or_env(
+    integration: dict[str, Any],
+    *,
+    integration_key: str,
+    env_value: str,
+) -> str:
+    value = integration.get(integration_key)
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    return env_value.strip()
+
+
+async def _fetch_connector_rows(
+    *,
+    platform: str,
+    campaign: Campaign,
+    integration: dict[str, Any],
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    settings = get_settings()
+
+    if platform == Platform.LINKEDIN.value:
+        result = await fetch_linkedin_ads_metrics(
+            access_token=_integration_or_env(
+                integration,
+                integration_key="accessToken",
+                env_value=settings.linkedin_ads_access_token,
+            ),
+            ad_account_id=_integration_or_env(
+                integration,
+                integration_key="adAccountId",
+                env_value=settings.linkedin_ad_account_id,
+            ),
+            campaign_id=campaign.id,
+            integration=integration,
+            reporting_period_start=campaign.reporting_period_start,
+            reporting_period_end=campaign.reporting_period_end,
+        )
+        return result.rows, result.raw
+
+    if platform == Platform.YOUTUBE.value:
+        result = await fetch_youtube_metrics(
+            api_key=_integration_or_env(
+                integration,
+                integration_key="apiKey",
+                env_value=settings.youtube_api_key,
+            ),
+            channel_id=_integration_or_env(
+                integration,
+                integration_key="channelId",
+                env_value=settings.youtube_channel_id,
+            ),
+            channel_handle=_integration_or_env(
+                integration,
+                integration_key="channelHandle",
+                env_value=settings.youtube_channel_handle,
+            ),
+            campaign_id=campaign.id,
+            integration=integration,
+            reporting_period_start=campaign.reporting_period_start,
+            reporting_period_end=campaign.reporting_period_end,
+        )
+        return result.rows, result.raw
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"API sync for {platform} is not implemented — upload CSV instead",
+    )
+
+
+async def _fail_sync(
+    db: AsyncSession,
+    *,
+    campaign_id: int,
+    platform: str,
+    trigger: str,
+    started: datetime,
+    error: str,
+) -> None:
+    await _log_sync_run(
+        db,
+        campaign_id=campaign_id,
+        platform=platform,
+        trigger=trigger,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+        status="error",
+        error=error,
+    )
+    await db.flush()
+
+
 async def sync_platform(
     db: AsyncSession,
     campaign_id: int,
@@ -245,48 +338,71 @@ async def sync_platform(
     started = datetime.now(timezone.utc)
     config = await _integration_config(db, platform)
     if config is None:
-        await _log_sync_run(
+        await _fail_sync(
             db,
             campaign_id=campaign_id,
             platform=platform,
             trigger=trigger,
-            started_at=started,
-            finished_at=datetime.now(timezone.utc),
-            status="error",
+            started=started,
             error=f"{platform} connector not configured",
         )
-        await db.flush()
         raise HTTPException(
             status_code=400,
             detail=f"{platform} connector not configured — upload CSV or configure integration",
         )
 
     if not config.get("stub") and not config.get("enabled"):
-        await _log_sync_run(
+        await _fail_sync(
             db,
             campaign_id=campaign_id,
             platform=platform,
             trigger=trigger,
-            started_at=started,
-            finished_at=datetime.now(timezone.utc),
-            status="error",
+            started=started,
             error=f"{platform} connector not enabled",
         )
-        await db.flush()
         raise HTTPException(status_code=400, detail=f"{platform} connector not enabled")
 
-    stub_rows = config.get("stubRows") or [
-        {"impressions": "0", "clicks": "0", "source": "stub-sync"},
-    ]
-    record = await upsert_platform_data(
-        db,
-        campaign_id=campaign_id,
-        platform=platform,
-        rows=stub_rows,
-        source="api",
-        raw={"connector": platform, "stub": True},
-        trigger=trigger,
-    )
+    if config.get("stub"):
+        stub_rows = config.get("stubRows") or [
+            {"impressions": "0", "clicks": "0", "source": "stub-sync"},
+        ]
+        record = await upsert_platform_data(
+            db,
+            campaign_id=campaign_id,
+            platform=platform,
+            rows=stub_rows,
+            source="api",
+            raw={"connector": platform, "stub": True},
+            trigger=trigger,
+        )
+    else:
+        try:
+            rows, raw = await _fetch_connector_rows(
+                platform=platform,
+                campaign=campaign,
+                integration=config,
+            )
+        except ConnectorError as exc:
+            await _fail_sync(
+                db,
+                campaign_id=campaign_id,
+                platform=platform,
+                trigger=trigger,
+                started=started,
+                error=str(exc),
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        record = await upsert_platform_data(
+            db,
+            campaign_id=campaign_id,
+            platform=platform,
+            rows=rows,
+            source="api",
+            raw=raw,
+            trigger=trigger,
+        )
+
     campaign.updated_at = datetime.now(timezone.utc)
     await db.flush()
 

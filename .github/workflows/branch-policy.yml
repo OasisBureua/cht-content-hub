@@ -1,7 +1,10 @@
-# Enforce: pull requests targeting main must come from release/* branches.
-# Pair with a ruleset on main that requires this check to pass before merge.
+# Enforce:
+#   - Pull requests targeting main must come from release/* branches.
+#   - release/* branches must be cut from develop (not main).
 #
-# Optional hotfix path: allow hotfix/* → main by uncommenting the second pattern check.
+# Pair with rulesets that require these checks before merge.
+#
+# Optional hotfix path: allow hotfix/* → main by uncommenting in main-from-release-only.
 
 name: Branch policy
 
@@ -10,6 +13,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
+  push:
+    branches:
+      - 'release/**'
 
 permissions:
   contents: read
@@ -17,6 +23,7 @@ permissions:
 jobs:
   main-from-release-only:
     name: main-from-release-only
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Verify PR head branch
@@ -35,23 +42,39 @@ jobs:
           echo "::error::Pull requests to main must come from a release/* branch (e.g. release/v1.0.0). Head branch: ${HEAD_REF:-<unknown>}"
           exit 1
 
-  release-contains-main:
-    name: release-contains-main
+  release-from-develop:
+    name: release-from-develop
+    if: github.event_name == 'push' || startsWith(github.head_ref, 'release/')
     runs-on: ubuntu-latest
-    if: startsWith(github.head_ref, 'release/')
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Verify release branch is based on main
+      - name: Verify release branch is based on develop
         env:
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
+          PUSH_REF: ${{ github.ref_name }}
         run: |
-          git fetch origin main
-          if git merge-base --is-ancestor origin/main "origin/${HEAD_REF}"; then
-            echo "✓ origin/main is an ancestor of origin/${HEAD_REF}"
+          if [ "$EVENT_NAME" = "push" ]; then
+            BRANCH="$PUSH_REF"
+            TARGET_REF="HEAD"
           else
-            echo "::error::Release branch must be created from (or include) main. Re-create: git checkout main && git pull && git checkout -b ${HEAD_REF}"
+            BRANCH="$HEAD_REF"
+            git fetch origin "$BRANCH"
+            TARGET_REF="origin/${BRANCH}"
+          fi
+
+          if [[ ! "$BRANCH" =~ ^release/ ]]; then
+            echo "Skipping — not a release/* branch"
+            exit 0
+          fi
+
+          git fetch origin develop
+          if git merge-base --is-ancestor origin/develop "$TARGET_REF"; then
+            echo "✓ origin/develop is an ancestor of ${BRANCH}"
+          else
+            echo "::error::Release branches must be created from develop. Re-create: git checkout develop && git pull && git checkout -b ${BRANCH}"
             exit 1
           fi

@@ -1,13 +1,19 @@
 name: Deploy to Development
 
+# Manual dispatch or push to develop / feature branches.
 on:
   workflow_dispatch:
+    inputs:
+      plan_only:
+        description: 'Plan only — skip apply approval and deploy steps'
+        type: boolean
+        default: false
   push:
     branches:
-      - main
+      - develop
+      - 'feature/**'
     paths:
       - 'backend/**'
-      - 'worker/**'
       - 'infrastructure/**'
       - 'scripts/**'
       - '.github/workflows/**'
@@ -19,16 +25,20 @@ concurrency:
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 233636046512.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REPO: contenthub-dev-api
   TERRAFORM_VERSION: 1.10.5
   TF_ENV_DIR: infrastructure/terraform/environments/us-east-1
   TF_VAR_FILE: ../variables/dev.github.tfvars
   TF_BACKEND_CONFIG: ../backends/us-east-1-dev.hcl
   API_URL: https://devhub.communityhealth.media
+  ECS_CLUSTER: contenthub-dev-cluster
+  ECS_API_SERVICE: contenthub-dev-api
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   id-token: write
   contents: read
+  issues: write
 
 jobs:
   test:
@@ -84,20 +94,18 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Ensure ECR repositories exist
+      - name: Ensure ECR repository exists
         run: |
-          for repo in contenthub-api contenthub-worker; do
-            if ! aws ecr describe-repositories --repository-names "$repo" --region "$AWS_REGION" >/dev/null 2>&1; then
-              echo "Creating ECR repository: $repo"
-              aws ecr create-repository --repository-name "$repo" --region "$AWS_REGION"
-            fi
-          done
+          if ! aws ecr describe-repositories --repository-names "${{ env.ECR_REPO }}" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Creating ECR repository: ${{ env.ECR_REPO }}"
+            aws ecr create-repository --repository-name "${{ env.ECR_REPO }}" --region "$AWS_REGION"
+          fi
 
-      - name: Generate semver image tag
+      - name: Generate image tag
         id: meta
         run: |
-          chmod +x scripts/next-dev-image-tag.sh
-          IMAGE_TAG="$(./scripts/next-dev-image-tag.sh contenthub-api "$AWS_REGION")"
+          chmod +x scripts/next-ecr-image-tag.sh
+          IMAGE_TAG="$(./scripts/next-ecr-image-tag.sh "${{ env.ECR_REPO }}" "$AWS_REGION")"
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "Deploying image tag: ${IMAGE_TAG}"
 
@@ -111,22 +119,16 @@ jobs:
           file: ./backend/Dockerfile
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/contenthub-api:${{ steps.meta.outputs.image_tag }}
-            ${{ env.ECR_REGISTRY }}/contenthub-api:dev-latest
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.image_tag }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:dev-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push worker image
-        uses: docker/build-push-action@v7
-        with:
-          context: ./worker
-          file: ./worker/Dockerfile
-          push: true
-          tags: |
-            ${{ env.ECR_REGISTRY }}/contenthub-worker:${{ steps.meta.outputs.image_tag }}
-            ${{ env.ECR_REGISTRY }}/contenthub-worker:dev-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build sync-lambda deployment package
+        run: |
+          chmod +x scripts/build-sync-lambda.sh
+          PYTHON=python3.12 ./scripts/build-sync-lambda.sh
+          ls -lah dist/sync-lambda.zip
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -141,6 +143,25 @@ jobs:
           WEBHOOK_API_KEY: ${{ secrets.WEBHOOK_API_KEY }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           INTERNAL_CACHE_SECRET: ${{ secrets.INTERNAL_CACHE_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LINKEDIN_CLIENT_ID: ${{ secrets.LINKEDIN_CLIENT_ID }}
+          LINKEDIN_CLIENT_SECRET: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
+          LINKEDIN_REDIRECT_URI: ${{ secrets.LINKEDIN_REDIRECT_URI }}
+          LINKEDIN_SCOPES: ${{ secrets.LINKEDIN_SCOPES }}
+          LINKEDIN_ORG_URN: ${{ secrets.LINKEDIN_ORG_URN }}
+          LINKEDIN_AD_ACCOUNT_ID: ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
+          LINKEDIN_ADS_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ADS_ACCESS_TOKEN }}
+          LINKEDIN_ADS_CLIENT_ID: ${{ secrets.LINKEDIN_ADS_CLIENT_ID }}
+          LINKEDIN_ADS_CLIENT_SECRET: ${{ secrets.LINKEDIN_ADS_CLIENT_SECRET }}
+          LINKEDIN_ADS_REDIRECT_URI: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
+          LINKEDIN_ADS_SCOPES: ${{ secrets.LINKEDIN_ADS_SCOPES }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+          YOUTUBE_CHANNEL_HANDLE: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          X_ACCOUNT_HANDLE: ${{ secrets.X_ACCOUNT_HANDLE }}
+          WORDPRESS_WEBHOOK_SECRET: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}
         run: |
           chmod +x scripts/verify-github-env-secrets.sh
           ./scripts/verify-github-env-secrets.sh development
@@ -149,34 +170,104 @@ jobs:
         working-directory: ${{ env.TF_ENV_DIR }}
         run: terraform init -reconfigure -backend-config="${{ env.TF_BACKEND_CONFIG }}"
 
-      - name: Terraform Apply
+      - name: Terraform Plan
         working-directory: ${{ env.TF_ENV_DIR }}
         run: |
-          terraform apply \
+          terraform plan \
             -var-file="${{ env.TF_VAR_FILE }}" \
-            -var="api_image=${{ env.ECR_REGISTRY }}/contenthub-api:${{ steps.meta.outputs.image_tag }}" \
-            -var="worker_image=${{ env.ECR_REGISTRY }}/contenthub-worker:${{ steps.meta.outputs.image_tag }}" \
-            -auto-approve
+            -var="api_image=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.image_tag }}" \
+            -out=tfplan
         env:
           TF_VAR_public_api_key: ${{ secrets.PUBLIC_API_KEY }}
           TF_VAR_webhook_api_key: ${{ secrets.WEBHOOK_API_KEY }}
           TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
           TF_VAR_internal_cache_secret: ${{ secrets.INTERNAL_CACHE_SECRET }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_linkedin_client_id: ${{ secrets.LINKEDIN_CLIENT_ID }}
+          TF_VAR_linkedin_client_secret: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
+          TF_VAR_linkedin_redirect_uri: ${{ secrets.LINKEDIN_REDIRECT_URI }}
+          TF_VAR_linkedin_scopes: ${{ secrets.LINKEDIN_SCOPES }}
+          TF_VAR_linkedin_org_urn: ${{ secrets.LINKEDIN_ORG_URN }}
+          TF_VAR_linkedin_ad_account_id: ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
+          TF_VAR_linkedin_ads_access_token: ${{ secrets.LINKEDIN_ADS_ACCESS_TOKEN }}
+          TF_VAR_linkedin_ads_client_id: ${{ secrets.LINKEDIN_ADS_CLIENT_ID }}
+          TF_VAR_linkedin_ads_client_secret: ${{ secrets.LINKEDIN_ADS_CLIENT_SECRET }}
+          TF_VAR_linkedin_ads_redirect_uri: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
+          TF_VAR_linkedin_ads_scopes: ${{ secrets.LINKEDIN_ADS_SCOPES }}
+          TF_VAR_youtube_api_key: ${{ secrets.YOUTUBE_API_KEY }}
+          TF_VAR_youtube_channel_id: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+          TF_VAR_youtube_channel_handle: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
+          TF_VAR_x_bearer_token: ${{ secrets.X_BEARER_TOKEN }}
+          TF_VAR_x_account_handle: ${{ secrets.X_ACCOUNT_HANDLE }}
+          TF_VAR_wordpress_webhook_secret: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}
+
+      - name: Plan summary
+        working-directory: ${{ env.TF_ENV_DIR }}
+        run: |
+          echo "## Terraform plan summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          terraform show -json tfplan | jq -r '
+            .resource_changes[]
+            | select(.change.actions != ["no-op"])
+            | "\(.change.actions | join(",")): \(.address)"
+          ' >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          ADD=$(terraform show -json tfplan | jq '[.resource_changes[] | select(.change.actions | index("create"))] | length')
+          CHANGE=$(terraform show -json tfplan | jq '[.resource_changes[] | select(.change.actions == ["update"])] | length')
+          DESTROY=$(terraform show -json tfplan | jq '[.resource_changes[] | select(.change.actions | index("delete"))] | length')
+          echo "| Action | Count |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| create | ${ADD} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| update | ${CHANGE} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| destroy | ${DESTROY} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event.inputs.plan_only }}" = "true" ]; then
+            echo "ℹ️ **Plan only** — apply and deploy skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⏸️ **Awaiting approval** — review the plan above, then approve the pending issue to run \`terraform apply\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Approve Terraform apply
+        if: github.event.inputs.plan_only != 'true'
+        uses: trstringer/manual-approval@v1
+        timeout-minutes: 120
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ github.actor }}
+          minimum-approvals: 1
+          issue-title: "Approve dev Terraform apply (run #${{ github.run_number }})"
+          issue-body: |
+            Review the **Terraform Plan** step and plan summary for workflow run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}.
+
+            Comment **approve** on this issue to run `terraform apply tfplan` and continue the dev deploy.
+            Comment **deny** to cancel the apply (the workflow will fail).
+
+      - name: Terraform Apply
+        if: github.event.inputs.plan_only != 'true'
+        working-directory: ${{ env.TF_ENV_DIR }}
+        run: terraform apply tfplan
 
       - name: Wait for ECS API service stable
+        if: github.event.inputs.plan_only != 'true'
         run: |
           aws ecs wait services-stable \
-            --cluster contenthub-dev-cluster \
-            --services contenthub-dev-api \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_API_SERVICE }}" \
             --region "$AWS_REGION"
-          echo "ECS service contenthub-dev-api is stable"
+          echo "ECS service ${{ env.ECS_API_SERVICE }} is stable"
 
       - name: Deployment Summary
+        if: github.event.inputs.plan_only != 'true'
         run: |
           echo "## Content Hub dev deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image tag | \`${{ steps.meta.outputs.image_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| API | ${{ env.API_URL }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API | ${{ env.API_URL }} (SG-restricted — no CI health curl) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Post-deploy smoke from a host inside the VPC or via CHT: \`./scripts/smoke.sh ${{ env.API_URL }}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,31 @@
 locals {
   prefix = contains(["prod", "platform"], var.environment) ? var.project : "${var.project}-${var.environment}"
+
+  app_secret_env = [
+    { name = "PUBLIC_API_KEY", key = "public_api_key" },
+    { name = "WEBHOOK_API_KEY", key = "webhook_api_key" },
+    { name = "JWT_SECRET", key = "jwt_secret" },
+    { name = "INTERNAL_CACHE_SECRET", key = "internal_cache_secret" },
+    { name = "OPENAI_API_KEY", key = "openai_api_key" },
+    { name = "ANTHROPIC_API_KEY", key = "anthropic_api_key" },
+    { name = "LINKEDIN_CLIENT_ID", key = "linkedin_client_id" },
+    { name = "LINKEDIN_CLIENT_SECRET", key = "linkedin_client_secret" },
+    { name = "LINKEDIN_REDIRECT_URI", key = "linkedin_redirect_uri" },
+    { name = "LINKEDIN_SCOPES", key = "linkedin_scopes" },
+    { name = "LINKEDIN_ORG_URN", key = "linkedin_org_urn" },
+    { name = "LINKEDIN_AD_ACCOUNT_ID", key = "linkedin_ad_account_id" },
+    { name = "LINKEDIN_ADS_ACCESS_TOKEN", key = "linkedin_ads_access_token" },
+    { name = "LINKEDIN_ADS_CLIENT_ID", key = "linkedin_ads_client_id" },
+    { name = "LINKEDIN_ADS_CLIENT_SECRET", key = "linkedin_ads_client_secret" },
+    { name = "LINKEDIN_ADS_REDIRECT_URI", key = "linkedin_ads_redirect_uri" },
+    { name = "LINKEDIN_ADS_SCOPES", key = "linkedin_ads_scopes" },
+    { name = "YOUTUBE_API_KEY", key = "youtube_api_key" },
+    { name = "YOUTUBE_CHANNEL_ID", key = "youtube_channel_id" },
+    { name = "YOUTUBE_CHANNEL_HANDLE", key = "youtube_channel_handle" },
+    { name = "X_BEARER_TOKEN", key = "x_bearer_token" },
+    { name = "X_ACCOUNT_HANDLE", key = "x_account_handle" },
+    { name = "WORDPRESS_WEBHOOK_SECRET", key = "wordpress_webhook_secret" },
+  ]
 }
 
 resource "aws_security_group" "api" {
@@ -39,9 +65,9 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([
     {
-      name      = "contenthub-api"
-      image     = var.container_image
-      essential = true
+      name         = "contenthub-api"
+      image        = var.container_image
+      essential    = true
       portMappings = [{ containerPort = 8000, protocol = "tcp" }]
       environment = concat(
         [
@@ -51,14 +77,20 @@ resource "aws_ecs_task_definition" "api" {
           { name = "APP_VERSION", value = var.app_version },
           { name = "CONTAINER_IMAGE", value = var.container_image },
         ],
-        var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : []
+        var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : [],
+        var.wordpress_events_queue_url != "" ? [{ name = "WORDPRESS_EVENTS_QUEUE_URL", value = var.wordpress_events_queue_url }] : [],
       )
-      secrets = [
-        { name = "DATABASE_URL", valueFrom = "${var.database_secret_arn}:url::" },
-        { name = "PUBLIC_API_KEY", valueFrom = "${var.app_secrets_arn}:public_api_key::" },
-        { name = "WEBHOOK_API_KEY", valueFrom = "${var.app_secrets_arn}:webhook_api_key::" },
-        { name = "JWT_SECRET", valueFrom = "${var.app_secrets_arn}:jwt_secret::" },
-      ]
+      secrets = concat(
+        [
+          { name = "DATABASE_URL", valueFrom = "${var.database_secret_arn}:url::" },
+        ],
+        [
+          for item in local.app_secret_env : {
+            name      = item.name
+            valueFrom = "${var.app_secrets_arn}:${item.key}::"
+          }
+        ],
+      )
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -79,6 +111,8 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
+  count = var.create_service ? 1 : 0
+
   name            = "${local.prefix}-api"
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.api.arn
@@ -104,19 +138,23 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_appautoscaling_target" "api" {
+  count = var.create_service ? 1 : 0
+
   max_capacity       = var.max_capacity
   min_capacity       = var.min_capacity
-  resource_id        = "service/${var.cluster_name}/${aws_ecs_service.api.name}"
+  resource_id        = "service/${var.cluster_name}/${aws_ecs_service.api[0].name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
 }
 
 resource "aws_appautoscaling_policy" "api_cpu" {
+  count = var.create_service ? 1 : 0
+
   name               = "${local.prefix}-api-cpu"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.api.resource_id
-  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.api.service_namespace
+  resource_id        = aws_appautoscaling_target.api[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.api[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api[0].service_namespace
 
   target_tracking_scaling_policy_configuration {
     predefined_metric_specification {

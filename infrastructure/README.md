@@ -72,7 +72,8 @@ Policy: [iam/github-actions-deploy-policy.json](iam/github-actions-deploy-policy
 | Module | Purpose |
 |--------|---------|
 | `compute/ecs-cluster` | contenthub-{env}-cluster |
-| `database/rds` | Producer Postgres (dev); Aurora module TBD Phase 3 |
+| `database/aurora-global` | Producer Aurora Global (prod) |
+| `database/rds` | Producer Postgres (dev); legacy prod until Aurora cutover |
 | `compute/ecs-api` | contenthub-api |
 | `compute/ecs-worker` | Optional bridge (`worker_desired_count = 0` default) |
 | `networking/alb-api` | Public API ALB |

@@ -9,8 +9,11 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
+_BACKEND = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
 from path_setup import install  # noqa: E402
 

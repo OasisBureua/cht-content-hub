@@ -1,35 +1,38 @@
 # Content Hub — prod.tfvars.example
 # Copy: cp prod.tfvars.example prod.tfvars
+#
+# Non-secret prod infra is in prod.github.tfvars (committed). Local scripts and CI load:
+#   1. prod.github.tfvars  — always
+#   2. prod.tfvars         — if present (secrets + overrides; wins on duplicate keys)
+#
+# GitHub Actions prod deploy uses prod.github.tfvars + TF_VAR_* secrets (no prod.tfvars).
 
-project     = "contenthub"
-environment = "prod"
-deploy_mode = "cht-vpc"
+# ── Optional: only if arming failover via tfvars (prefer ./scripts/arm-route53-failover.sh) ──
+# enable_route53_failover = true
 
-api_domain          = "contenthub.communityhealth.media"
-acm_certificate_arn = ""
-
-# From cht-platform-tool Terraform outputs (shared VPC; own contenthub-cluster)
-vpc_id = "vpc-xxxxxxxx"
-private_subnet_ids = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
-public_subnet_ids  = ["subnet-cccccccc", "subnet-dddddddd"]
-
-api_image    = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-api:prod-latest"
-worker_image = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/contenthub-worker:prod-latest"
-
-rds_instance_class    = "db.r6g.large"
-rds_engine_version    = "15.17"
-rds_allocated_storage = 100
-rds_multi_az          = true
-rds_backup_retention  = 30
-
-api_task_cpu      = 1024
-api_task_memory   = 2048
-api_desired_count = 2
-api_min_capacity  = 2
-api_max_capacity  = 6
-
-worker_task_cpu      = 1024
-worker_task_memory   = 2048
-worker_desired_count = 0
-
-cht_cache_clear_url = "https://contenthub.communityhealth.media/internal/cache/catalog/clear"
+# ── Secrets (required for local terraform apply) ─────────────────────────────
+# public_api_key        = ""
+# webhook_api_key       = ""
+# jwt_secret            = ""
+# internal_cache_secret = ""
+#
+# Platform integrations (optional):
+# linkedin_ads_client_id     = ""
+# linkedin_ads_client_secret = ""
+# linkedin_ads_access_token  = ""
+# linkedin_ad_account_id     = ""
+# linkedin_client_id         = ""
+# linkedin_client_secret     = ""
+# linkedin_redirect_uri      = ""
+# linkedin_scopes            = ""
+# linkedin_org_urn           = ""
+# youtube_api_key            = ""
+# youtube_channel_id         = ""
+# youtube_channel_handle     = ""
+# openai_api_key             = ""
+# anthropic_api_key          = ""
+# x_bearer_token             = ""
+# x_account_handle           = ""
+# wordpress_webhook_secret   = ""
+#
+# Or export TF_VAR_<name> instead of inline values.

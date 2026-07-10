@@ -4,8 +4,11 @@ from database import Base
 
 from models.client import Client
 from models.kol import KOL, KOLGroup, KOLGroupMember
+from models.playlist_tag import PlaylistTag
 from models.project import Project
 from models.shoot import Shoot
+from models.user import User
+from models.wordpress_event import WordPressEvent
 from models.campaign import Campaign, CampaignPlatformData, ReportTemplate
 
 # HCP Intel — full package for migrations + Step 4+ ingestion
@@ -41,8 +44,10 @@ __all__ = [
     "KOL",
     "KOLGroup",
     "KOLGroupMember",
+    "PlaylistTag",
     "Shoot",
     "User",
+    "WordPressEvent",
     "HCP",
     "HCPSignal",
 ]
