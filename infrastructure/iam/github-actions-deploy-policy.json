@@ -40,13 +40,25 @@
         "ecr:GetDownloadUrlForLayer",
         "ecr:DescribeRepositories",
         "ecr:ListImages",
-        "ecr:DescribeImages"
+        "ecr:DescribeImages",
+        "ecr:ListTagsForResource",
+        "ecr:TagResource",
+        "ecr:UntagResource"
       ],
       "Resource": [
         "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-api",
         "arn:aws:ecr:us-east-1:233636046512:repository/contenthub-dev-api",
         "arn:aws:ecr:us-east-2:233636046512:repository/contenthub-api"
       ]
+    },
+    {
+      "Sid": "ECRRegistryReplication",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRegistry",
+        "ecr:PutReplicationConfiguration"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "TerraformStateS3",
