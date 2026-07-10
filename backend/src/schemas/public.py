@@ -119,3 +119,24 @@ class HCPUpsertRequest(BaseModel):
 class HCPUpsertResponse(BaseModel):
     created: bool
     npi: str
+
+
+class PublicClip(BaseModel):
+    """Public-facing clip w/ engagement stats. Contract mirrors mediahub /api/public/clips exactly."""
+
+    id: str
+    title: str | None
+    description: str | None
+    ai_summary: str | None = None
+    tags: list[str]
+    doctors: list[str]
+    thumbnail_url: str | None
+    youtube_url: str | None
+    duration_seconds: int | None
+    is_short: bool | None
+    posted_at: datetime | None
+    view_count: int
+    like_count: int
+    comment_count: int
+    shoot_id: str | None
+    shoot_name: str | None

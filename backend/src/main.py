@@ -20,6 +20,7 @@ from errors import register_error_handlers  # noqa: E402
 from health.router import router as health_router  # noqa: E402
 from public.limits import limiter  # noqa: E402
 from admin.router import router as admin_router  # noqa: E402
+from public.clips import router as public_clips_router  # noqa: E402
 from public.router import router as public_router  # noqa: E402
 from wordpress.router import router as wordpress_router  # noqa: E402
 from request_logger import RequestLoggerMiddleware  # noqa: E402
@@ -52,6 +53,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.include_router(health_router)
 app.include_router(public_router)
+app.include_router(public_clips_router)
 app.include_router(admin_router)
 app.include_router(wordpress_router)
 
