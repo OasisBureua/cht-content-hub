@@ -344,3 +344,193 @@ async def test_clips_shoot_name_populated(client: AsyncClient, seeded_clips):
     assert by_id["c1"]["shoot_name"] == "Shoot A"
     assert by_id["c3"]["shoot_name"] == "Shoot B"
     assert by_id["c5"]["shoot_name"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WordPress editorial filter (has_wordpress + wp_category)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+async def wp_filtered_clips(db_session: AsyncSession):
+    """3 clips with real `official:youtube:<vid>` IDs + WP events joining a subset.
+
+    Sets up:
+    - clip-A (yt=YT_AAAAAAAAAA) — matched by WP post 501, category 'her2'
+    - clip-B (yt=YT_BBBBBBBBBB) — matched by WP post 502, category 'lung'
+    - clip-C (yt=YT_CCCCCCCCCC) — NO matching WP post (should be filtered out)
+
+    Then a deleted-superseded chain on WP post 503 with clip yt=YT_DDDDDDDDDD
+    to confirm the deleted branch is excluded.
+    """
+    import json
+
+    from sqlalchemy import text
+
+    shoot = Shoot(id="s-wp", name="WP Shoot", shoot_date=_dt(2026, 7, 1))
+    db_session.add(shoot)
+    await db_session.flush()
+
+    clips = [
+        Clip(
+            id="official:youtube:YT_AAAAAAAAAA",
+            title="HER2 Editorial",
+            tags=[],
+            channel="chm-official",
+            platform="youtube",
+            shoot_id="s-wp",
+        ),
+        Clip(
+            id="official:youtube:YT_BBBBBBBBBB",
+            title="Lung Editorial",
+            tags=[],
+            channel="chm-official",
+            platform="youtube",
+            shoot_id="s-wp",
+        ),
+        Clip(
+            id="official:youtube:YT_CCCCCCCCCC",
+            title="Not On WordPress",
+            tags=[],
+            channel="chm-official",
+            platform="youtube",
+            shoot_id="s-wp",
+        ),
+        Clip(
+            id="official:youtube:YT_DDDDDDDDDD",
+            title="Deleted On WordPress",
+            tags=[],
+            channel="chm-official",
+            platform="youtube",
+            shoot_id="s-wp",
+        ),
+    ]
+    db_session.add_all(clips)
+
+    posts = [
+        Post(
+            id=f"p-{c.id.split(':')[-1]}",
+            clip_id=c.id,
+            platform="youtube",
+            provider_post_id=c.id.split(":")[-1],
+            posted_at=_dt(2026, 7, 1),
+            view_count=100,
+            like_count=10,
+            comment_count=1,
+        )
+        for c in clips
+    ]
+    db_session.add_all(posts)
+    await db_session.flush()
+
+    async def _seed_wp(
+        post_id: int,
+        yt_id: str,
+        categories: list[str],
+        event: str = "published",
+        modified_iso: str = "2026-07-01T00:00:00+00:00",
+    ):
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO wordpress_events (
+                    post_id, modified_gmt, event, post_type, slug, title, status,
+                    permalink, categories, tags, site_url, acf, raw_payload,
+                    signature_verified, received_at,
+                    youtube_video_id, featured_media_url
+                ) VALUES (
+                    :post_id, :modified_gmt, :event, 'post', :slug, :title, 'publish',
+                    'https://communityhealth.media/x/', :categories, '[]',
+                    'https://communityhealth.media', NULL,
+                    :raw_payload, 1, :modified_gmt, :yt_id, NULL
+                )
+                """
+            ),
+            {
+                "post_id": post_id,
+                "modified_gmt": modified_iso,
+                "event": event,
+                "slug": f"post-{post_id}",
+                "title": f"WP Post {post_id}",
+                "categories": json.dumps(categories),
+                "raw_payload": json.dumps({"post_id": post_id}),
+                "yt_id": yt_id,
+            },
+        )
+
+    # A → HER2; B → lung; C → no WP row; D → published then deleted
+    await _seed_wp(501, "YT_AAAAAAAAAA", ["her2"])
+    await _seed_wp(502, "YT_BBBBBBBBBB", ["lung"])
+    await _seed_wp(
+        503,
+        "YT_DDDDDDDDDD",
+        ["her2"],
+        event="published",
+        modified_iso="2026-07-01T00:00:00+00:00",
+    )
+    await _seed_wp(
+        503,
+        "YT_DDDDDDDDDD",
+        ["her2"],
+        event="deleted",
+        modified_iso="2026-07-02T00:00:00+00:00",
+    )
+
+    await db_session.commit()
+    return clips
+
+
+@pytest.mark.asyncio
+async def test_clips_has_wordpress_filter_returns_only_matched(
+    client: AsyncClient, wp_filtered_clips
+):
+    response = await client.get(
+        "/api/public/clips?has_wordpress=true", headers=api_headers()
+    )
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()}
+    # A + B matched. C has no WP row. D was superseded by delete.
+    assert ids == {
+        "official:youtube:YT_AAAAAAAAAA",
+        "official:youtube:YT_BBBBBBBBBB",
+    }
+
+
+@pytest.mark.asyncio
+async def test_clips_wp_category_filter_narrows_further(
+    client: AsyncClient, wp_filtered_clips
+):
+    response = await client.get(
+        "/api/public/clips?wp_category=her2", headers=api_headers()
+    )
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()}
+    # Only A (her2). B is lung. C has no WP. D deleted.
+    assert ids == {"official:youtube:YT_AAAAAAAAAA"}
+
+
+@pytest.mark.asyncio
+async def test_clips_wp_category_unknown_returns_empty(
+    client: AsyncClient, wp_filtered_clips
+):
+    response = await client.get(
+        "/api/public/clips?wp_category=nonexistent", headers=api_headers()
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_clips_no_wp_filter_returns_all_official(
+    client: AsyncClient, wp_filtered_clips
+):
+    response = await client.get("/api/public/clips", headers=api_headers())
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()}
+    # All 4 official clips (no filter applied)
+    assert ids == {
+        "official:youtube:YT_AAAAAAAAAA",
+        "official:youtube:YT_BBBBBBBBBB",
+        "official:youtube:YT_CCCCCCCCCC",
+        "official:youtube:YT_DDDDDDDDDD",
+    }
