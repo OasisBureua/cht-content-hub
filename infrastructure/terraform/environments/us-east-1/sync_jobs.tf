@@ -79,6 +79,20 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    # One-shot: for wordpress_events rows ingested before mu-plugin v0.2 (which
+    # extracts youtube_video_id + featured_media_url server-side), fetch each
+    # post via WP REST and UPDATE the row. Idempotent — WHERE youtube_video_id
+    # IS NULL. Rate-limited 4 req/sec (250ms sleep) to be polite with WP + WAF.
+    # 900s timeout supports ~3.5k posts per invocation; batch_size caps per-run.
+    wordpress_backfill = {
+      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_backfill", false)
+      handler                        = "jobs.wordpress_backfill.handler.handler"
+      timeout                        = 900
+      memory_size                    = 512
+      schedule_expression            = null
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
   }
 }
 
