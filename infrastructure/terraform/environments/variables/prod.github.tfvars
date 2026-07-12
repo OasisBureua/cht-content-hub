@@ -71,6 +71,8 @@ sync_jobs_enabled = {
   playlist_doctor_tagger = false
   wordpress_ingest       = false
   clips_seed             = true
+  wordpress_backfill     = true
+  wordpress_seed         = true
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
