@@ -30,11 +30,13 @@ Payload (all optional):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 from typing import Any
 
+import boto3
 import httpx
 
 from shared.runtime import configure_logging, install_paths, run_async
@@ -52,6 +54,30 @@ _UA = (
 )
 _REQUEST_DELAY_S = 0.25
 _HTTP_TIMEOUT_S = 15.0
+
+
+def _load_wp_credentials() -> tuple[str | None, str | None]:
+    """Read WordPress app-password credentials from Secrets Manager.
+
+    Returns (user, app_password) or (None, None) if not configured.
+    WordPress REST WAF rejects unauthenticated requests to
+    /wp-json/wp/v2/posts/*; an application password bypasses that
+    while being revokable independently from a login password.
+    """
+    arn = os.environ.get("APP_SECRETS_ARN", "")
+    if not arn:
+        return None, None
+    try:
+        client = boto3.client(
+            "secretsmanager", region_name=os.environ.get("AWS_REGION", "us-east-1")
+        )
+        payload = json.loads(client.get_secret_value(SecretId=arn)["SecretString"])
+    except Exception as exc:
+        log.warning("could not load app secrets", extra={"error": str(exc)})
+        return None, None
+    user = payload.get("wordpress_admin_user") or None
+    app_pw = payload.get("wordpress_admin_app_password") or None
+    return user, app_pw
 
 
 def _extract_youtube_id(content: str | None) -> str | None:
@@ -181,8 +207,14 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     results_summary: list[dict[str, Any]] = []
 
     headers = {"User-Agent": _UA}
+    wp_user, wp_app_pw = _load_wp_credentials()
+    auth = (wp_user, wp_app_pw) if wp_user and wp_app_pw else None
+    log.info(
+        "wordpress_backfill auth",
+        extra={"authenticated": auth is not None, "wp_user": wp_user or "none"},
+    )
     async with httpx.AsyncClient(
-        timeout=_HTTP_TIMEOUT_S, headers=headers, follow_redirects=True
+        timeout=_HTTP_TIMEOUT_S, headers=headers, follow_redirects=True, auth=auth
     ) as client:
         for post_id in post_ids:
             info = await _process_post(client, wp_base_url, post_id)
