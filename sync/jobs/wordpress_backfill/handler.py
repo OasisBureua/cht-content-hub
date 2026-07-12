@@ -52,8 +52,9 @@ _UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
-_REQUEST_DELAY_S = 0.25
+_REQUEST_DELAY_S = 1.0
 _HTTP_TIMEOUT_S = 15.0
+_RATE_LIMIT_BACKOFF_S = 30.0
 
 
 def _load_wp_credentials() -> tuple[str | None, str | None]:
@@ -89,23 +90,39 @@ def _extract_youtube_id(content: str | None) -> str | None:
 
 async def _fetch_wp_post(
     client: httpx.AsyncClient, base_url: str, post_id: int
-) -> dict[str, Any] | None:
-    """Fetch one WordPress post via REST. Returns None on non-200."""
+) -> tuple[dict[str, Any] | None, str]:
+    """Fetch one WordPress post via REST.
+
+    Returns (data, status) where status is one of:
+      - 'ok': valid post payload in data
+      - 'not_found': WP returned 404 (post deleted or fake/seed ID)
+      - 'rate_limited': WP returned 429 (caller should back off)
+      - 'error': other HTTP or network error
+    """
     url = f"{base_url.rstrip('/')}/wp-json/wp/v2/posts/{post_id}"
     params = {"_fields": "id,content,featured_media_url,jetpack_featured_media_url"}
     try:
         resp = await client.get(url, params=params)
         if resp.status_code == 404:
             log.info("wp post not found", extra={"post_id": post_id})
-            return None
+            return None, "not_found"
+        if resp.status_code == 429:
+            log.warning(
+                "wp rate limited",
+                extra={
+                    "post_id": post_id,
+                    "retry_after": resp.headers.get("retry-after"),
+                },
+            )
+            return None, "rate_limited"
         resp.raise_for_status()
-        return resp.json()
+        return resp.json(), "ok"
     except httpx.HTTPError as exc:
         log.warning(
             "wp post fetch failed",
             extra={"post_id": post_id, "error": str(exc)},
         )
-        return None
+        return None, "error"
 
 
 async def _fetch_featured_media_url(
@@ -129,12 +146,20 @@ async def _process_post(
     base_url: str,
     post_id: int,
 ) -> dict[str, Any]:
-    """Fetch WP data + return {youtube_video_id, featured_media_url} or None values."""
-    data = await _fetch_wp_post(client, base_url, post_id)
-    if not data:
+    """Fetch WP data + return status + extracted fields.
+
+    Statuses:
+      - 'ok': fetched successfully; youtube_video_id may still be None if the
+        post has no YouTube embed
+      - 'not_found': WP returned 404 (seed IDs, deleted posts)
+      - 'rate_limited': WP returned 429; caller must back off
+      - 'error': other HTTP/network failure
+    """
+    data, status = await _fetch_wp_post(client, base_url, post_id)
+    if status != "ok" or data is None:
         return {
             "post_id": post_id,
-            "status": "wp_fetch_failed",
+            "status": status,
             "youtube_video_id": None,
             "featured_media_url": None,
         }
@@ -196,13 +221,22 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         return {
             "status": "ok",
             "job": "wordpress_backfill",
+            "dry_run": dry_run,
+            "post_ids_queued": 0,
             "processed": 0,
             "updated": 0,
-            "skipped": 0,
+            "would_update_dry_run": 0,
+            "skipped_not_found": 0,
+            "skipped_no_data": 0,
+            "rate_limited": 0,
+            "failures": 0,
         }
 
     updated = 0
-    skipped = 0
+    would_update = 0  # dry-run only; how many rows would have been written
+    skipped_not_found = 0
+    skipped_no_data = 0
+    rate_limited = 0
     failures = 0
     results_summary: list[dict[str, Any]] = []
 
@@ -218,24 +252,48 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     ) as client:
         for post_id in post_ids:
             info = await _process_post(client, wp_base_url, post_id)
-            await asyncio.sleep(_REQUEST_DELAY_S)
+
+            if info["status"] == "rate_limited":
+                # Row stays eligible for future runs. Back off and STOP the
+                # batch — hitting 429s means we're too fast; better to end
+                # early and let another invocation resume than keep firing.
+                rate_limited += 1
+                results_summary.append(info)
+                log.warning(
+                    "backfill halting on rate limit",
+                    extra={
+                        "post_id": post_id,
+                        "processed_so_far": len(results_summary),
+                    },
+                )
+                await asyncio.sleep(_RATE_LIMIT_BACKOFF_S)
+                break
+
+            if info["status"] == "not_found":
+                skipped_not_found += 1
+                results_summary.append(info)
+                await asyncio.sleep(_REQUEST_DELAY_S)
+                continue
 
             if info["status"] != "ok":
                 failures += 1
                 results_summary.append(info)
+                await asyncio.sleep(_REQUEST_DELAY_S)
                 continue
 
             yt_id = info["youtube_video_id"]
             fm_url = info["featured_media_url"]
 
             if not yt_id and not fm_url:
-                skipped += 1
+                skipped_no_data += 1
                 results_summary.append({**info, "status": "no_data"})
+                await asyncio.sleep(_REQUEST_DELAY_S)
                 continue
 
             if dry_run:
+                would_update += 1
                 results_summary.append({**info, "status": "dry_run"})
-                updated += 1
+                await asyncio.sleep(_REQUEST_DELAY_S)
                 continue
 
             async with async_session_maker() as db:
@@ -260,18 +318,25 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
 
             updated += 1
             results_summary.append(info)
+            await asyncio.sleep(_REQUEST_DELAY_S)
 
+    processed = len(results_summary)  # actual attempts, may be < len(post_ids) if halted
     log.info(
         "wordpress_backfill done",
         extra={
-            "processed": len(post_ids),
+            "post_ids_queued": len(post_ids),
+            "processed": processed,
             "updated": updated,
-            "skipped": skipped,
+            "would_update_dry_run": would_update,
+            "skipped_not_found": skipped_not_found,
+            "skipped_no_data": skipped_no_data,
+            "rate_limited": rate_limited,
             "failures": failures,
+            "dry_run": dry_run,
         },
     )
 
-    # Clear CHT cache on successful updates so filter results reflect the new data
+    # Clear CHT cache only when real writes happened
     if updated > 0 and not dry_run:
         from shared.cht_cache import clear_cht_catalog_cache
 
@@ -280,9 +345,14 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "ok",
         "job": "wordpress_backfill",
-        "processed": len(post_ids),
+        "dry_run": dry_run,
+        "post_ids_queued": len(post_ids),
+        "processed": processed,
         "updated": updated,
-        "skipped": skipped,
+        "would_update_dry_run": would_update,
+        "skipped_not_found": skipped_not_found,
+        "skipped_no_data": skipped_no_data,
+        "rate_limited": rate_limited,
         "failures": failures,
         # Sample of first 10 results for CloudWatch visibility
         "sample": results_summary[:10],
