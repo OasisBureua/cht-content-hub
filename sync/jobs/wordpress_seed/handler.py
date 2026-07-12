@@ -40,6 +40,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
@@ -115,13 +116,21 @@ async def _fetch_vocab(
     return result
 
 
-def _parse_modified_gmt(value: str | None) -> str | None:
-    """WP returns ISO-8601 without timezone. Normalize to include Z for storage."""
+def _parse_modified_gmt(value: str | None) -> datetime | None:
+    """WP returns ISO-8601 without timezone (e.g. '2026-07-10T13:10:46').
+    Parse into a tz-aware datetime (UTC) for asyncpg TIMESTAMPTZ binding.
+    """
     if not value:
         return None
-    if value.endswith("Z") or "+" in value or "-" in value[10:]:
-        return value
-    return value + "Z"
+    # Strip trailing Z if present so fromisoformat works
+    cleaned = value[:-1] if value.endswith("Z") else value
+    try:
+        dt = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 async def _fetch_posts_page(
@@ -193,7 +202,7 @@ async def _insert_post(
         "slug": slug,
         "title": title,
         "status": status,
-        "modified_gmt": modified_gmt,
+        "modified_gmt": modified_gmt.isoformat(),
         "permalink": permalink,
         "categories": cat_slugs,
         "tags": tag_slugs,
