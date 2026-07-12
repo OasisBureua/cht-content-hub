@@ -94,3 +94,14 @@ class WordPressEvent(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+    # YouTube video ID extracted by the mu-plugin from post_content HTML.
+    # NULL when the post doesn't embed a YouTube video. Indexed (partial) so
+    # CHT can join editorial WP state → clip catalog on this key.
+    youtube_video_id: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, index=False
+    )
+
+    # Featured image URL from WordPress (`get_the_post_thumbnail_url()`).
+    # Used as the CHT thumbnail when the post doesn't have a YouTube-derived one.
+    featured_media_url: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -121,6 +121,46 @@ class HCPUpsertResponse(BaseModel):
     npi: str
 
 
+class PublicWordPressCategory(BaseModel):
+    """WordPress category slug + count of posts currently on it.
+
+    Pass-through from `wordpress_events`. Slugs are open-vocabulary
+    (Andrew's editorial team owns the taxonomy in wp-admin).
+    """
+
+    slug: str
+    post_count: int
+
+
+class PublicWordPressCategoryList(BaseModel):
+    items: list[PublicWordPressCategory]
+    total: int
+
+
+class PublicWordPressPost(BaseModel):
+    """Current editorial state of one WordPress post.
+
+    Latest non-deleted event per `post_id`. Deleted posts are excluded.
+    All fields are verbatim from WordPress — no ContentHub-side
+    tagging or curation is applied.
+    """
+
+    post_id: int
+    slug: str
+    title: str
+    permalink: str
+    categories: list[str]
+    tags: list[str]
+    youtube_video_id: str | None
+    featured_media_url: str | None
+    modified_gmt: datetime
+
+
+class PublicWordPressPostList(BaseModel):
+    items: list[PublicWordPressPost]
+    total: int
+
+
 class PublicClip(BaseModel):
     """Public-facing clip w/ engagement stats. Contract mirrors mediahub /api/public/clips exactly."""
 

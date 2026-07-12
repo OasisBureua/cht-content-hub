@@ -15,6 +15,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from shared.cht_cache import clear_cht_catalog_cache
 from shared.runtime import configure_logging, install_paths, run_async
 
 
@@ -72,6 +73,8 @@ async def _insert_event(payload: dict[str, Any]) -> dict[str, Any]:
             acf=payload.get("acf"),
             raw_payload=payload,
             signature_verified=True,  # ECS route already validated
+            youtube_video_id=payload.get("youtube_video_id"),
+            featured_media_url=payload.get("featured_media_url"),
         )
         db.add(row)
         await db.commit()
@@ -107,6 +110,7 @@ async def _run(event: dict) -> dict:
         payload = event if isinstance(event, dict) else {}
         if payload:
             result = await _insert_event(payload)
+            _clear_cht_cache_if_material([result])
             return {"status": "ok", "job": "wordpress_ingest", "results": [result]}
         return {"status": "ok", "job": "wordpress_ingest", "results": []}
 
@@ -120,7 +124,27 @@ async def _run(event: dict) -> dict:
             raise
         results.append(result)
 
+    _clear_cht_cache_if_material(results)
+
     return {"status": "ok", "job": "wordpress_ingest", "results": results}
+
+
+def _clear_cht_cache_if_material(results: list[dict[str, Any]]) -> None:
+    """Invalidate CHT's catalog cache after a WP event lands.
+
+    Skip when nothing material happened (all duplicates or errors) —
+    duplicates mean CHT already reflects this state, so a cache-clear
+    would just churn the CDN with no benefit.
+
+    Non-blocking: `clear_cht_catalog_cache` catches its own exceptions
+    and logs a warning. A cache-clear failure MUST NOT fail the Lambda
+    invocation — the WP event is already durably in the DB, and the
+    5-min TTL will catch up eventually.
+    """
+    inserted = any(r.get("status") == "inserted" for r in results)
+    if not inserted:
+        return
+    clear_cht_catalog_cache(job="wordpress_ingest")
 
 
 def handler(event: dict, context) -> dict:

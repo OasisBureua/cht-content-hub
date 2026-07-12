@@ -15,14 +15,16 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy import String as SAString, cast, or_, select
+from sqlalchemy import String as SAString, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.clip import Clip
 from models.post import Post
 from models.shoot import Shoot
+from models.wordpress_event import WordPressEvent
 from public.deps import verify_public_api_key
 from public.limits import limiter
 from schemas.public import PublicClip
@@ -89,6 +91,22 @@ async def get_clips(
             "per shoot_id. 0 = no cap. No effect when dedup_by=shoot."
         ),
     ),
+    has_wordpress: bool = Query(
+        False,
+        description=(
+            "If true, restrict results to clips whose YouTube video ID matches a "
+            "current (non-deleted) WordPress post in `wordpress_events`. This is "
+            "the editorial-catalog filter: shows only clips that are also live on "
+            "communityhealth.media."
+        ),
+    ),
+    wp_category: Optional[str] = Query(
+        None,
+        description=(
+            "Only clips whose matching WordPress post has this category slug "
+            "(verbatim, case-sensitive). Implies has_wordpress=true."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[PublicClip]:
@@ -105,6 +123,39 @@ async def get_clips(
         return cast(Clip.tags, PG_ARRAY(SAString)).any(value)
 
     query = select(Clip).where(Clip.channel == "chm-official")
+
+    # WordPress editorial filter. Restrict to clips whose YouTube video ID
+    # matches a current (non-deleted) `wordpress_events` row. A wp_category
+    # value implies has_wordpress=true.
+    #
+    # Join key: extract the third `:`-separated segment of clip.id
+    # (`official:youtube:<youtube_video_id>`) and match against
+    # wordpress_events.youtube_video_id. Only Postgres supports the
+    # split_part function; on SQLite (tests) we filter in Python later.
+    filter_by_wp = has_wordpress or bool(wp_category)
+    if filter_by_wp and is_pg:
+        # Latest non-deleted event per post_id
+        wp_latest = (
+            select(WordPressEvent)
+            .where(WordPressEvent.event != "deleted")
+            .distinct(WordPressEvent.post_id)
+            .order_by(
+                WordPressEvent.post_id,
+                WordPressEvent.modified_gmt.desc(),
+                WordPressEvent.id.desc(),
+            )
+            .subquery()
+        )
+        clip_yt_id = func.split_part(Clip.id, ":", 3)
+        query = query.join(
+            wp_latest, clip_yt_id == wp_latest.c.youtube_video_id
+        )
+        if wp_category:
+            query = query.where(
+                cast(wp_latest.c.categories, PG_JSONB).contains(
+                    cast([wp_category], PG_JSONB)
+                )
+            )
 
     # `q` and tag filters both need array membership on postgres.
     tags_list: list[str] = (
@@ -141,6 +192,32 @@ async def get_clips(
         query = query.where(Clip.platform == platform)
 
     clips = list((await db.execute(query)).scalars())
+
+    if not is_pg and filter_by_wp:
+        # SQLite (tests) path: fetch current WP editorial state, filter in Python.
+        wp_rows = list((await db.execute(select(WordPressEvent))).scalars())
+        # Latest-per-post_id (by received_at), excluding deleted
+        latest_by_post: dict[int, WordPressEvent] = {}
+        for row in wp_rows:
+            existing = latest_by_post.get(row.post_id)
+            if existing is None or row.received_at > existing.received_at:
+                latest_by_post[row.post_id] = row
+        active = [r for r in latest_by_post.values() if r.event != "deleted"]
+        allowed_youtube_ids: set[str] = set()
+        for r in active:
+            if not r.youtube_video_id:
+                continue
+            if wp_category and wp_category not in (r.categories or []):
+                continue
+            allowed_youtube_ids.add(r.youtube_video_id)
+
+        def _wp_matches(clip: Clip) -> bool:
+            parts = (clip.id or "").split(":")
+            if len(parts) < 3 or not parts[2]:
+                return False
+            return parts[2] in allowed_youtube_ids
+
+        clips = [c for c in clips if _wp_matches(c)]
 
     if not is_pg and (tags_list or doctor_tag or q):
         def _has_all(clip: Clip) -> bool:
