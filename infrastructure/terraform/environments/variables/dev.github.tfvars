@@ -68,6 +68,7 @@ sync_jobs_enabled = {
   wordpress_ingest       = true
   clips_seed             = true
   wordpress_backfill     = true
+  wordpress_seed         = true
 }
 
 # Platform integration secrets are NOT stored here (committed file).

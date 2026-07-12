@@ -93,6 +93,20 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    # One-shot: page through WP REST /posts and INSERT into wordpress_events
+    # for the entire editorial catalog. Idempotent via UNIQUE (post_id,
+    # modified_gmt) — re-runs are no-ops for rows that exist. Runs at
+    # 1 req/sec (same cadence as backfill). 900s supports the full catalog
+    # (~500 posts / ~5 pages / ~8 min) with margin for vocab fetches.
+    wordpress_seed = {
+      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_seed", false)
+      handler                        = "jobs.wordpress_seed.handler.handler"
+      timeout                        = 900
+      memory_size                    = 512
+      schedule_expression            = null
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
   }
 }
 
