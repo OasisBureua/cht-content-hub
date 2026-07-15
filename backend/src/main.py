@@ -22,7 +22,10 @@ from public.limits import limiter  # noqa: E402
 from admin.kols import router as admin_kols_router  # noqa: E402
 from admin.router import router as admin_router  # noqa: E402
 from public.clips import router as public_clips_router  # noqa: E402
+from public.doctors import router as public_doctors_router  # noqa: E402
 from public.router import router as public_router  # noqa: E402
+from public.tags import router as public_tags_router  # noqa: E402
+from public.transcripts import router as public_transcripts_router  # noqa: E402
 from public.wordpress import router as public_wordpress_router  # noqa: E402
 from wordpress.router import router as wordpress_router  # noqa: E402
 from request_logger import RequestLoggerMiddleware  # noqa: E402
@@ -56,6 +59,9 @@ app.add_middleware(RequestLoggerMiddleware)
 app.include_router(health_router)
 app.include_router(public_router)
 app.include_router(public_clips_router)
+app.include_router(public_doctors_router)
+app.include_router(public_tags_router)
+app.include_router(public_transcripts_router)
 app.include_router(public_wordpress_router)
 app.include_router(admin_router)
 app.include_router(admin_kols_router)

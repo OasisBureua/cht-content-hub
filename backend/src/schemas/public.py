@@ -180,3 +180,20 @@ class PublicClip(BaseModel):
     comment_count: int
     shoot_id: str | None
     shoot_name: str | None
+
+
+class PublicDoctor(BaseModel):
+    """Doctor entry for VideosPage filter dropdown. Frontend reads slug only —
+    mediahub also emitted shoot_count / post_count / total_views / total_likes,
+    none of which the frontend consumes. Kept minimal."""
+
+    slug: str
+
+
+class PublicTranscript(BaseModel):
+    """Diarized shoot transcript. Frontend reads `transcript` (string, split on
+    newlines into paragraphs) and `shoot_name` only. Mediahub also emitted
+    shoot_id / doctors / length; none consumed."""
+
+    transcript: str
+    shoot_name: str | None
