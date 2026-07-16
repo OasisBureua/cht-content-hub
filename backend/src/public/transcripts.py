@@ -22,7 +22,13 @@ from schemas.public import PublicTranscript
 router = APIRouter(prefix="/api/public", tags=["public-transcripts"])
 
 
-@router.get("/transcripts/{shoot_id}", response_model=PublicTranscript)
+@router.get(
+    "/transcripts/{shoot_id}",
+    response_model=PublicTranscript,
+    responses={
+        404: {"description": "Shoot not found, or shoot has no diarized transcript."},
+    },
+)
 @limiter.limit("100/minute")
 async def get_transcript(
     shoot_id: str,

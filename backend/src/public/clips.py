@@ -371,7 +371,13 @@ async def get_clips(
     ]
 
 
-@router.get("/clips/{clip_id}", response_model=PublicClip)
+@router.get(
+    "/clips/{clip_id}",
+    response_model=PublicClip,
+    responses={
+        404: {"description": "Clip not found or not on the chm-official channel."},
+    },
+)
 @limiter.limit("100/minute")
 async def get_clip_detail(
     clip_id: str,
