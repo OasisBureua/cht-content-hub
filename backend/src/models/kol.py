@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,6 +56,22 @@ class KOL(Base):
     hcp_match_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     hcp_candidates: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     hcp_resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # SCRUM-58 admin surface — see migration 0011.
+    #
+    # `display_order`: admin sort override. NULL rows fall to the default order.
+    # `featured`: flag for the featured-KOLs surface on public + app pages.
+    # `curated_fields`: list of field names the admin has manually curated.
+    # Enrichment sync jobs consult this list before overwriting a field — same
+    # "sync respects manual lock" pattern as hcp_match_status
+    # (openalex_backfill.py:103 skips when status is `manually_locked`).
+    display_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    featured: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    curated_fields: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
