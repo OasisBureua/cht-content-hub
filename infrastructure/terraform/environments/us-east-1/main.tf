@@ -85,6 +85,8 @@ module "iam" {
   aws_account_id             = data.aws_caller_identity.current.account_id
   wordpress_ingest_enabled   = lookup(var.sync_jobs_enabled, "wordpress_ingest", false)
   wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
+  hcp_intel_poll_enabled     = lookup(var.sync_jobs_enabled, "hcp_intel_poll", false)
+  hcp_intel_poll_queue_arn   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_arn, "")
 }
 
 module "s3_assets" {
@@ -205,8 +207,11 @@ module "ecs_api" {
   create_service             = var.deploy_api_ecs_service
   wordpress_events_queue_url = try(module.sync_lambda["wordpress_ingest"].sqs_queue_url, "")
   wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
+  hcp_intel_poll_queue_url   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_url, "")
+  hcp_intel_poll_queue_arn   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_arn, "")
+  assets_bucket              = module.s3_assets.bucket_name
 
-  depends_on = [module.app_secrets, module.sync_lambda]
+  depends_on = [module.app_secrets, module.sync_lambda, module.s3_assets]
 }
 
 module "ecs_worker" {
