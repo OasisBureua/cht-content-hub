@@ -112,7 +112,13 @@ async def get_admin_kol(
     return _to_admin_out(kol)
 
 
-@router.patch("/kols/{slug}", response_model=KOLAdminOut)
+@router.patch(
+    "/kols/{slug}",
+    response_model=KOLAdminOut,
+    responses={
+        404: {"description": "No KOL with that slug."},
+    },
+)
 async def patch_admin_kol(
     slug: str,
     payload: KOLAdminUpdate,
@@ -146,6 +152,10 @@ async def patch_admin_kol(
     "/kols/{slug}/refresh",
     response_model=KOLRefreshOut,
     status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        404: {"description": "No KOL with that slug."},
+        502: {"description": "SQS send_message failed — infrastructure issue, retry later."},
+    },
 )
 async def refresh_admin_kol(
     slug: str,
@@ -236,6 +246,12 @@ _PRESIGN_EXPIRY_SECONDS = 300  # 5 minutes — matches typical browser upload fl
 @router.post(
     "/kols/{slug}/headshot/presign",
     response_model=KOLHeadshotPresignOut,
+    responses={
+        400: {"description": "Unsupported content_type (must be image/jpeg, image/png, or image/webp)."},
+        404: {"description": "No KOL with that slug."},
+        502: {"description": "S3 presign generation failed — retry later."},
+        503: {"description": "ASSETS_BUCKET not configured on this environment."},
+    },
 )
 async def presign_kol_headshot(
     slug: str,
