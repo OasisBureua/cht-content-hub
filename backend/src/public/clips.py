@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import String as SAString, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
@@ -369,3 +369,71 @@ async def get_clips(
         )
         for item in page
     ]
+
+
+@router.get(
+    "/clips/{clip_id}",
+    response_model=PublicClip,
+    responses={
+        404: {"description": "Clip not found or not on the chm-official channel."},
+    },
+)
+@limiter.limit("100/minute")
+async def get_clip_detail(
+    clip_id: str,
+    request: Request,
+    _api_key: Annotated[str, Depends(verify_public_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PublicClip:
+    """Single official CHM clip with enrichment. Mirrors mediahub /api/public/clips/{id}."""
+    clip = (
+        await db.execute(
+            select(Clip).where(Clip.id == clip_id, Clip.channel == "chm-official")
+        )
+    ).scalar_one_or_none()
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    posts = list(
+        (await db.execute(select(Post).where(Post.clip_id == clip_id))).scalars()
+    )
+    total_views = sum(p.view_count for p in posts)
+    total_likes = sum(p.like_count for p in posts)
+    total_comments = sum(p.comment_count for p in posts)
+
+    yt_url: Optional[str] = None
+    yt_thumbnail: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    for post in posts:
+        if post.platform == "youtube" and post.provider_post_id:
+            yt_url = _youtube_url(post.provider_post_id, clip.is_short)
+            yt_thumbnail = post.thumbnail_url
+        if post.posted_at and (not posted_at or post.posted_at > posted_at):
+            posted_at = post.posted_at
+
+    shoot_name: Optional[str] = None
+    if clip.shoot_id:
+        row = (
+            await db.execute(select(Shoot.name).where(Shoot.id == clip.shoot_id))
+        ).scalar_one_or_none()
+        if row:
+            shoot_name = row
+
+    return PublicClip(
+        id=clip.id,
+        title=clip.title,
+        description=clip.description,
+        ai_summary=clip.ai_summary,
+        tags=clip.tags or [],
+        doctors=_extract_doctors(clip.tags),
+        thumbnail_url=yt_thumbnail or clip.video_preview_url,
+        youtube_url=yt_url,
+        duration_seconds=clip.duration_seconds,
+        is_short=clip.is_short,
+        posted_at=posted_at or clip.earliest_posted_at,
+        view_count=total_views,
+        like_count=total_likes,
+        comment_count=total_comments,
+        shoot_id=clip.shoot_id,
+        shoot_name=shoot_name,
+    )
