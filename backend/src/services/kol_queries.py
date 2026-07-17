@@ -101,7 +101,11 @@ async def list_kols(
 ) -> list[KOL]:
     stmt = _apply_kol_filters(
         select(KOL), region=region, institution=institution, q=q, new_only=new_only
-    ).order_by(KOL.name.asc())
+    ).order_by(
+        KOL.featured.desc(),
+        KOL.display_order.asc().nulls_last(),
+        KOL.name.asc(),
+    )
     if limit is not None:
         stmt = stmt.limit(limit).offset(offset)
     return list((await db.execute(stmt)).scalars().all())

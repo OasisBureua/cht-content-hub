@@ -47,6 +47,8 @@ class PublicKOL(BaseModel):
     shoot_count: int
     first_appeared_at: datetime | None
     is_new: bool
+    display_order: int | None = None
+    featured: bool = False
     intel: PublicKOLIntel | None = None
 
 
