@@ -52,7 +52,7 @@ def kol_to_public(
         first_appeared_at=first_appeared_at,
         is_new=is_new,
         display_order=kol.display_order,
-        featured=kol.featured,
+        featured=bool(kol.featured),
         intel=intel,
     )
 
