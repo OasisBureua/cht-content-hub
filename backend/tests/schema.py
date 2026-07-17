@@ -59,6 +59,56 @@ CREATE TABLE IF NOT EXISTS hcp_signals (
 # `wordpress_events` uses postgres JSONB in the ORM model, which SQLite can't
 # create via Base.metadata.create_all. Mirror it as a raw DDL with JSON columns —
 # tests only need list-shaped read/write, not Postgres-specific operators.
+# WebinarEvent + WebinarAttendance + OpenPaymentsRecord mirror the ORM models
+# with SQLite-compatible types (Postgres UUID / JSONB / Numeric become VARCHAR /
+# JSON / REAL). Tests only exercise basic read/write, not Postgres-specific
+# operators.
+_WEBINAR_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS webinar_events (
+    id VARCHAR(36) PRIMARY KEY,
+    zoom_webinar_id VARCHAR(50),
+    title VARCHAR(500),
+    scheduled_start TIMESTAMP,
+    duration_minutes INTEGER,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+_WEBINAR_ATTENDANCE_DDL = """
+CREATE TABLE IF NOT EXISTS webinar_attendance (
+    id VARCHAR(36) PRIMARY KEY,
+    event_id VARCHAR(36) NOT NULL REFERENCES webinar_events(id),
+    hcp_npi VARCHAR(10) NOT NULL REFERENCES hcps(npi),
+    rsvped BOOLEAN NOT NULL DEFAULT 0,
+    attended BOOLEAN NOT NULL DEFAULT 0,
+    asked_question BOOLEAN NOT NULL DEFAULT 0,
+    watch_minutes INTEGER,
+    raw_name VARCHAR(255),
+    raw_institution VARCHAR(255),
+    raw_email VARCHAR(255),
+    survey_submitted BOOLEAN NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+_OPEN_PAYMENTS_DDL = """
+CREATE TABLE IF NOT EXISTS open_payments_records (
+    record_id VARCHAR(60) PRIMARY KEY,
+    hcp_npi VARCHAR(10) NOT NULL REFERENCES hcps(npi),
+    program_year INTEGER NOT NULL,
+    payment_type VARCHAR(12) NOT NULL,
+    payment_date TIMESTAMP,
+    amount_usd REAL,
+    nature_of_payment TEXT,
+    company_name TEXT,
+    drug_name TEXT,
+    drug_normalized VARCHAR(100),
+    raw_json JSON,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 _WORDPRESS_EVENTS_DDL = """
 CREATE TABLE IF NOT EXISTS wordpress_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,4 +141,7 @@ async def create_test_schema(conn: AsyncConnection) -> None:
         )
     )
     await conn.execute(text(_HCP_SIGNALS_DDL))
+    await conn.execute(text(_WEBINAR_EVENTS_DDL))
+    await conn.execute(text(_WEBINAR_ATTENDANCE_DDL))
+    await conn.execute(text(_OPEN_PAYMENTS_DDL))
     await conn.execute(text(_WORDPRESS_EVENTS_DDL))
