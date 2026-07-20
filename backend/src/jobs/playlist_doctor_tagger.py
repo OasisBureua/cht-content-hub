@@ -288,8 +288,10 @@ class TagRunStats:
     shoots_doctors_corrected: int = 0
     clips_touched: int = 0
     clips_changed: int = 0
+    clips_curator_locked_skipped: int = 0
     posts_touched: int = 0
     posts_changed: int = 0
+    posts_curator_locked_skipped: int = 0
     playlist_videos_not_in_producer: list[str] = field(default_factory=list)
     playlists_title_fetch_failed: list[str] = field(default_factory=list)
     playlists_orphaned_404: list[str] = field(default_factory=list)
@@ -521,6 +523,10 @@ async def tag_clips_from_playlists(
                     )
             for clip in clips:
                 stats.clips_touched += 1
+                # SCRUM-75: skip clips the curator has locked via admin API.
+                if getattr(clip, "tags_curator_override", False):
+                    stats.clips_curator_locked_skipped += 1
+                    continue
                 before = list(clip.tags or [])
                 after = normalize_tags(merge_fn(before, canonical_tags))
                 diff = TagDiff(
@@ -566,6 +572,9 @@ async def tag_clips_from_playlists(
 
             for post in posts:
                 stats.posts_touched += 1
+                if getattr(post, "tags_curator_override", False):
+                    stats.posts_curator_locked_skipped += 1
+                    continue
                 before = list(post.tags or [])
                 after = normalize_tags(merge_fn(before, canonical_tags))
                 diff = TagDiff(

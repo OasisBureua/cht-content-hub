@@ -103,6 +103,14 @@ class Clip(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # SCRUM-75: curator-locked tags. When True, the playlist doctor-tagger
+    # (jobs/playlist_doctor_tagger.py) skips this row's tag mutation on its
+    # daily run — mirrors the kols.curated_fields "sync respects manual lock"
+    # pattern from 0011.
+    tags_curator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     synced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
