@@ -110,16 +110,17 @@ async def test_tagger_propagates_to_clip_and_post(
     assert clip is not None
     doctor_tags = sorted(t for t in clip.tags if t.startswith("doctor:"))
     assert doctor_tags == ["doctor:Pegram", "doctor:Traina"]
-    assert "drug:T-DXd" in clip.tags
-    assert "biomarker:HER2-low" in clip.tags
+    assert "drug:t-dxd" in clip.tags
+    assert "biomarker:her2-low" in clip.tags
+    assert "doctor:Wrongname" not in clip.tags
     assert "doctor:WrongName" not in clip.tags
 
     post = await db_session.get(Post, "post-1")
     assert post is not None
     post_doctor_tags = sorted(t for t in post.tags if t.startswith("doctor:"))
     assert post_doctor_tags == ["doctor:Pegram", "doctor:Traina"]
-    assert "drug:T-DXd" in post.tags
-    assert "doctor:WrongName" not in post.tags
+    assert "drug:t-dxd" in post.tags
+    assert "doctor:Wrongname" not in post.tags
 
     entity_types = {d.entity_type for d in diffs}
     assert entity_types == {"shoot", "clip", "post"}

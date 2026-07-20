@@ -54,6 +54,7 @@ from services.playlist_title_parser import (
     doctor_tags_from_playlist_title,
     extract_doctors_from_playlist_title,
 )
+from services.tag_taxonomy import normalize_tags
 
 logger = logging.getLogger(__name__)
 
@@ -521,7 +522,7 @@ async def tag_clips_from_playlists(
             for clip in clips:
                 stats.clips_touched += 1
                 before = list(clip.tags or [])
-                after = merge_fn(before, canonical_tags)
+                after = normalize_tags(merge_fn(before, canonical_tags))
                 diff = TagDiff(
                     entity_type="clip",
                     entity_id=clip.id,
@@ -566,7 +567,7 @@ async def tag_clips_from_playlists(
             for post in posts:
                 stats.posts_touched += 1
                 before = list(post.tags or [])
-                after = merge_fn(before, canonical_tags)
+                after = normalize_tags(merge_fn(before, canonical_tags))
                 diff = TagDiff(
                     entity_type="post",
                     entity_id=post.id,
