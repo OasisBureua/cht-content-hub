@@ -23,6 +23,7 @@ from admin.kol_intel import router as admin_kol_intel_router  # noqa: E402
 from admin.kols import router as admin_kols_router  # noqa: E402
 from admin.playlist_tags import router as admin_playlist_tags_router  # noqa: E402
 from admin.clip_tags import router as admin_clip_tags_router  # noqa: E402
+from admin.tagger import router as admin_tagger_router  # noqa: E402
 from admin.router import router as admin_router  # noqa: E402
 from public.clips import router as public_clips_router  # noqa: E402
 from public.doctors import router as public_doctors_router  # noqa: E402
@@ -71,6 +72,7 @@ app.include_router(admin_kols_router)
 app.include_router(admin_kol_intel_router)
 app.include_router(admin_playlist_tags_router)
 app.include_router(admin_clip_tags_router)
+app.include_router(admin_tagger_router)
 app.include_router(wordpress_router)
 
 

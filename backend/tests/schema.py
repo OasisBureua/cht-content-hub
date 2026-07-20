@@ -21,6 +21,7 @@ from models.playlist_tag import PlaylistTag
 from models.post import Post
 from models.project import Project
 from models.shoot import Shoot
+from models.tagger_observability import TagDiffRow, TaggerRun
 
 ORM_TABLES = [
     ReportTemplate.__table__,
@@ -38,6 +39,8 @@ ORM_TABLES = [
     Shoot.__table__,
     Clip.__table__,
     Post.__table__,
+    TaggerRun.__table__,
+    TagDiffRow.__table__,
 ]
 
 _HCP_SIGNALS_DDL = """
