@@ -18,7 +18,7 @@ from services.tag_query import (
     group_tags_by_namespace,
     python_row_matches,
 )
-from tests.conftest import api_headers
+from conftest import api_headers
 
 
 # ─── group_tags_by_namespace ───────────────────────────────────────────────

@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.playlist_tag import PlaylistTag
-from tests.conftest import api_headers
+from conftest import api_headers
 
 
 @pytest.fixture

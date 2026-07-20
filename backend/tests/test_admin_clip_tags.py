@@ -12,7 +12,7 @@ from jobs.playlist_doctor_tagger import tag_clips_from_playlists
 from models.clip import Clip
 from models.post import Post
 from models.shoot import Shoot
-from tests.conftest import api_headers
+from conftest import api_headers
 
 
 @pytest.fixture

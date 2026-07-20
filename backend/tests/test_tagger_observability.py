@@ -12,7 +12,7 @@ from jobs.playlist_doctor_tagger import TagDiff, TagRunStats
 from jobs.tagger_observability import record_run
 from models.tagger_observability import TagDiffRow, TaggerRun
 from sqlalchemy import select
-from tests.conftest import api_headers
+from conftest import api_headers
 
 
 def _sample_stats(clips_changed: int = 2, posts_changed: int = 1) -> TagRunStats:
