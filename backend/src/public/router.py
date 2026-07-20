@@ -154,10 +154,11 @@ async def get_public_playlists(
     tag: Optional[str] = Query(
         None,
         description=(
-            "Filter by namespaced tags (comma-separated, AND logic). "
-            "Same vocabulary as clip tags: biomarker:HER2+, drug:T-DXd, etc. "
-            "Returns playlists whose `tags` array contains ALL of the given tags. "
-            "Example: ?tag=biomarker:HER2+,topic:CNS"
+            "Filter by namespaced tags (comma-separated). Semantics: AND across "
+            "namespaces, OR within a namespace. Same vocabulary as clip tags: "
+            "biomarker:her2-low, drug:t-dxd, etc. Example: "
+            "?tag=biomarker:her2-low,biomarker:her2-ultra-low,drug:t-dxd → "
+            "playlists where (biomarker in {her2-low, her2-ultra-low}) AND drug=t-dxd."
         ),
     ),
     lane: Optional[str] = Query(
@@ -204,25 +205,21 @@ async def get_public_playlists(
     dialect_name = db.bind.dialect.name if db.bind else "postgresql"
 
     if tags_list and dialect_name == "postgresql":
-        from sqlalchemy.dialects.postgresql import ARRAY
-        from sqlalchemy import cast, String as SAString
-        # Cast the StringArray column to postgres ARRAY for .any() access.
-        for t in tags_list:
-            query = query.where(
-                cast(PlaylistTag.tags, ARRAY(SAString)).any(t)
-            )
+        # SCRUM-77: AND across namespaces, OR within a namespace.
+        from services.tag_query import postgres_tag_filter
+        tag_filter = postgres_tag_filter(PlaylistTag.tags, tags_list)
+        if tag_filter is not None:
+            query = query.where(tag_filter)
 
     # Order: lane first (groups same-lane playlists), then most-recently-updated
     # so newly-curated entries surface to the top.
     query = query.order_by(PlaylistTag.lane.asc(), PlaylistTag.updated_at.desc())
 
     if tags_list and dialect_name != "postgresql":
-        # SQLite fallback: run without tag filter, filter in Python.
+        # SQLite fallback — SCRUM-77 semantics on the test path too.
+        from services.tag_query import python_row_matches
         all_rows = list((await db.execute(query)).scalars())
-        matching = [
-            r for r in all_rows
-            if all(t in (r.tags or []) for t in tags_list)
-        ]
+        matching = [r for r in all_rows if python_row_matches(r.tags, tags_list)]
         total = len(matching)
         rows = matching[offset : offset + limit]
     else:
