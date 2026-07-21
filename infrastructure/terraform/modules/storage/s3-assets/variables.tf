@@ -27,3 +27,12 @@ variable "public_read_prefixes" {
   description = "S3 key prefixes world-readable via bucket policy (e.g. kol-headshots/)"
   default     = ["kol-headshots/"]
 }
+
+variable "upload_allowed_origins" {
+  type        = list(string)
+  description = "CORS allowed_origins for the PUT rule (browser-side presigned headshot uploads). Should include devapp + testapp CHT URLs at minimum."
+  default = [
+    "https://devapp.communityhealth.media",
+    "https://testapp.communityhealth.media",
+  ]
+}
