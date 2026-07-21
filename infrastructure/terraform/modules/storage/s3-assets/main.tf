@@ -45,10 +45,24 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "assets" {
 resource "aws_s3_bucket_cors_configuration" "assets" {
   bucket = aws_s3_bucket.assets.id
 
+  # Public-read rule for cached-header thumbnails.
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "HEAD"]
     allowed_origins = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3600
+  }
+
+  # SCRUM-63 headshot upload: browsers PUT directly to the presigned URL
+  # returned by POST /api/admin/kols/{slug}/headshot/presign. Without PUT in
+  # the allowed methods, the preflight OPTIONS fails and the upload is
+  # blocked by the browser as a network error (observed 2026-07-21 on
+  # devapp when uploading a Carol Tweed headshot).
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT"]
+    allowed_origins = var.upload_allowed_origins
     expose_headers  = ["ETag"]
     max_age_seconds = 3600
   }
