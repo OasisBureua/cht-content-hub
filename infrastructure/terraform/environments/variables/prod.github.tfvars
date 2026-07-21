@@ -70,9 +70,14 @@ sync_jobs_enabled = {
   post_tagging           = false
   playlist_doctor_tagger = false
   wordpress_ingest       = true
-  clips_seed             = true
-  wordpress_backfill     = true
-  wordpress_seed         = true
+  # One-shot seed/backfill jobs. Prod was seeded during 2026-07-12 release
+  # (1ffdd81 chore(prod): enable wordpress_ingest + this release). Handlers
+  # are idempotent (skip existing rows) but keeping them enabled is
+  # ambiguous about intent — flip to false post-seed. Re-enable temporarily
+  # if a one-off restore is ever needed.
+  clips_seed             = false
+  wordpress_backfill     = false
+  wordpress_seed         = false
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
