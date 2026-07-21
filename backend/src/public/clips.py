@@ -28,7 +28,11 @@ from models.wordpress_event import WordPressEvent
 from public.deps import verify_public_api_key
 from public.limits import limiter
 from schemas.public import PublicClip
-from services.tag_query import postgres_tag_filter, python_row_matches
+from services.tag_query import (
+    partition_wp_projected_tags,
+    postgres_tag_filter,
+    python_row_matches,
+)
 
 
 router = APIRouter(prefix="/api/public", tags=["public-clips"])
@@ -131,15 +135,35 @@ async def get_clips(
 
     query = select(Clip).where(Clip.channel == "chm-official")
 
+    # `q` and tag filters both need array membership on postgres.
+    tags_list: list[str] = (
+        [t.strip() for t in tag.split(",") if t.strip()] if tag else []
+    )
+    doctor_tag = f"doctor:{doctor}" if doctor else None
+
+    # Piece 1b (2026-07-21): partition tag filter into own-Clip.tags vs
+    # WP-projected namespaces. `topic:` and `wp:` values check against
+    # wordpress_events.categories/tags via join; everything else stays on
+    # Clip.tags. Callers filtering by topic:/wp: implicitly need the WP
+    # join, so we no longer require `has_wordpress=true` for those.
+    clip_side_tags, wp_topic_values, wp_tag_values = partition_wp_projected_tags(
+        tags_list
+    )
+
     # WordPress editorial filter. Restrict to clips whose YouTube video ID
     # matches a current (non-deleted) `wordpress_events` row. A wp_category
-    # value implies has_wordpress=true.
+    # value, has_wordpress=true, or a topic:/wp: tag all imply this join.
     #
     # Join key: extract the third `:`-separated segment of clip.id
     # (`official:youtube:<youtube_video_id>`) and match against
     # wordpress_events.youtube_video_id. Only Postgres supports the
     # split_part function; on SQLite (tests) we filter in Python later.
-    filter_by_wp = has_wordpress or bool(wp_category)
+    filter_by_wp = (
+        has_wordpress
+        or bool(wp_category)
+        or bool(wp_topic_values)
+        or bool(wp_tag_values)
+    )
     if filter_by_wp and is_pg:
         # Latest non-deleted event per post_id
         wp_latest = (
@@ -163,12 +187,31 @@ async def get_clips(
                     cast([wp_category], PG_JSONB)
                 )
             )
-
-    # `q` and tag filters both need array membership on postgres.
-    tags_list: list[str] = (
-        [t.strip() for t in tag.split(",") if t.strip()] if tag else []
-    )
-    doctor_tag = f"doctor:{doctor}" if doctor else None
+        # Piece 1b: OR-within a namespace, AND-across categories vs tags.
+        # For topic: values → categories contains ANY of the requested.
+        # For wp: values → tags contains ANY of the requested.
+        if wp_topic_values:
+            query = query.where(
+                or_(
+                    *(
+                        cast(wp_latest.c.categories, PG_JSONB).contains(
+                            cast([v], PG_JSONB)
+                        )
+                        for v in wp_topic_values
+                    )
+                )
+            )
+        if wp_tag_values:
+            query = query.where(
+                or_(
+                    *(
+                        cast(wp_latest.c.tags, PG_JSONB).contains(
+                            cast([v], PG_JSONB)
+                        )
+                        for v in wp_tag_values
+                    )
+                )
+            )
 
     if is_pg:
         if q:
@@ -180,8 +223,9 @@ async def get_clips(
                     _tag_any(q),
                 )
             )
-        # SCRUM-77: AND across namespaces, OR within a namespace.
-        tag_filter = postgres_tag_filter(Clip.tags, tags_list)
+        # SCRUM-77: AND across namespaces, OR within a namespace — for the
+        # Clip.tags portion. WP-projected tags are handled above via the join.
+        tag_filter = postgres_tag_filter(Clip.tags, clip_side_tags)
         if tag_filter is not None:
             query = query.where(tag_filter)
         if doctor_tag:
@@ -218,6 +262,15 @@ async def get_clips(
                 continue
             if wp_category and wp_category not in (r.categories or []):
                 continue
+            # Piece 1b: topic:/wp: tag filter — OR-within-namespace matches.
+            if wp_topic_values and not any(
+                v in (r.categories or []) for v in wp_topic_values
+            ):
+                continue
+            if wp_tag_values and not any(
+                v in (r.tags or []) for v in wp_tag_values
+            ):
+                continue
             allowed_youtube_ids.add(r.youtube_video_id)
 
         def _wp_matches(clip: Clip) -> bool:
@@ -228,11 +281,12 @@ async def get_clips(
 
         clips = [c for c in clips if _wp_matches(c)]
 
-    if not is_pg and (tags_list or doctor_tag or q):
+    if not is_pg and (clip_side_tags or doctor_tag or q):
         def _matches(clip: Clip) -> bool:
             ctags = clip.tags or []
-            # SCRUM-77 semantics on the SQLite/test path too.
-            if tags_list and not python_row_matches(ctags, tags_list):
+            # SCRUM-77 semantics for Clip.tags-side filters only. WP-projected
+            # namespaces (topic:, wp:) already filtered above via _wp_matches.
+            if clip_side_tags and not python_row_matches(ctags, clip_side_tags):
                 return False
             if doctor_tag and doctor_tag not in ctags:
                 return False
