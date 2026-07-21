@@ -28,6 +28,7 @@ from models.wordpress_event import WordPressEvent
 from public.deps import verify_public_api_key
 from public.limits import limiter
 from schemas.public import PublicClip
+from services.tag_query import postgres_tag_filter, python_row_matches
 
 
 router = APIRouter(prefix="/api/public", tags=["public-clips"])
@@ -60,7 +61,13 @@ async def get_clips(
     db: Annotated[AsyncSession, Depends(get_db)],
     q: Optional[str] = Query(None, description="Search title, description, or tags"),
     tag: Optional[str] = Query(
-        None, description="Filter by tags (comma-separated, AND logic)"
+        None,
+        description=(
+            "Filter by tags (comma-separated). Semantics: AND across "
+            "namespaces, OR within a namespace. Example: "
+            "?tag=biomarker:her2-low,biomarker:her2-ultra-low,drug:t-dxd → "
+            "(biomarker in {her2-low, her2-ultra-low}) AND drug=t-dxd."
+        ),
     ),
     platform: Optional[str] = None,
     doctor: Optional[str] = Query(None, description="Filter by doctor name"),
@@ -173,8 +180,10 @@ async def get_clips(
                     _tag_any(q),
                 )
             )
-        for t in tags_list:
-            query = query.where(_tag_any(t))
+        # SCRUM-77: AND across namespaces, OR within a namespace.
+        tag_filter = postgres_tag_filter(Clip.tags, tags_list)
+        if tag_filter is not None:
+            query = query.where(tag_filter)
         if doctor_tag:
             query = query.where(_tag_any(doctor_tag))
     else:
@@ -220,9 +229,10 @@ async def get_clips(
         clips = [c for c in clips if _wp_matches(c)]
 
     if not is_pg and (tags_list or doctor_tag or q):
-        def _has_all(clip: Clip) -> bool:
+        def _matches(clip: Clip) -> bool:
             ctags = clip.tags or []
-            if tags_list and not all(t in ctags for t in tags_list):
+            # SCRUM-77 semantics on the SQLite/test path too.
+            if tags_list and not python_row_matches(ctags, tags_list):
                 return False
             if doctor_tag and doctor_tag not in ctags:
                 return False
@@ -234,7 +244,7 @@ async def get_clips(
                 return False
             return True
 
-        clips = [c for c in clips if _has_all(c)]
+        clips = [c for c in clips if _matches(c)]
     if not clips:
         response.headers["X-Total-Count"] = "0"
         return []
