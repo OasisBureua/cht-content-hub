@@ -52,7 +52,14 @@ async def test_get_404_when_missing(client: AsyncClient):
 async def test_patch_updates_tags_via_taxonomy_normalization(
     client: AsyncClient, seeded_playlist_tag
 ):
-    """Curator sends mixed-case brand names; taxonomy normalizes them."""
+    """Curator sends alias/typo variants; taxonomy collapses them to canonical.
+
+    NOTE (2026-07-21): taxonomy revised to freeform values, so the outputs
+    reflect the alias-corrected canonical spellings, not kebab-case:
+      - drug:Enhertu → drug:t-dxd (alias in DRUG_CORRECTIONS)
+      - biomarker:HER2LOW → biomarker:HER2-low (alias)
+      - conference:ASCO2026 → conference:ASCO 2026 (alias)
+    """
     r = await client.patch(
         "/api/admin/playlists/PL_test_curated/tags",
         headers=api_headers(),
@@ -62,8 +69,8 @@ async def test_patch_updates_tags_via_taxonomy_normalization(
     body = r.json()
     assert body["tags"] == [
         "drug:t-dxd",
-        "biomarker:her2-low",
-        "conference:asco-2026",
+        "biomarker:HER2-low",
+        "conference:ASCO 2026",
     ]
 
 
