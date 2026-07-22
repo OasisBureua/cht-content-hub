@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobs.playlist_doctor_tagger import TagDiff, TagRunStats
+from jobs.playlist_doctor_tagger_core import TagDiff, TagRunStats
 from models.tagger_observability import TagDiffRow, TaggerRun
 
 logger = logging.getLogger(__name__)

@@ -11,8 +11,8 @@ resource "aws_iam_role_policy" "clips_seed_s3_read" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:GetObject", "s3:ListBucket"]
+      Effect = "Allow"
+      Action = ["s3:GetObject", "s3:ListBucket"]
       Resource = [
         module.s3_assets.bucket_arn,
         "${module.s3_assets.bucket_arn}/seeds/*",

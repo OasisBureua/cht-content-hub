@@ -117,11 +117,11 @@ resource "aws_rds_cluster" "this" {
   preferred_backup_window      = "03:00-04:00"
   preferred_maintenance_window = "mon:04:00-mon:05:00"
 
-  deletion_protection             = var.deletion_protection
-  skip_final_snapshot             = !contains(["prod", "platform"], var.environment)
-  final_snapshot_identifier       = contains(["prod", "platform"], var.environment) ? "${local.name}-final" : null
-  enabled_cloudwatch_logs_exports = ["postgresql"]
-  copy_tags_to_snapshot           = true
+  deletion_protection                 = var.deletion_protection
+  skip_final_snapshot                 = !contains(["prod", "platform"], var.environment)
+  final_snapshot_identifier           = contains(["prod", "platform"], var.environment) ? "${local.name}-final" : null
+  enabled_cloudwatch_logs_exports     = ["postgresql"]
+  copy_tags_to_snapshot               = true
   iam_database_authentication_enabled = var.iam_database_authentication_enabled
 
   db_cluster_parameter_group_name = var.role == "primary" ? aws_rds_cluster_parameter_group.aurora[0].name : null

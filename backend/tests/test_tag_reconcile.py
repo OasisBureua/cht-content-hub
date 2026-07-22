@@ -72,11 +72,11 @@ async def test_prunes_dead_playlist_and_reports(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(side_effect=title_side_effect),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=[]),
         ),
     ):
@@ -100,11 +100,11 @@ async def test_reports_untagged_clips_on_chm_official(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(return_value="Dr. Traina"),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=[]),
         ),
     ):
@@ -128,11 +128,11 @@ async def test_dry_run_writes_nothing(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(side_effect=title_side_effect),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=[]),
         ),
     ):
@@ -157,11 +157,11 @@ async def test_prune_disabled_leaves_dead_shoots_intact(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(side_effect=title_side_effect),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=[]),
         ),
     ):

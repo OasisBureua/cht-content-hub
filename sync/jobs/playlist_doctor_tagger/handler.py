@@ -19,7 +19,7 @@ from shared.runtime import configure_logging, install_paths, run_async
 
 async def _run(event: dict) -> dict:
     from database import async_session_maker
-    from jobs.playlist_doctor_tagger import tag_clips_from_playlists
+    from jobs.playlist_doctor_tagger_core import tag_clips_from_playlists
 
     mode = event.get("mode", "union")
     dry_run = bool(event.get("dry_run", False))

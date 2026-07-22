@@ -4,7 +4,7 @@ PATCH /api/admin/clips/{id}/tags — curator sets tags directly, auto-locks
 the row against the playlist_doctor_tagger's daily overwrite.
 
 The tagger checks clip.tags_curator_override in its Clip loop; when True,
-it skips the row entirely (see jobs/playlist_doctor_tagger.py).
+it skips the row entirely (see jobs/playlist_doctor_tagger_core.py).
 
 Any tag write implicitly sets tags_curator_override = True so the curator
 doesn't have to remember the flag. Setting it False explicitly re-opens

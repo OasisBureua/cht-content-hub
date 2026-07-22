@@ -21,7 +21,7 @@ from shared.runtime import configure_logging, install_paths, run_async
 
 async def _run(event: dict) -> dict:
     from database import async_session_maker
-    from jobs.post_tagging import tag_clips_from_youtube
+    from jobs.post_tagging_core import tag_clips_from_youtube
 
     dry_run = bool(event.get("dry_run", False))
 
