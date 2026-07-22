@@ -1,14 +1,7 @@
 name: Deploy to Production
 
-# Prod deploy: any push to main (from merged release/* PRs or direct commits),
-# or manual workflow_dispatch. Terraform apply (use1 + use2 DR) + ECS API image
-# — GitHub Environment: production.
-#
-# Why push instead of pull_request.closed: the `production` environment has a
-# branch-policy allow-list of `main` only. `pull_request.closed` sends
-# github.ref=refs/pull/<n>/merge, which fails the branch policy and blocks the
-# deploy job before any step can run (verified 2026-07-21, PR #93 run
-# 29884324271). `push: [main]` sends refs/heads/main which passes the policy.
+# Prod deploy: merged release/* → main, or manual workflow_dispatch.
+# Terraform apply (use1 + use2 DR) + ECS API image — GitHub Environment: production.
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +9,8 @@ on:
         description: 'Plan only — skip apply approval and deploy steps'
         type: boolean
         default: false
-  push:
+  pull_request:
+    types: [closed]
     branches:
       - main
 
@@ -60,7 +54,9 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PUSH_SHA: ${{ github.sha }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           case "$EVENT_NAME" in
             workflow_dispatch)
@@ -68,11 +64,16 @@ jobs:
               echo "checkout_ref=${{ github.ref }}" >> "$GITHUB_OUTPUT"
               echo "Trigger: manual workflow_dispatch on ${{ github.ref }}"
               ;;
-            push)
-              # push:branches=[main] filter already gates this
-              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-              echo "checkout_ref=${PUSH_SHA}" >> "$GITHUB_OUTPUT"
-              echo "Trigger: push to main (${PUSH_SHA})"
+            pull_request)
+              if [ "$PR_MERGED" = "true" ] && [[ "$HEAD_REF" == release/* ]]; then
+                echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+                echo "checkout_ref=${MERGE_SHA}" >> "$GITHUB_OUTPUT"
+                echo "Trigger: merged release PR ($HEAD_REF) → main"
+              else
+                echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+                echo "checkout_ref=" >> "$GITHUB_OUTPUT"
+                echo "Skipped: not a merged release/* pull request to main"
+              fi
               ;;
             *)
               echo "should_deploy=false" >> "$GITHUB_OUTPUT"
