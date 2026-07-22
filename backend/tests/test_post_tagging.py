@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobs.post_tagging import (
+from jobs.post_tagging_core import (
     _clip_youtube_id,
     _strip_yt_tags,
     merge_yt_tags,

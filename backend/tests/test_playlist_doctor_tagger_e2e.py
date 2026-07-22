@@ -20,7 +20,7 @@ from unittest.mock import patch, AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobs.playlist_doctor_tagger import (
+from jobs.playlist_doctor_tagger_core import (
     _load_clip_post_models,
     tag_clips_from_playlists,
 )
@@ -83,11 +83,11 @@ async def test_tagger_propagates_to_clip_and_post(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(return_value=playlist_title),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=video_ids),
         ),
     ):
@@ -135,11 +135,11 @@ async def test_tagger_is_idempotent(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(return_value="Drs. Traina & Pegram"),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=["vid_A"]),
         ),
     ):
@@ -182,11 +182,11 @@ async def test_tagger_skips_posts_off_chm_official(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(return_value="Dr. Traina | HR discussion"),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=["vid_solo"]),
         ),
     ):

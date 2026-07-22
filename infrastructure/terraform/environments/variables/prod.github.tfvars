@@ -70,9 +70,14 @@ sync_jobs_enabled = {
   post_tagging           = false
   playlist_doctor_tagger = false
   wordpress_ingest       = true
-  clips_seed             = true
-  wordpress_backfill     = true
-  wordpress_seed         = true
+  # One-shot seed/backfill jobs. Prod was seeded during 2026-07-12 release
+  # (1ffdd81 chore(prod): enable wordpress_ingest + this release). Handlers
+  # are idempotent (skip existing rows) but keeping them enabled is
+  # ambiguous about intent — flip to false post-seed. Re-enable temporarily
+  # if a one-off restore is ever needed.
+  clips_seed         = false
+  wordpress_backfill = false
+  wordpress_seed     = false
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
@@ -95,13 +100,13 @@ dr_cht_nat_gateway_cidr_blocks = [
   "18.225.73.23/32",
   "3.151.76.8/32",
 ]
-dr_acm_certificate_arn     = "arn:aws:acm:us-east-2:233636046512:certificate/e29d0bb5-022a-483c-ba4e-e97a5cc7a2e3"
-dr_alb_allow_public_ingress  = true
-dr_enable_waf              = true
-dr_manage_route53          = true
-dr_standby_scale_factor    = 0.5
-dr_deploy_api_ecs_service  = true
-dr_api_image               = "233636046512.dkr.ecr.us-east-2.amazonaws.com/contenthub-api:prod-latest"
+dr_acm_certificate_arn      = "arn:aws:acm:us-east-2:233636046512:certificate/e29d0bb5-022a-483c-ba4e-e97a5cc7a2e3"
+dr_alb_allow_public_ingress = true
+dr_enable_waf               = true
+dr_manage_route53           = true
+dr_standby_scale_factor     = 0.5
+dr_deploy_api_ecs_service   = true
+dr_api_image                = "233636046512.dkr.ecr.us-east-2.amazonaws.com/contenthub-api:prod-latest"
 
 # Route53 failover: keep false until ECS healthy in both regions; arm via ./scripts/arm-route53-failover.sh
 enable_route53_failover = false

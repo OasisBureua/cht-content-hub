@@ -104,7 +104,7 @@ class Clip(Base):
     )
 
     # SCRUM-75: curator-locked tags. When True, the playlist doctor-tagger
-    # (jobs/playlist_doctor_tagger.py) skips this row's tag mutation on its
+    # (jobs/playlist_doctor_tagger_core.py) skips this row's tag mutation on its
     # daily run — mirrors the kols.curated_fields "sync respects manual lock"
     # pattern from 0011.
     tags_curator_override: Mapped[bool] = mapped_column(
