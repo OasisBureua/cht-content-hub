@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobs.playlist_doctor_tagger import TagRunStats, tag_clips_from_playlists
+from jobs.playlist_doctor_tagger_core import TagRunStats, tag_clips_from_playlists
 from models.clip import Clip
 from models.shoot import Shoot
 

@@ -7,7 +7,7 @@ tests do not exercise the async DB loop — that runs against a live DB.
 
 from __future__ import annotations
 
-from jobs.playlist_doctor_tagger import (
+from jobs.playlist_doctor_tagger_core import (
     _canonical_doctors_field,
     _shoot_doctors_disagree,
     _strip_doctor_tags,

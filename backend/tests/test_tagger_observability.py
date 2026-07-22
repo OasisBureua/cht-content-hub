@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobs.playlist_doctor_tagger import TagDiff, TagRunStats
+from jobs.playlist_doctor_tagger_core import TagDiff, TagRunStats
 from jobs.tagger_observability import record_run
 from models.tagger_observability import TagDiffRow, TaggerRun
 from sqlalchemy import select

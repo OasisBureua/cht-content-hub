@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobs.playlist_doctor_tagger import tag_clips_from_playlists
+from jobs.playlist_doctor_tagger_core import tag_clips_from_playlists
 from models.clip import Clip
 from models.post import Post
 from models.shoot import Shoot
@@ -157,11 +157,11 @@ async def test_tagger_respects_curator_lock(
 
     with (
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_title",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_title",
             new=AsyncMock(return_value="Dr. Traina"),
         ),
         patch(
-            "jobs.playlist_doctor_tagger.fetch_playlist_video_ids",
+            "jobs.playlist_doctor_tagger_core.fetch_playlist_video_ids",
             new=AsyncMock(return_value=["vid_l", "vid_o"]),
         ),
     ):
