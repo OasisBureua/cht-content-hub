@@ -75,6 +75,12 @@ class Post(Base):
     source: Mapped[str] = mapped_column(String(20), default="webhook")
     channel: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
+    # SCRUM-75: curator-locked tags. When True, the playlist doctor-tagger
+    # skips this row's tag mutation on its daily run.
+    tags_curator_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     view_count: Mapped[int] = mapped_column(Integer, default=0)
     like_count: Mapped[int] = mapped_column(Integer, default=0)
     comment_count: Mapped[int] = mapped_column(Integer, default=0)

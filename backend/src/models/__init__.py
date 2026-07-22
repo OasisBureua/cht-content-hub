@@ -7,6 +7,7 @@ from models.clip import Clip, ClipStatus, ContentType, MediaType
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.playlist_tag import PlaylistTag
 from models.post import Post
+from models.tagger_observability import TaggerRun, TagDiffRow
 from models.project import Project
 from models.shoot import Shoot
 from models.user import User
@@ -53,6 +54,8 @@ __all__ = [
     "PlaylistTag",
     "Post",
     "Shoot",
+    "TagDiffRow",
+    "TaggerRun",
     "User",
     "WordPressEvent",
     "HCP",

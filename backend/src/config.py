@@ -78,6 +78,29 @@ class Settings(BaseSettings):
         validation_alias="WORDPRESS_EVENTS_QUEUE_URL",
     )
 
+    # SQS queue feeding the hcp_intel_poll Lambda. POST /api/admin/kols/{slug}/
+    # refresh enqueues a `{"npi": "..."}` message here for a single-KOL intel
+    # pull. Empty in local dev / tests — refresh endpoint returns 202 with
+    # status="no_op" when unset.
+    hcp_intel_poll_queue_url: str = Field(
+        default="",
+        validation_alias="HCP_INTEL_POLL_QUEUE_URL",
+    )
+
+    # S3 bucket for KOL headshots + other public admin-uploaded assets.
+    # Presigned PUTs are issued against `kol-headshots/{slug}.{ext}`; the
+    # public URL derives from `<bucket>.s3.<region>.amazonaws.com/kol-headshots/`
+    # (bucket policy grants world-readable GetObject on that prefix — see
+    # infrastructure/terraform/modules/storage/s3-assets).
+    assets_bucket: str = Field(default="", validation_alias="ASSETS_BUCKET")
+
+    # Cooldown window applied to POST /api/admin/kols/{slug}/refresh. Prevents
+    # admins from spamming the intel-poll SQS queue for the same KOL.
+    kol_refresh_cooldown_seconds: int = Field(
+        default=300,
+        validation_alias="KOL_REFRESH_COOLDOWN_SECONDS",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

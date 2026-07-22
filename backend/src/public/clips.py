@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import String as SAString, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
@@ -28,6 +28,11 @@ from models.wordpress_event import WordPressEvent
 from public.deps import verify_public_api_key
 from public.limits import limiter
 from schemas.public import PublicClip
+from services.tag_query import (
+    partition_wp_projected_tags,
+    postgres_tag_filter,
+    python_row_matches,
+)
 
 
 router = APIRouter(prefix="/api/public", tags=["public-clips"])
@@ -60,7 +65,13 @@ async def get_clips(
     db: Annotated[AsyncSession, Depends(get_db)],
     q: Optional[str] = Query(None, description="Search title, description, or tags"),
     tag: Optional[str] = Query(
-        None, description="Filter by tags (comma-separated, AND logic)"
+        None,
+        description=(
+            "Filter by tags (comma-separated). Semantics: AND across "
+            "namespaces, OR within a namespace. Example: "
+            "?tag=biomarker:her2-low,biomarker:her2-ultra-low,drug:t-dxd → "
+            "(biomarker in {her2-low, her2-ultra-low}) AND drug=t-dxd."
+        ),
     ),
     platform: Optional[str] = None,
     doctor: Optional[str] = Query(None, description="Filter by doctor name"),
@@ -124,15 +135,35 @@ async def get_clips(
 
     query = select(Clip).where(Clip.channel == "chm-official")
 
+    # `q` and tag filters both need array membership on postgres.
+    tags_list: list[str] = (
+        [t.strip() for t in tag.split(",") if t.strip()] if tag else []
+    )
+    doctor_tag = f"doctor:{doctor}" if doctor else None
+
+    # Piece 1b (2026-07-21): partition tag filter into own-Clip.tags vs
+    # WP-projected namespaces. `topic:` and `wp:` values check against
+    # wordpress_events.categories/tags via join; everything else stays on
+    # Clip.tags. Callers filtering by topic:/wp: implicitly need the WP
+    # join, so we no longer require `has_wordpress=true` for those.
+    clip_side_tags, wp_topic_values, wp_tag_values = partition_wp_projected_tags(
+        tags_list
+    )
+
     # WordPress editorial filter. Restrict to clips whose YouTube video ID
     # matches a current (non-deleted) `wordpress_events` row. A wp_category
-    # value implies has_wordpress=true.
+    # value, has_wordpress=true, or a topic:/wp: tag all imply this join.
     #
     # Join key: extract the third `:`-separated segment of clip.id
     # (`official:youtube:<youtube_video_id>`) and match against
     # wordpress_events.youtube_video_id. Only Postgres supports the
     # split_part function; on SQLite (tests) we filter in Python later.
-    filter_by_wp = has_wordpress or bool(wp_category)
+    filter_by_wp = (
+        has_wordpress
+        or bool(wp_category)
+        or bool(wp_topic_values)
+        or bool(wp_tag_values)
+    )
     if filter_by_wp and is_pg:
         # Latest non-deleted event per post_id
         wp_latest = (
@@ -156,12 +187,31 @@ async def get_clips(
                     cast([wp_category], PG_JSONB)
                 )
             )
-
-    # `q` and tag filters both need array membership on postgres.
-    tags_list: list[str] = (
-        [t.strip() for t in tag.split(",") if t.strip()] if tag else []
-    )
-    doctor_tag = f"doctor:{doctor}" if doctor else None
+        # Piece 1b: OR-within a namespace, AND-across categories vs tags.
+        # For topic: values → categories contains ANY of the requested.
+        # For wp: values → tags contains ANY of the requested.
+        if wp_topic_values:
+            query = query.where(
+                or_(
+                    *(
+                        cast(wp_latest.c.categories, PG_JSONB).contains(
+                            cast([v], PG_JSONB)
+                        )
+                        for v in wp_topic_values
+                    )
+                )
+            )
+        if wp_tag_values:
+            query = query.where(
+                or_(
+                    *(
+                        cast(wp_latest.c.tags, PG_JSONB).contains(
+                            cast([v], PG_JSONB)
+                        )
+                        for v in wp_tag_values
+                    )
+                )
+            )
 
     if is_pg:
         if q:
@@ -173,8 +223,11 @@ async def get_clips(
                     _tag_any(q),
                 )
             )
-        for t in tags_list:
-            query = query.where(_tag_any(t))
+        # SCRUM-77: AND across namespaces, OR within a namespace — for the
+        # Clip.tags portion. WP-projected tags are handled above via the join.
+        tag_filter = postgres_tag_filter(Clip.tags, clip_side_tags)
+        if tag_filter is not None:
+            query = query.where(tag_filter)
         if doctor_tag:
             query = query.where(_tag_any(doctor_tag))
     else:
@@ -209,6 +262,15 @@ async def get_clips(
                 continue
             if wp_category and wp_category not in (r.categories or []):
                 continue
+            # Piece 1b: topic:/wp: tag filter — OR-within-namespace matches.
+            if wp_topic_values and not any(
+                v in (r.categories or []) for v in wp_topic_values
+            ):
+                continue
+            if wp_tag_values and not any(
+                v in (r.tags or []) for v in wp_tag_values
+            ):
+                continue
             allowed_youtube_ids.add(r.youtube_video_id)
 
         def _wp_matches(clip: Clip) -> bool:
@@ -219,10 +281,12 @@ async def get_clips(
 
         clips = [c for c in clips if _wp_matches(c)]
 
-    if not is_pg and (tags_list or doctor_tag or q):
-        def _has_all(clip: Clip) -> bool:
+    if not is_pg and (clip_side_tags or doctor_tag or q):
+        def _matches(clip: Clip) -> bool:
             ctags = clip.tags or []
-            if tags_list and not all(t in ctags for t in tags_list):
+            # SCRUM-77 semantics for Clip.tags-side filters only. WP-projected
+            # namespaces (topic:, wp:) already filtered above via _wp_matches.
+            if clip_side_tags and not python_row_matches(ctags, clip_side_tags):
                 return False
             if doctor_tag and doctor_tag not in ctags:
                 return False
@@ -234,7 +298,7 @@ async def get_clips(
                 return False
             return True
 
-        clips = [c for c in clips if _has_all(c)]
+        clips = [c for c in clips if _matches(c)]
     if not clips:
         response.headers["X-Total-Count"] = "0"
         return []
@@ -369,3 +433,71 @@ async def get_clips(
         )
         for item in page
     ]
+
+
+@router.get(
+    "/clips/{clip_id}",
+    response_model=PublicClip,
+    responses={
+        404: {"description": "Clip not found or not on the chm-official channel."},
+    },
+)
+@limiter.limit("100/minute")
+async def get_clip_detail(
+    clip_id: str,
+    request: Request,
+    _api_key: Annotated[str, Depends(verify_public_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PublicClip:
+    """Single official CHM clip with enrichment. Mirrors mediahub /api/public/clips/{id}."""
+    clip = (
+        await db.execute(
+            select(Clip).where(Clip.id == clip_id, Clip.channel == "chm-official")
+        )
+    ).scalar_one_or_none()
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    posts = list(
+        (await db.execute(select(Post).where(Post.clip_id == clip_id))).scalars()
+    )
+    total_views = sum(p.view_count for p in posts)
+    total_likes = sum(p.like_count for p in posts)
+    total_comments = sum(p.comment_count for p in posts)
+
+    yt_url: Optional[str] = None
+    yt_thumbnail: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    for post in posts:
+        if post.platform == "youtube" and post.provider_post_id:
+            yt_url = _youtube_url(post.provider_post_id, clip.is_short)
+            yt_thumbnail = post.thumbnail_url
+        if post.posted_at and (not posted_at or post.posted_at > posted_at):
+            posted_at = post.posted_at
+
+    shoot_name: Optional[str] = None
+    if clip.shoot_id:
+        row = (
+            await db.execute(select(Shoot.name).where(Shoot.id == clip.shoot_id))
+        ).scalar_one_or_none()
+        if row:
+            shoot_name = row
+
+    return PublicClip(
+        id=clip.id,
+        title=clip.title,
+        description=clip.description,
+        ai_summary=clip.ai_summary,
+        tags=clip.tags or [],
+        doctors=_extract_doctors(clip.tags),
+        thumbnail_url=yt_thumbnail or clip.video_preview_url,
+        youtube_url=yt_url,
+        duration_seconds=clip.duration_seconds,
+        is_short=clip.is_short,
+        posted_at=posted_at or clip.earliest_posted_at,
+        view_count=total_views,
+        like_count=total_likes,
+        comment_count=total_comments,
+        shoot_id=clip.shoot_id,
+        shoot_name=shoot_name,
+    )

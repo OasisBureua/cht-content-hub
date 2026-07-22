@@ -73,3 +73,24 @@ resource "aws_iam_role_policy" "task_wordpress_sqs" {
     }]
   })
 }
+
+# hcp_intel_poll — grant sqs:SendMessage on the ECS task role so
+# POST /api/admin/kols/{slug}/refresh can enqueue single-NPI intel polls.
+# Same pattern as task_wordpress_sqs above.
+resource "aws_iam_role_policy" "task_hcp_intel_poll_sqs" {
+  count = var.hcp_intel_poll_enabled ? 1 : 0
+
+  name = "${local.prefix}-hcp-intel-poll-sqs-send"
+  role = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["sqs:SendMessage", "sqs:GetQueueAttributes"]
+      Resource = coalesce(
+        var.hcp_intel_poll_queue_arn,
+        "arn:aws:sqs:${var.aws_region}:${var.aws_account_id}:${local.prefix}-hcp-intel-poll-events",
+      )
+    }]
+  })
+}

@@ -85,6 +85,24 @@ variable "wordpress_events_queue_arn" {
   default     = ""
 }
 
+variable "hcp_intel_poll_queue_url" {
+  type        = string
+  description = "SQS queue URL — passed to contenthub-api as HCP_INTEL_POLL_QUEUE_URL for POST /api/admin/kols/{slug}/refresh to enqueue single-NPI intel polls"
+  default     = ""
+}
+
+variable "hcp_intel_poll_queue_arn" {
+  type        = string
+  description = "SQS queue ARN — used to scope the sqs:SendMessage IAM permission for hcp_intel_poll"
+  default     = ""
+}
+
+variable "assets_bucket" {
+  type        = string
+  description = "S3 bucket name for public admin assets (KOL headshots etc.) — passed to contenthub-api as ASSETS_BUCKET"
+  default     = ""
+}
+
 variable "task_cpu" {
   type    = number
   default = 512

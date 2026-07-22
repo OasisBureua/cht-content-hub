@@ -79,6 +79,8 @@ resource "aws_ecs_task_definition" "api" {
         ],
         var.redis_url != "" ? [{ name = "REDIS_URL", value = var.redis_url }] : [],
         var.wordpress_events_queue_url != "" ? [{ name = "WORDPRESS_EVENTS_QUEUE_URL", value = var.wordpress_events_queue_url }] : [],
+        var.hcp_intel_poll_queue_url != "" ? [{ name = "HCP_INTEL_POLL_QUEUE_URL", value = var.hcp_intel_poll_queue_url }] : [],
+        var.assets_bucket != "" ? [{ name = "ASSETS_BUCKET", value = var.assets_bucket }] : [],
       )
       secrets = concat(
         [
