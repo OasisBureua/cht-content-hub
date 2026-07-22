@@ -37,10 +37,10 @@ resource "random_password" "db_password" {
 }
 
 resource "aws_db_instance" "main" {
-  identifier     = "${local.prefix}-db"
-  engine         = "postgres"
-  engine_version = var.engine_version
-  instance_class = var.instance_class
+  identifier        = "${local.prefix}-db"
+  engine            = "postgres"
+  engine_version    = var.engine_version
+  instance_class    = var.instance_class
   allocated_storage = var.allocated_storage
   storage_type      = "gp3"
   storage_encrypted = var.kms_key_arn != ""

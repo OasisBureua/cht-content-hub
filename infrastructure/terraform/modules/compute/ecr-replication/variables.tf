@@ -4,10 +4,10 @@ variable "destination_region" {
   default     = "us-east-2"
 }
 
-variable "repository_prefix" {
-  description = "Replicate repositories whose names start with this prefix."
-  type        = string
-  default     = "contenthub"
+variable "repository_prefixes" {
+  description = "Replicate repositories whose names start with any of these prefixes. MUST include every prefix in use across the account (see main.tf singleton warning)."
+  type        = list(string)
+  default     = ["contenthub-", "cht-platform-"]
 }
 
 variable "repository_names" {

@@ -1,5 +1,12 @@
 # Cross-region ECR replication (configured in the primary/source region registry).
-# Replicates repositories matching repository_prefix to destination_region.
+# Replicates repositories matching any of `repository_prefixes` to destination_region.
+#
+# WARNING: `aws_ecr_replication_configuration` is a per-account singleton. Applying
+# from any repo that manages this resource REPLACES the whole account ruleset. If
+# the CHT platform stack (cht-platform-tool) also manages its own filters, this
+# module MUST include every prefix (e.g. cht-platform-, contenthub-) or the
+# missing side's replication silently stops. The AWS-side rule was manually
+# amended 2026-07-21 to add `contenthub-`; this module now codifies both filters.
 
 data "aws_caller_identity" "current" {}
 
@@ -16,9 +23,12 @@ resource "aws_ecr_replication_configuration" "main" {
         registry_id = data.aws_caller_identity.current.account_id
       }
 
-      repository_filter {
-        filter      = var.repository_prefix
-        filter_type = "PREFIX_MATCH"
+      dynamic "repository_filter" {
+        for_each = toset(var.repository_prefixes)
+        content {
+          filter      = repository_filter.value
+          filter_type = "PREFIX_MATCH"
+        }
       }
     }
   }

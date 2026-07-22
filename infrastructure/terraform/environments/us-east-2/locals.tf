@@ -2,11 +2,11 @@
 # environment stays "prod"; resource names use contenthub-dr-use2 (CHT pattern).
 
 locals {
-  dr_project         = "${var.project}-dr-use2"
-  resource_prefix    = local.dr_project
-  vpc_id             = var.dr_vpc_id
-  private_subnet_ids = var.dr_private_subnet_ids
-  public_subnet_ids  = var.dr_public_subnet_ids
+  dr_project          = "${var.project}-dr-use2"
+  resource_prefix     = local.dr_project
+  vpc_id              = var.dr_vpc_id
+  private_subnet_ids  = var.dr_private_subnet_ids
+  public_subnet_ids   = var.dr_public_subnet_ids
   acm_certificate_arn = var.dr_acm_certificate_arn != "" ? var.dr_acm_certificate_arn : var.acm_certificate_arn
 
   log_retention  = coalesce(var.log_retention_days, 365)

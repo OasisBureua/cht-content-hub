@@ -21,7 +21,7 @@ locals {
   primary_db_secret = jsondecode(data.aws_secretsmanager_secret_version.primary_database.secret_string)
 
   database_secret_arn = aws_secretsmanager_secret.database.arn
-  dr_database_host = local.aurora_global_enabled ? module.aurora_global[0].reader_host : local.primary_db_secret.host
+  dr_database_host    = local.aurora_global_enabled ? module.aurora_global[0].reader_host : local.primary_db_secret.host
 }
 
 resource "aws_secretsmanager_secret" "database" {
@@ -38,8 +38,14 @@ resource "aws_secretsmanager_secret_version" "database" {
     host     = local.dr_database_host
     port     = local.primary_db_secret.port
     dbname   = local.primary_db_secret.dbname
-    url      = format(
-      "postgresql://%s:%s@%s:%s/%s",
+    # The app uses SQLAlchemy `create_async_engine`, which requires an
+    # async-explicit driver scheme. Bare `postgresql://` dispatches to the
+    # default sync driver (psycopg2) and Alembic bails on startup with
+    # "The asyncio extension requires an async driver to be used"
+    # (verified 2026-07-21, DR task-def :9 crashloop). Primary secret in
+    # modules/database/rds/main.tf:86 already uses this scheme.
+    url = format(
+      "postgresql+asyncpg://%s:%s@%s:%s/%s",
       local.primary_db_secret.username,
       urlencode(local.primary_db_secret.password),
       local.dr_database_host,

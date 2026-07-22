@@ -42,7 +42,7 @@ locals {
     var.log_retention_days,
     contains(["prod", "platform"], var.environment) ? 365 : 7
   )
-  api_image_tag   = try(element(split(":", var.api_image), 1), "unknown")
+  api_image_tag                    = try(element(split(":", var.api_image), 1), "unknown")
   ecr_replication_repository_names = var.environment == "prod" ? ["contenthub-api"] : ["contenthub-dev-api"]
 
   secrets_replica_regions = [
@@ -66,8 +66,10 @@ module "ecr_replication" {
   source = "../../modules/compute/ecr-replication"
 
   destination_region = var.ecr_replication_destination_region
-  repository_prefix  = "contenthub-api"
-  repository_names   = local.ecr_replication_repository_names
+  # Account-global rule: must list every prefix in use (cht-platform-* + contenthub-*).
+  # See modules/compute/ecr-replication/main.tf singleton warning.
+  repository_prefixes = ["contenthub-", "cht-platform-"]
+  repository_names    = local.ecr_replication_repository_names
 }
 
 locals {
@@ -173,10 +175,10 @@ module "route53_api" {
   alb_dns_name = module.alb_api.alb_dns_name
   alb_zone_id  = module.alb_api.alb_zone_id
 
-  enable_failover          = var.enable_route53_failover
-  secondary_alb_dns_name   = local.route53_failover_secondary_alb_dns_name
-  secondary_alb_zone_id    = local.route53_failover_secondary_alb_zone_id
-  failover_alarm_actions   = var.route53_failover_alarm_actions
+  enable_failover        = var.enable_route53_failover
+  secondary_alb_dns_name = local.route53_failover_secondary_alb_dns_name
+  secondary_alb_zone_id  = local.route53_failover_secondary_alb_zone_id
+  failover_alarm_actions = var.route53_failover_alarm_actions
 }
 
 module "ecs_api" {
