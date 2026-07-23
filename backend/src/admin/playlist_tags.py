@@ -1,10 +1,16 @@
 """Admin playlist-tag API (SCRUM-74).
 
-GET  /api/admin/playlists/{youtube_playlist_id}/tags   → current tags + lane
-PATCH /api/admin/playlists/{youtube_playlist_id}/tags  → update tags/lane
+GET  /api/admin/playlists/{youtube_playlist_id}/tags   → current tags + lane (404 if no row)
+PATCH /api/admin/playlists/{youtube_playlist_id}/tags  → upsert tags/lane
 
 Auth: X-API-Key server-to-server. CHT holds the key and does its own
 Studio Cognito JWT + chm-* group check before proxying user requests.
+
+PATCH is upsert semantics: if no `playlist_tags` row exists for the
+given `youtube_playlist_id`, one is created with the requested tags/lane
+(SCRUM-71 CH-8 population workflow). Otherwise the existing row is
+updated in place. Empty PATCH body against a missing row is a no-op
+(nothing to persist) and returns the default empty overlay.
 
 Every write runs through services.tag_taxonomy.normalize_and_validate_tags;
 malformed tags produce a 422 with per-tag rejection reasons instead of
@@ -80,7 +86,6 @@ async def get_playlist_tags(
     "/playlists/{youtube_playlist_id}/tags",
     response_model=PlaylistTagOut,
     responses={
-        404: {"description": "Playlist has no curator tag row yet."},
         422: {
             "description": "One or more tags failed taxonomy validation.",
             "model": PlaylistTagValidationError,
@@ -93,14 +98,20 @@ async def patch_playlist_tags(
     _key: Annotated[str, Depends(verify_admin_api_key)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> PlaylistTagOut:
-    row = await _get_or_404(db, youtube_playlist_id)
+    """Upsert playlist tags/lane. Creates the row if it doesn't exist."""
+    row = (
+        await db.execute(
+            select(PlaylistTag).where(
+                PlaylistTag.youtube_playlist_id == youtube_playlist_id
+            )
+        )
+    ).scalar_one_or_none()
 
     updates = payload.model_dump(exclude_unset=True)
-    if not updates:
-        return _to_out(row)
 
-    changed = False
-
+    # Validate first, before deciding whether to persist. Rejects on either the
+    # insert or update path — semantically identical.
+    validated_tags: list[str] | None = None
     if "tags" in updates:
         validation = normalize_and_validate_tags(updates["tags"])
         if not validation.ok:
@@ -119,9 +130,7 @@ async def patch_playlist_tags(
                     ],
                 },
             )
-        if validation.normalized != list(row.tags or []):
-            row.tags = validation.normalized
-            changed = True
+        validated_tags = validation.normalized
 
     if "lane" in updates:
         new_lane = updates["lane"]
@@ -133,9 +142,38 @@ async def patch_playlist_tags(
                     f"{sorted(ALLOWED_LANES)}."
                 ),
             )
-        if new_lane != row.lane:
-            row.lane = new_lane
-            changed = True
+
+    if row is None:
+        # Row doesn't exist. Empty body against missing row is a no-op — return
+        # the default overlay without persisting a phantom empty row.
+        if not updates:
+            return PlaylistTagOut(
+                youtube_playlist_id=youtube_playlist_id, tags=[], lane=None
+            )
+        row = PlaylistTag(
+            youtube_playlist_id=youtube_playlist_id,
+            tags=validated_tags if validated_tags is not None else [],
+            lane=updates.get("lane"),
+        )
+        db.add(row)
+        await db.flush()
+        await db.refresh(row)
+        await notify_cht_cache_clear(scope="contenthub")
+        return _to_out(row)
+
+    # Existing row — same in-place update flow as before.
+    if not updates:
+        return _to_out(row)
+
+    changed = False
+
+    if validated_tags is not None and validated_tags != list(row.tags or []):
+        row.tags = validated_tags
+        changed = True
+
+    if "lane" in updates and updates["lane"] != row.lane:
+        row.lane = updates["lane"]
+        changed = True
 
     if changed:
         await db.flush()
