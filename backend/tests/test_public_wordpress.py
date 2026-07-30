@@ -34,26 +34,39 @@ async def _insert_event(
     modified_gmt: datetime | None = None,
     categories: list[str] | None = None,
     tags: list[str] | None = None,
+    series: list[str] | None = None,
     youtube_video_id: str | None = None,
     featured_media_url: str | None = None,
     permalink: str | None = None,
 ) -> None:
+    """Seed a WP event into Layer 1 AND project it to Layer 2.
+
+    Mirrors production ingest: Layer 1 append + Layer 2 UPSERT + M:M
+    reconcile all happen atomically. Test helpers that seed only Layer 1
+    would break the read endpoints which now query Layer 2 exclusively.
+    """
     modified_gmt = modified_gmt or datetime.now(timezone.utc)
     permalink = permalink or f"https://communityhealth.media/{slug}/"
-    await db.execute(
+    categories = categories or []
+    tags = tags or []
+    series = series or []
+
+    # Layer 1 insert.
+    result = await db.execute(
         text(
             """
             INSERT INTO wordpress_events (
                 post_id, modified_gmt, event, post_type, slug, title, status,
-                permalink, categories, tags, site_url, acf, raw_payload,
+                permalink, categories, tags, series, site_url, acf, raw_payload,
                 signature_verified, received_at,
                 youtube_video_id, featured_media_url
             ) VALUES (
                 :post_id, :modified_gmt, :event, 'post', :slug, :title, 'publish',
-                :permalink, :categories, :tags, 'https://communityhealth.media',
+                :permalink, :categories, :tags, :series, 'https://communityhealth.media',
                 NULL, :raw_payload, 1, :received_at,
                 :youtube_video_id, :featured_media_url
             )
+            RETURNING id
             """
         ),
         {
@@ -63,14 +76,36 @@ async def _insert_event(
             "slug": slug,
             "title": title,
             "permalink": permalink,
-            "categories": json.dumps(categories or []),
-            "tags": json.dumps(tags or []),
+            "categories": json.dumps(categories),
+            "tags": json.dumps(tags),
+            "series": json.dumps(series),
             "raw_payload": json.dumps({"post_id": post_id, "slug": slug}),
             "received_at": modified_gmt,
             "youtube_video_id": youtube_video_id,
             "featured_media_url": featured_media_url,
         },
     )
+    event_id = result.scalar_one()
+
+    # Layer 2 projection — same code path as production.
+    from jobs.wordpress_ingest_projection import project_post_event
+
+    payload = {
+        "event": event,
+        "post_id": post_id,
+        "post_type": "post",
+        "slug": slug,
+        "title": title,
+        "status": "publish",
+        "modified_gmt": modified_gmt,
+        "permalink": permalink,
+        "categories": categories,
+        "tags": tags,
+        "series": series,
+        "youtube_video_id": youtube_video_id,
+        "featured_media_url": featured_media_url,
+    }
+    await project_post_event(db, payload, event_id)
 
 
 @pytest.fixture
@@ -358,6 +393,98 @@ async def test_wordpress_list_pagination(
     ids_page1 = {i["post_id"] for i in r1.json()["items"]}
     ids_page2 = {i["post_id"] for i in r2.json()["items"]}
     assert ids_page1.isdisjoint(ids_page2)
+
+
+@pytest.mark.asyncio
+async def test_wordpress_list_includes_series_field(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """New posts written with a series list return it verbatim in the response.
+    Rows written pre-v0.5 (no series) default to []."""
+    base = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    await _insert_event(
+        db_session,
+        post_id=201,
+        slug="dr-iyengar-dr-hurvitz-ep1",
+        title="Iyengar / Hurvitz Ep 1",
+        modified_gmt=base,
+        categories=["her2"],
+        series=["dr-iyengar-dr-hurvitz", "her2-deep-dive"],
+    )
+    await _insert_event(
+        db_session,
+        post_id=202,
+        slug="no-series-post",
+        title="No Series",
+        modified_gmt=base + timedelta(days=1),
+        categories=["her2"],
+        # series omitted — defaults to []
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/public/wordpress", headers=api_headers())
+    body = response.json()
+    by_id = {item["post_id"]: item for item in body["items"]}
+
+    assert by_id[201]["series"] == ["dr-iyengar-dr-hurvitz", "her2-deep-dive"]
+    assert by_id[202]["series"] == []
+
+
+@pytest.mark.asyncio
+async def test_wordpress_list_filter_by_series(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """?series=<slug> filters to posts assigned to that series only."""
+    base = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    await _insert_event(
+        db_session,
+        post_id=301,
+        slug="post-a",
+        title="Post A",
+        modified_gmt=base,
+        series=["dr-iyengar-dr-hurvitz"],
+    )
+    await _insert_event(
+        db_session,
+        post_id=302,
+        slug="post-b",
+        title="Post B",
+        modified_gmt=base + timedelta(days=1),
+        series=["dr-iyengar-dr-hurvitz", "her2-deep-dive"],
+    )
+    await _insert_event(
+        db_session,
+        post_id=303,
+        slug="post-c",
+        title="Post C",
+        modified_gmt=base + timedelta(days=2),
+        series=["her2-deep-dive"],
+    )
+    await _insert_event(
+        db_session,
+        post_id=304,
+        slug="post-d",
+        title="Post D",
+        modified_gmt=base + timedelta(days=3),
+        series=[],
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/public/wordpress?series=dr-iyengar-dr-hurvitz",
+        headers=api_headers(),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    post_ids = {item["post_id"] for item in body["items"]}
+    assert post_ids == {301, 302}
+
+    # A series slug no post carries returns empty (not a 404).
+    response = await client.get(
+        "/api/public/wordpress?series=nonexistent-series", headers=api_headers()
+    )
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 @pytest.mark.asyncio

@@ -85,6 +85,7 @@ resource "aws_lambda_function" "this" {
 
   environment {
     variables = merge(
+      var.extra_env,
       {
         CONTENTHUB_SERVICE_ROLE = "sync-lambda"
         ENVIRONMENT             = var.environment

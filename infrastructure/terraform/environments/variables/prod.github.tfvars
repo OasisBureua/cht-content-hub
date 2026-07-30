@@ -75,9 +75,22 @@ sync_jobs_enabled = {
   # are idempotent (skip existing rows) but keeping them enabled is
   # ambiguous about intent — flip to false post-seed. Re-enable temporarily
   # if a one-off restore is ever needed.
-  clips_seed         = false
-  wordpress_backfill = false
-  wordpress_seed     = false
+  clips_seed                     = false
+  wordpress_backfill             = false
+  wordpress_seed                 = false
+  # Layer 2 projection backfill — kept OFF on prod until dev burn-in completes
+  # for WPR-2. Flip to true only when we're ready to hydrate prod Layer 2 in
+  # one shot (or repair drift). Idempotent, so re-enabling is safe.
+  wordpress_projection_backfill  = false
+  # WPR-17 daily reconcile — OFF on prod until dev burn-in proves it out.
+  # After atomic release, flip to true so drift stays bounded to 24h.
+  wordpress_reconcile             = false
+  # WPR-6 fuzzy-match — OFF on prod; manual-invoke on dev only until we
+  # have real curator review rows flowing.
+  wordpress_series_playlist_match = false
+  # WPR-11 tag-namespace seed — OFF on prod; run once on dev to seed the
+  # map from the current WP tag inventory, verify, then release.
+  wp_tag_namespace_seed           = false
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
@@ -110,3 +123,7 @@ dr_api_image                = "233636046512.dkr.ecr.us-east-2.amazonaws.com/cont
 
 # Route53 failover: keep false until ECS healthy in both regions; arm via ./scripts/arm-route53-failover.sh
 enable_route53_failover = false
+
+# WPR-17 reconcile Lambda — same self-URL pattern on prod.
+wordpress_base_url         = "https://communityhealth.media"
+wordpress_webhook_self_url = "https://contenthub.communityhealth.media/api/wordpress/webhook"

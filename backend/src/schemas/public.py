@@ -153,6 +153,7 @@ class PublicWordPressPost(BaseModel):
     permalink: str
     categories: list[str]
     tags: list[str]
+    series: list[str]
     youtube_video_id: str | None
     featured_media_url: str | None
     modified_gmt: datetime
@@ -161,6 +162,44 @@ class PublicWordPressPost(BaseModel):
 class PublicWordPressPostList(BaseModel):
     items: list[PublicWordPressPost]
     total: int
+
+
+class PublicWordPressTerm(BaseModel):
+    """WordPress taxonomy term — used for /series, /tags responses.
+
+    `post_count` reflects the current editorial state (live posts assigned
+    to this term via the M:M projection table). Deleted terms are excluded
+    from list responses; detail endpoints return 404 for tombstoned slugs.
+
+    `namespaced_tag` (present only on /tags responses) is the projection
+    via wp_tag_namespace_map — e.g. slug "her2" surfaces as `namespaced_tag =
+    "biomarker:HER2+"`. Absent (or set to `wp:<slug>`) when no rule matches.
+    """
+
+    slug: str
+    name: str
+    description: str | None = None
+    parent_slug: str | None = None
+    wp_term_id: int | None = None
+    post_count: int
+    namespaced_tag: str | None = None
+
+
+class PublicWordPressTermList(BaseModel):
+    items: list[PublicWordPressTerm]
+    total: int
+
+
+class PublicWordPressSeriesDetail(BaseModel):
+    """Full detail for one series — metadata + member post IDs."""
+
+    slug: str
+    name: str
+    description: str | None = None
+    parent_slug: str | None = None
+    wp_term_id: int | None = None
+    post_count: int
+    post_ids: list[int]
 
 
 class PublicClip(BaseModel):

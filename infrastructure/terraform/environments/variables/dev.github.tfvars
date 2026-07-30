@@ -65,10 +65,14 @@ sync_jobs_enabled = {
   kol_hcp_matcher        = false
   post_tagging           = true
   playlist_doctor_tagger = false
-  wordpress_ingest       = true
-  clips_seed             = true
-  wordpress_backfill     = true
-  wordpress_seed         = true
+  wordpress_ingest               = true
+  clips_seed                     = true
+  wordpress_backfill             = true
+  wordpress_seed                 = true
+  wordpress_projection_backfill    = true
+  wordpress_reconcile              = true
+  wordpress_series_playlist_match  = true
+  wp_tag_namespace_seed            = true
 }
 
 # Platform integration secrets are NOT stored here (committed file).
@@ -76,3 +80,8 @@ sync_jobs_enabled = {
 # See .github/CI_CD.md — e.g. LINKEDIN_ADS_CLIENT_ID, YOUTUBE_API_KEY, OPENAI_API_KEY.
 
 cht_cache_clear_url = "https://devapp.communityhealth.media/api/internal/cache/clear/all"
+
+# WPR-17 reconcile Lambda: self-emit signed synthetic delete webhooks
+# at ContentHub's own ingress. Same host the mu-plugin fans out to.
+wordpress_base_url         = "https://communityhealth.media"
+wordpress_webhook_self_url = "https://devhub.communityhealth.media/api/wordpress/webhook"

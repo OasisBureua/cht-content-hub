@@ -192,6 +192,77 @@ async def test_wrong_type_categories_returns_400(http_client: AsyncClient):
     assert response.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_series_field_optional_when_absent(http_client: AsyncClient):
+    """Pre-v0.5 mu-plugin payloads omit `series` entirely — must still 200.
+    Backwards-tolerance is the whole point of `series` being optional in
+    the shape-check contract."""
+    payload = _valid_payload()
+    assert "series" not in payload  # baseline: fixture doesn't set it
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_series_valid_array_accepted(http_client: AsyncClient):
+    """v0.5 mu-plugin sends `series` as a slug array."""
+    payload = _valid_payload()
+    payload["series"] = ["dr-iyengar-dr-hurvitz", "her2-deep-dive"]
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_series_empty_array_accepted(http_client: AsyncClient):
+    """A post assigned to no series terms sends `series: []` — legal."""
+    payload = _valid_payload()
+    payload["series"] = []
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_series_non_array_returns_400(http_client: AsyncClient):
+    payload = _valid_payload()
+    payload["series"] = "not-an-array"
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_series_non_string_entries_return_400(http_client: AsyncClient):
+    """Type-confusion guard — series entries must all be strings."""
+    payload = _valid_payload()
+    payload["series"] = ["valid-slug", 42, {"nested": "object"}]
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 400
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Happy path — dev mode (no queue configured)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,6 +376,152 @@ async def test_sqs_failure_returns_503(http_client: AsyncClient, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 # Secret-not-configured edge case
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_term_updated_valid_payload_accepted(http_client: AsyncClient):
+    """v0.6 mu-plugin sends term_updated events on taxonomy edits."""
+    payload = {
+        "event": "term_updated",
+        "taxonomy": "series",
+        "term_id": 42,
+        "slug": "dr-iyengar-dr-hurvitz",
+        "name": "Drs. Iyengar & Hurvitz",
+        "description": "A doctor-pair series",
+        "parent_slug": None,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_term_deleted_valid_payload_accepted(http_client: AsyncClient):
+    """term_deleted event carries the minimum identifying fields."""
+    payload = {
+        "event": "term_deleted",
+        "taxonomy": "series",
+        "term_id": 42,
+        "slug": "retired-series",
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_term_event_all_valid_taxonomies_accepted(http_client: AsyncClient):
+    """series, category, and post_tag are all valid taxonomy identifiers."""
+    for taxonomy in ["series", "category", "post_tag"]:
+        payload = {
+            "event": "term_updated",
+            "taxonomy": taxonomy,
+            "term_id": 7,
+            "slug": f"{taxonomy}-example",
+            "name": f"{taxonomy} example",
+        }
+        body = json.dumps(payload).encode("utf-8")
+        response = await http_client.post(
+            "/api/wordpress/webhook",
+            content=body,
+            headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+        )
+        assert response.status_code == 200, f"taxonomy={taxonomy} failed"
+
+
+@pytest.mark.asyncio
+async def test_term_event_invalid_taxonomy_returns_400(http_client: AsyncClient):
+    payload = {
+        "event": "term_updated",
+        "taxonomy": "not-a-real-taxonomy",
+        "term_id": 42,
+        "slug": "whatever",
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_term_event_missing_required_field_returns_400(http_client: AsyncClient):
+    payload = {
+        "event": "term_updated",
+        "taxonomy": "series",
+        # missing term_id + slug
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_term_event_empty_slug_returns_400(http_client: AsyncClient):
+    payload = {
+        "event": "term_updated",
+        "taxonomy": "series",
+        "term_id": 42,
+        "slug": "",  # empty is rejected — slug is identity
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_term_event_non_integer_term_id_returns_400(http_client: AsyncClient):
+    payload = {
+        "event": "term_updated",
+        "taxonomy": "series",
+        "term_id": "not-a-number",
+        "slug": "test",
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-CHT-Signature": _sign(body)},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_term_event_still_signature_verified(http_client: AsyncClient):
+    """Term events go through the same HMAC path as post events."""
+    payload = {
+        "event": "term_updated",
+        "taxonomy": "series",
+        "term_id": 42,
+        "slug": "test",
+        "name": "Test",
+    }
+    body = json.dumps(payload).encode("utf-8")
+    # No signature → 401 even for a well-formed term event
+    response = await http_client.post(
+        "/api/wordpress/webhook",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio
