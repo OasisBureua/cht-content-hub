@@ -1,49 +1,18 @@
-"""wordpress_projection_backfill — one-shot Lambda that hydrates Layer 2.
+"""backfill_projection — one of the ops under wordpress_projection_ops.
 
-Complementary to `wordpress_seed` (which populates Layer 1 event log via
-INSERT into wordpress_events). This job populates Layer 2 projected-state
-tables — wordpress_posts, wordpress_series, wordpress_categories,
-wordpress_tags, and their M:M association tables — by querying WordPress
-REST for canonical term metadata + post↔term membership.
+Hydrates Layer 2 (wordpress_posts, wordpress_series/_categories/_tags,
+M:M association tables) from WordPress REST. Fetches term inventories
+first (name/description/parent/term_id), then post membership arrays,
+feeds both through the shared projection module.
 
-Design:
+Idempotent by construction (UPSERT + set-based M:M reconcile).
 
-- Fetches full term inventories for the three taxonomies (`series` custom
-  taxonomy, `categories`, `tags`) with name + description + parent + term_id.
-- Fetches all published posts with their category / tag / series ID arrays.
-- Resolves those IDs to slugs against the term inventory.
-- Feeds each term into `project_term_event(payload)` — same projection code
-  the ingest Lambda uses for real-time term-lifecycle events, so this
-  backfill converges to the same state a full replay would produce.
-- Feeds each post into `project_post_event(payload, event_id)` — same
-  projection code the ingest Lambda uses for post events. Uses the most
-  recent matching wordpress_events.id as event_id (or 0 if no event exists).
-
-Idempotent by construction: term + post projection are UPSERT-based, M:M
-membership reconcile is set-based. Re-invocation converges to identical
-state without duplicating rows.
-
-Ordering: terms first, then posts. This guarantees the FK from
-wordpress_post_series → wordpress_series is satisfied even before the
-projection's own defensive UPSERT would kick in.
-
-Auth: WordPress Application Password from Secrets Manager (same
-`wordpress_admin_user` + `wordpress_admin_app_password` keys used by
-wordpress_seed).
-
-Rate limited: 1 req/sec cadence to respect WP's WAF ceiling.
-
-Invocation:
-    aws lambda invoke \\
-      --function-name contenthub-dev-sync-wordpress-projection-backfill \\
-      --payload '{}' \\
-      /tmp/resp.json && cat /tmp/resp.json
-
-Payload (all optional):
+Payload:
     {
-      "wp_base_url": "https://communityhealth.media",  # defaults
-      "max_pages": 20,   # cap post pages to fetch this invoke
-      "taxonomies": ["series", "category", "post_tag"],  # subset for partial re-runs
+      "op": "backfill_projection",
+      "wp_base_url": "https://communityhealth.media",
+      "max_pages": 20,
+      "taxonomies": ["series", "category", "post_tag"],
       "dry_run": false
     }
 """
@@ -60,8 +29,6 @@ from typing import Any
 import boto3
 import httpx
 
-from shared.runtime import configure_logging, install_paths, run_async
-
 log = logging.getLogger(__name__)
 
 _DEFAULT_WP_BASE_URL = "https://communityhealth.media"
@@ -73,20 +40,14 @@ _PER_PAGE = 100
 _REQUEST_DELAY_S = 1.0
 _HTTP_TIMEOUT_S = 20.0
 
-# Maps ContentHub taxonomy identifier → WP REST endpoint path.
-# WordPress's REST base for the built-in taxonomies is /categories + /tags;
-# the custom `series` taxonomy is exposed at /series when the plugin that
-# registers it also enables `show_in_rest` (Andrew's config does).
 _TAXONOMY_REST_PATH: dict[str, str] = {
     "series": "series",
     "category": "categories",
     "post_tag": "tags",
 }
 
-# WordPress uses these keys on `posts` responses for the ID arrays. Map to
-# our internal taxonomy identifier.
 _POST_TAXONOMY_ID_KEY: dict[str, str] = {
-    "series": "series",  # `series` custom taxonomy exposes an ID array too
+    "series": "series",
     "category": "categories",
     "post_tag": "tags",
 }
@@ -127,11 +88,6 @@ def _parse_modified_gmt(value: str | None) -> datetime | None:
 async def _fetch_terms(
     client: httpx.AsyncClient, base_url: str, rest_path: str
 ) -> list[dict[str, Any]]:
-    """Return the full term inventory for one taxonomy from WP REST.
-
-    Includes name + description + parent + wp_term_id — everything the
-    projection layer needs.
-    """
     out: list[dict[str, Any]] = []
     page = 1
     while True:
@@ -177,7 +133,6 @@ async def _fetch_terms(
 async def _fetch_posts_page(
     client: httpx.AsyncClient, base_url: str, page: int
 ) -> tuple[list[dict[str, Any]], str]:
-    """Fetch one page of posts with the ID arrays needed for membership."""
     url = f"{base_url.rstrip('/')}/wp-json/wp/v2/posts"
     params = {
         "per_page": _PER_PAGE,
@@ -205,17 +160,11 @@ async def _fetch_posts_page(
 async def _project_terms_for_taxonomy(
     db, taxonomy: str, terms: list[dict[str, Any]]
 ) -> tuple[dict[int, str], int]:
-    """Project every term into Layer 2. Returns (id→slug map, projected count).
-
-    Also builds an id→slug lookup used later to translate post ID arrays
-    into slug arrays for the M:M projection.
-    """
     from jobs.wordpress_ingest_projection import project_term_event
 
     id_to_slug: dict[int, str] = {}
     projected = 0
 
-    # Build parent_id→slug lookup so parent_slug references can be resolved.
     id_lookup = {int(t["id"]): t["slug"] for t in terms}
 
     for term in terms:
@@ -246,7 +195,6 @@ async def _project_post(
     post: dict[str, Any],
     slug_lookups: dict[str, dict[int, str]],
 ) -> str:
-    """Project one WP post into Layer 2. Returns 'projected' or 'skipped'."""
     from jobs.wordpress_ingest_projection import project_post_event
     from models.wordpress_event import WordPressEvent
     from sqlalchemy import select
@@ -285,13 +233,10 @@ async def _project_post(
         "categories": _resolve("categories"),
         "tags": _resolve("tags"),
         "series": _resolve("series"),
-        "youtube_video_id": None,  # extraction is mu-plugin's job; backfill leaves NULL
+        "youtube_video_id": None,
         "featured_media_url": fm_url,
     }
 
-    # Use the latest wordpress_events.id for this post_id if one exists —
-    # keeps Layer 2's last_event_id back-reference honest. Otherwise 0
-    # sentinel means "projected by backfill without a matching event".
     latest_event_id = (
         await db.execute(
             select(WordPressEvent.id)
@@ -305,7 +250,7 @@ async def _project_post(
     return "projected"
 
 
-async def _run(event: dict[str, Any]) -> dict[str, Any]:
+async def run(event: dict[str, Any]) -> dict[str, Any]:
     from database import async_session_maker
 
     wp_base_url = event.get("wp_base_url") or os.environ.get(
@@ -319,7 +264,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     auth = (wp_user, wp_app_pw) if wp_user and wp_app_pw else None
 
     log.info(
-        "wordpress_projection_backfill start",
+        "backfill_projection start",
         extra={
             "wp_base_url": wp_base_url,
             "max_pages": max_pages,
@@ -335,8 +280,6 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     posts_projected = 0
     errors = 0
 
-    # Post's per-taxonomy ID arrays use these keys; we build slug lookups
-    # keyed by that ID-array key (categories/tags/series).
     slug_lookups: dict[str, dict[int, str]] = {}
 
     async with httpx.AsyncClient(
@@ -345,7 +288,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         follow_redirects=True,
         auth=auth,
     ) as client:
-        # ── Terms first ──────────────────────────────────────────────
+        # Terms first.
         for taxonomy in taxonomies:
             rest_path = _TAXONOMY_REST_PATH.get(taxonomy)
             id_array_key = _POST_TAXONOMY_ID_KEY.get(taxonomy)
@@ -377,7 +320,6 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
                 slug_lookups[id_array_key] = id_to_slug
                 term_counts[taxonomy] = projected
             else:
-                # Dry run — still build the lookup for post projection preview.
                 slug_lookups[id_array_key] = {
                     int(t["id"]): t["slug"] for t in terms
                 }
@@ -385,7 +327,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
 
             await asyncio.sleep(_REQUEST_DELAY_S)
 
-        # ── Posts second ─────────────────────────────────────────────
+        # Posts second.
         for page in range(1, max_pages + 1):
             posts, status = await _fetch_posts_page(client, wp_base_url, page)
             if status == "empty":
@@ -422,7 +364,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(_REQUEST_DELAY_S)
 
     log.info(
-        "wordpress_projection_backfill done",
+        "backfill_projection done",
         extra={
             "term_counts": term_counts,
             "posts_seen": posts_seen,
@@ -432,24 +374,17 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
-    # Cache-clear so CHT picks up the newly-projected state immediately.
     if not dry_run and (posts_projected > 0 or sum(term_counts.values()) > 0):
         from shared.cht_cache import clear_cht_catalog_cache
 
-        clear_cht_catalog_cache(job="wordpress_projection_backfill")
+        clear_cht_catalog_cache(job="wordpress_projection_ops.backfill_projection")
 
     return {
         "status": "ok",
-        "job": "wordpress_projection_backfill",
+        "op": "backfill_projection",
         "dry_run": dry_run,
         "term_counts": term_counts,
         "posts_seen": posts_seen,
         "posts_projected": posts_projected,
         "errors": errors,
     }
-
-
-def handler(event: dict, context) -> dict:
-    install_paths()
-    configure_logging()
-    return run_async(_run(event or {}))

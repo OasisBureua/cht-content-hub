@@ -39,7 +39,7 @@ from models.wordpress_projection import (
 )
 
 # Re-use the seed helper (seeds Layer 1 + projects to Layer 2).
-from tests.test_public_wordpress import _insert_event
+from test_public_wordpress import _insert_event
 
 
 # ─────────────────────────────────────────────────────────────────────────────

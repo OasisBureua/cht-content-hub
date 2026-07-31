@@ -1,33 +1,26 @@
-"""wp_tag_namespace_seed — WPR-11 one-shot / on-demand Lambda.
+"""seed_tag_namespace — one of the ops under wordpress_projection_ops.
 
 Populates `wp_tag_namespace_map` by running the rulebook against every
 WP tag currently in `wordpress_tags` (Layer 2). Skips slugs that already
-have a curator-sourced row (source != 'rule') so this Lambda never
-overwrites an editorial decision.
+have a curator-sourced row (source != 'rule') so this op never overwrites
+an editorial decision.
 
 Idempotent: re-invocations produce zero net writes if the rulebook + tag
 inventory haven't changed.
 
 Payload (all optional):
     {
+      "op": "seed_tag_namespace",
       "dry_run": false,             # report what WOULD be written
       "overwrite_rules": false,     # rewrite existing rule-sourced rows too
                                     # (useful when the rulebook itself changes)
     }
-
-Invocation:
-    aws lambda invoke \\
-      --function-name contenthub-dev-sync-wp-tag-namespace-seed \\
-      --payload '{}' \\
-      /tmp/resp.json && cat /tmp/resp.json
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
-
-from shared.runtime import configure_logging, install_paths, run_async
 
 log = logging.getLogger(__name__)
 
@@ -112,14 +105,14 @@ async def _upsert_mappings(
     return inserted, updated
 
 
-async def _run(event: dict[str, Any]) -> dict[str, Any]:
+async def run(event: dict[str, Any]) -> dict[str, Any]:
     from jobs.wp_tag_namespace_rulebook import classify_batch
 
     dry_run = bool(event.get("dry_run", False))
     overwrite_rules = bool(event.get("overwrite_rules", False))
 
     log.info(
-        "wp_tag_namespace_seed start",
+        "seed_tag_namespace start",
         extra={"dry_run": dry_run, "overwrite_rules": overwrite_rules},
     )
 
@@ -127,7 +120,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     if not slugs:
         return {
             "status": "ok",
-            "job": "wp_tag_namespace_seed",
+            "op": "seed_tag_namespace",
             "reason": "no WP tags in wordpress_tags — nothing to seed",
         }
 
@@ -151,7 +144,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         to_write[slug] = (result.namespace, result.value, result.source)
 
     log.info(
-        "wp_tag_namespace_seed classified",
+        "seed_tag_namespace classified",
         extra={
             "total_slugs": len(slugs),
             "rule_matches": len(rulebook_matches),
@@ -163,7 +156,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     if dry_run:
         return {
             "status": "ok",
-            "job": "wp_tag_namespace_seed",
+            "op": "seed_tag_namespace",
             "dry_run": True,
             "total_slugs": len(slugs),
             "rule_matches": len(rulebook_matches),
@@ -179,22 +172,16 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     inserted, updated = await _upsert_mappings(to_write, overwrite_rules)
 
     log.info(
-        "wp_tag_namespace_seed done",
+        "seed_tag_namespace done",
         extra={"inserted": inserted, "updated": updated},
     )
 
     return {
         "status": "ok",
-        "job": "wp_tag_namespace_seed",
+        "op": "seed_tag_namespace",
         "total_slugs": len(slugs),
         "rule_matches": len(rulebook_matches),
         "inserted": inserted,
         "updated": updated,
         "unmapped_wp_fallback": len(unmapped),
     }
-
-
-def handler(event: dict, context) -> dict:
-    install_paths()
-    configure_logging()
-    return run_async(_run(event or {}))

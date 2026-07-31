@@ -67,12 +67,10 @@ sync_jobs_enabled = {
   playlist_doctor_tagger = false
   wordpress_ingest               = true
   clips_seed                     = true
-  wordpress_backfill             = true
-  wordpress_seed                 = true
-  wordpress_projection_backfill    = true
-  wordpress_reconcile              = true
-  wordpress_series_playlist_match  = true
-  wp_tag_namespace_seed            = true
+  # Consolidated WP mirror ops Lambda (6 ops in one: seed_events + backfill_events
+  # + backfill_projection + match_series_playlists + seed_tag_namespace +
+  # reconcile_drift). See sync_jobs.tf comment for op details.
+  wordpress_projection_ops       = true
 }
 
 # Platform integration secrets are NOT stored here (committed file).

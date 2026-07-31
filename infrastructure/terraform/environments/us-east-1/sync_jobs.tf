@@ -79,104 +79,45 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
-    # One-shot: for wordpress_events rows ingested before mu-plugin v0.2 (which
-    # extracts youtube_video_id + featured_media_url server-side), fetch each
-    # post via WP REST and UPDATE the row. Idempotent — WHERE youtube_video_id
-    # IS NULL. Rate-limited 4 req/sec (250ms sleep) to be polite with WP + WAF.
-    # 900s timeout supports ~3.5k posts per invocation; batch_size caps per-run.
-    wordpress_backfill = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_backfill", false)
-      handler                        = "jobs.wordpress_backfill.handler.handler"
-      timeout                        = 900
-      memory_size                    = 512
-      schedule_expression            = null
-      sqs_trigger                    = false
-      reserved_concurrent_executions = 1
-    }
-    # One-shot: page through WP REST /posts and INSERT into wordpress_events
-    # for the entire editorial catalog. Idempotent via UNIQUE (post_id,
-    # modified_gmt) — re-runs are no-ops for rows that exist. Runs at
-    # 1 req/sec (same cadence as backfill). 900s supports the full catalog
-    # (~500 posts / ~5 pages / ~8 min) with margin for vocab fetches.
-    wordpress_seed = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_seed", false)
-      handler                        = "jobs.wordpress_seed.handler.handler"
-      timeout                        = 900
-      memory_size                    = 512
-      schedule_expression            = null
-      sqs_trigger                    = false
-      reserved_concurrent_executions = 1
-    }
-    # One-shot: hydrate Layer 2 projected-state tables (wordpress_posts +
-    # wordpress_series + wordpress_categories + wordpress_tags + M:M
-    # association tables) from WP REST. Fetches term inventories first
-    # (name / description / parent / term_id), then post membership arrays,
-    # feeds both into the shared projection module — same code path the
-    # real-time ingest Lambda uses. Idempotent by construction (UPSERT +
-    # set-based M:M reconcile). Runs at 1 req/sec.
+    # WordPress mirror ops — SINGLE Lambda dispatching to 6 modes via
+    # event["op"]. Consolidated from what would otherwise be six separate
+    # Lambdas (per review guidance on Lambda sprawl), all sharing the
+    # WordPress domain + same trigger profile + same memory footprint +
+    # same auth path.
     #
-    # Also serves as the drift-catch-up path: re-invoking on a schedule
-    # covers any webhook events that got dropped between mu-plugin fire and
-    # SQS enqueue (though ideally WPR-17 reconcile handles that).
-    wordpress_projection_backfill = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_projection_backfill", false)
-      handler                        = "jobs.wordpress_projection_backfill.handler.handler"
-      timeout                        = 900
-      memory_size                    = 512
-      schedule_expression            = null
-      sqs_trigger                    = false
-      reserved_concurrent_executions = 1
-    }
-    # WPR-11 tag-namespace seed Lambda. Runs the rulebook against every
-    # WP tag in wordpress_tags (Layer 2) and populates wp_tag_namespace_map.
-    # Idempotent: preserves curator-sourced rows, only touches rule-sourced
-    # or absent entries. Re-run whenever the rulebook itself changes
-    # (with overwrite_rules=true) or after new WP tags land.
-    wp_tag_namespace_seed = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wp_tag_namespace_seed", false)
-      handler                        = "jobs.wp_tag_namespace_seed.handler.handler"
-      timeout                        = 300
-      memory_size                    = 512
-      schedule_expression            = null
-      sqs_trigger                    = false
-      reserved_concurrent_executions = 1
-    }
-    # WPR-6 fuzzy-match Lambda. Scores every (playlist, series) pair using
-    # doctor-surname overlap + title similarity, inserts pending review
-    # rows for candidates ≥0.5. Curator (Morgan / Sebastien) approves or
-    # rejects via /api/admin/playlist-series-review endpoints. On approval,
-    # `playlist_tags.wp_series_slug` gets set atomically.
+    #   Layer 1 (event log) ops:
+    #     - seed_events         (manual): one-shot ingest all published
+    #       WP posts into wordpress_events. Idempotent via UNIQUE constraint.
+    #     - backfill_events     (manual): fill youtube_video_id +
+    #       featured_media_url on pre-v0.2 rows.
     #
-    # Manual-invoke by default. Safe to schedule if we want re-scoring on
-    # a cadence (e.g., weekly for new playlists) — but idempotent so
-    # re-runs against unchanged data are cheap no-ops.
-    wordpress_series_playlist_match = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_series_playlist_match", false)
-      handler                        = "jobs.wordpress_series_playlist_match.handler.handler"
-      timeout                        = 900
-      memory_size                    = 512
-      schedule_expression            = null
-      sqs_trigger                    = false
-      reserved_concurrent_executions = 1
-    }
-    # Daily standing production defense (WPR-17 / SCRUM-168). Diffs WP REST
-    # against Layer 2 wordpress_posts + wordpress_series/_categories/_tags.
-    # For any CH-side row not present on WP, emits a signed synthetic
-    # webhook (`deleted` for posts, `term_deleted` for terms) at our own
-    # ingress — the ingest Lambda applies the tombstone through the normal
-    # projection path. Idempotent by construction.
+    #   Layer 2 (projected state) ops:
+    #     - backfill_projection (manual): hydrate Layer 2 tables from WP REST.
+    #     - match_series_playlists (manual): WPR-6 fuzzy-match, insert
+    #       pending review rows. Curator approves/rejects via admin endpoint.
+    #     - seed_tag_namespace  (manual): WPR-11, run rulebook against
+    #       wordpress_tags, UPSERT wp_tag_namespace_map.
     #
-    # Bounds mirror drift to 24h even if the mu-plugin misses a webhook
-    # for a transient network reason. Alarm fires (CloudWatch metric) if
-    # drift exceeds threshold BEFORE reconciliation runs — that indicates
-    # the mu-plugin is broken, not just one dropped event.
-    wordpress_reconcile = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_reconcile", false)
-      handler                        = "jobs.wordpress_reconcile.handler.handler"
+    #   Standing defense:
+    #     - reconcile_drift     (DAILY CRON DEFAULT): WPR-17. Diffs WP REST
+    #       vs Layer 2, emits signed synthetic delete webhooks for phantoms.
+    #       CloudWatch drift alarm.
+    #
+    # Each op module lives at backend/src/jobs/wordpress_projection_ops/<op>.py.
+    # Dispatcher + registry at backend/src/jobs/wordpress_projection_ops/__init__.py.
+    # Lambda entry point at sync/jobs/wordpress_projection_ops/handler.py.
+    #
+    # Daily 03:00 UTC (23:00 US-East summer time — avoids peak editorial
+    # window). Cron fires with no payload → dispatcher defaults to
+    # reconcile_drift. Manual invokes pass {"op": "..."} for other modes.
+    #
+    # Not folded in here (deliberately): `wordpress_ingest` — SQS-triggered
+    # hot path for WP webhooks, different scale profile.
+    wordpress_projection_ops = {
+      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_projection_ops", false)
+      handler                        = "jobs.wordpress_projection_ops.handler.handler"
       timeout                        = 900
       memory_size                    = 512
-      # Daily 03:00 UTC (23:00 US-East summer time — avoids the peak
-      # editorial-edit window and Andrew's own workflow hours).
       schedule_expression            = "cron(0 3 * * ? *)"
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
@@ -185,26 +126,16 @@ locals {
 }
 
 locals {
-  # Per-job extra environment variables. `wordpress_reconcile` needs its
-  # own ingress URL (same host the mu-plugin hits) so it can emit signed
-  # synthetic delete webhooks. The self-URL is derived from the ECS route
-  # ALB endpoint, which lives in var.wordpress_webhook_self_url on the
-  # environment tfvars — empty string on dev falls back to the module
-  # default (no synthetic emission, drift-only reporting).
+  # Per-job extra environment variables. `wordpress_projection_ops` needs
+  # its own ingress URL (same host the mu-plugin hits) so its reconcile_drift
+  # op can emit signed synthetic delete webhooks. Empty string on dev falls
+  # back to drift-only reporting (no synthetic emission). All ops that hit
+  # WordPress REST also need the base URL.
   sync_job_extra_env = {
-    wordpress_reconcile = merge(
+    wordpress_projection_ops = merge(
       var.wordpress_webhook_self_url != "" ? { SELF_WEBHOOK_URL = var.wordpress_webhook_self_url } : {},
       { WP_BASE_URL = var.wordpress_base_url }
     )
-    wordpress_projection_backfill = {
-      WP_BASE_URL = var.wordpress_base_url
-    }
-    wordpress_seed = {
-      WP_BASE_URL = var.wordpress_base_url
-    }
-    wordpress_backfill = {
-      WP_BASE_URL = var.wordpress_base_url
-    }
   }
 }
 

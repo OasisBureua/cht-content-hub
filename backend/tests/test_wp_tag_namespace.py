@@ -34,7 +34,7 @@ from jobs.wp_tag_namespace_rulebook import (
 )
 from models.wordpress_projection import WordPressPost, WordPressPostTag, WordPressTag
 from models.wp_tag_namespace_map import WpTagNamespaceMap
-from tests.test_public_wordpress import _insert_event
+from test_public_wordpress import _insert_event
 
 
 # ─────────────────────────────────────────────────────────────────────────────

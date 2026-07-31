@@ -1,64 +1,28 @@
-"""wordpress_reconcile — WPR-17 standing production defense.
+"""reconcile_drift — one of the ops under wordpress_projection_ops.
 
-Daily EventBridge-triggered Lambda that diffs the WordPress source of truth
-against ContentHub's Layer 2 projected state and closes any drift.
+Daily standing production defense against mu-plugin webhook drops. Diffs
+WordPress source-of-truth against ContentHub's Layer 2 projected state,
+emits synthetic signed delete webhooks for any CH-side row not present
+on WP. Idempotent, bounded to one reconcile cycle (24h at default cron).
 
-Why this exists: even with mu-plugin v0.6 covering trash + delete + term
-lifecycle events, webhooks can drop — mu-plugin fire-and-forget means a
-transient network failure between WordPress and ContentHub loses the
-event. Round 1 shipped without a defense against this, and 9 phantom rows
-accumulated on prod over two weeks before WPR-1 cleanup surfaced the gap.
+Reconciles:
+  1. Post presence — every CH-side live post_id not in WP → synthetic
+     `deleted` webhook at own ingress
+  2. Term presence — every CH-side non-tombstoned term slug not in WP →
+     synthetic `term_deleted` webhook (all 3 taxonomies)
+  3. Drift alarm — CloudWatch metric fires when diff exceeds threshold
+     BEFORE reconciliation runs
 
-This Lambda is the standing defense: even if the mu-plugin somehow fails
-to notify us, drift is bounded to one reconcile cycle (24h by default).
+Does NOT reconcile term metadata (that's the backfill_projection op).
+Does NOT reconcile M:M memberships (needs synthetic re-publish, out of scope).
 
-## What it reconciles
-
-1. **Post presence** — every WP `post_id` present in `wordpress_posts` with
-   `deleted_at IS NULL` but NOT present on the WordPress side (published
-   status filter) gets a synthetic `deleted` webhook fired at ContentHub's
-   own ingress. Idempotent by the standard delete-projection path.
-
-2. **Term presence** — every term slug on ContentHub Layer 2 (series /
-   category / tag) NOT present on the WordPress side gets a synthetic
-   `term_deleted` webhook. Same signed HMAC path as real webhooks.
-
-3. **Drift alarm** — if the diff exceeds a threshold BEFORE reconciliation,
-   fires a CloudWatch metric so the operator gets alerted (something broke,
-   not just one dropped event).
-
-## Why synthetic webhooks (rather than direct DB writes)
-
-The mu-plugin fires signed webhooks that go through router HMAC validation
-→ SQS → ingest Lambda → projection. Emitting synthetic webhooks reuses
-that entire path — same code, same validation, same idempotency. If we
-wrote directly to the DB we'd have two projection code paths to maintain
-and one of them (the direct-write one) would bypass the router's shape
-checks.
-
-The tradeoff: we hit our own webhook endpoint. That's fine — it's a
-localhost-ish call inside the VPC and the request budget is tiny (≤ few
-hundred posts on the entire site).
-
-## What it does NOT do
-
-- Does NOT reconcile term METADATA (name / description / parent). That's
-  wordpress_projection_backfill's job — reconcile is about presence.
-- Does NOT reconcile M:M memberships. If a post's series set diverges from
-  WP, the underlying post event was dropped; the fix is a synthetic post
-  re-publish, which is a scope conversation with the operator (do we
-  clobber CHT-side state?). Not covered here.
-- Does NOT reconcile posts on the WP side that are missing on CH side
-  (that's the seed / backfill Lambdas' job). Reconcile is one-directional:
-  it detects and removes phantoms, not fills gaps.
-
-## Payload
-
+Payload:
     {
-      "wp_base_url": "https://communityhealth.media",  # defaults
-      "max_pages": 20,   # cap page fetch
-      "dry_run": false,  # if true, report drift but don't emit synthetics
-      "drift_alarm_threshold": 20,  # emit metric if drift exceeds
+      "op": "reconcile_drift",
+      "wp_base_url": "https://communityhealth.media",
+      "max_pages": 20,
+      "dry_run": false,
+      "drift_alarm_threshold": 20
     }
 """
 
@@ -75,8 +39,6 @@ from typing import Any
 
 import boto3
 import httpx
-
-from shared.runtime import configure_logging, install_paths, run_async
 
 log = logging.getLogger(__name__)
 
@@ -117,8 +79,6 @@ def _load_wp_credentials() -> tuple[str | None, str | None]:
 
 
 def _load_webhook_secret() -> str | None:
-    """Read the same webhook secret the mu-plugin uses so our synthetics
-    pass the router HMAC check."""
     arn = os.environ.get("APP_SECRETS_ARN", "")
     if not arn:
         return os.environ.get("WORDPRESS_WEBHOOK_SECRET") or None
@@ -137,7 +97,6 @@ def _load_webhook_secret() -> str | None:
 async def _fetch_wp_post_ids(
     client: httpx.AsyncClient, base_url: str, max_pages: int
 ) -> set[int]:
-    """Return the set of published post IDs currently on WordPress."""
     seen: set[int] = set()
     for page in range(1, max_pages + 1):
         url = f"{base_url.rstrip('/')}/wp-json/wp/v2/posts"
@@ -156,7 +115,7 @@ async def _fetch_wp_post_ids(
                 "reconcile wp page fetch failed",
                 extra={"page": page, "error": str(exc)},
             )
-            return seen  # partial data — refuse to reconcile on partial
+            return seen
         if resp.status_code == 400 and page > 1:
             break
         if resp.status_code >= 400:
@@ -179,7 +138,6 @@ async def _fetch_wp_post_ids(
 async def _fetch_wp_term_slugs(
     client: httpx.AsyncClient, base_url: str, rest_path: str
 ) -> set[str]:
-    """Return the set of term slugs currently on WordPress for one taxonomy."""
     seen: set[str] = set()
     page = 1
     while True:
@@ -216,7 +174,6 @@ async def _fetch_wp_term_slugs(
 
 
 async def _fetch_ch_live_post_ids() -> set[int]:
-    """CH-side live post IDs (deleted_at IS NULL)."""
     from database import async_session_maker
     from models.wordpress_projection import WordPressPost
     from sqlalchemy import select
@@ -269,7 +226,6 @@ async def _emit_synthetic_post_delete(
     secret: str,
     post_id: int,
 ) -> str:
-    """Fire a signed `deleted` webhook at our own ingress for one phantom post."""
     payload = {
         "event": "deleted",
         "post_id": post_id,
@@ -293,7 +249,7 @@ async def _emit_synthetic_post_delete(
                 "Content-Type": "application/json",
                 "X-CHT-Signature": _sign(body, secret),
                 "X-CHT-Event": "deleted",
-                "User-Agent": "wordpress_reconcile/1.0",
+                "User-Agent": "wordpress_projection_ops.reconcile/1.0",
             },
         )
         if resp.status_code >= 400:
@@ -310,11 +266,10 @@ async def _emit_synthetic_term_delete(
     taxonomy: str,
     slug: str,
 ) -> str:
-    """Fire a signed `term_deleted` webhook for one phantom term."""
     payload = {
         "event": "term_deleted",
         "taxonomy": taxonomy,
-        "term_id": 0,  # unknown at reconcile time; router accepts int
+        "term_id": 0,
         "slug": slug,
         "site_url": os.environ.get("WP_BASE_URL", _DEFAULT_WP_BASE_URL),
     }
@@ -327,7 +282,7 @@ async def _emit_synthetic_term_delete(
                 "Content-Type": "application/json",
                 "X-CHT-Signature": _sign(body, secret),
                 "X-CHT-Event": "term_deleted",
-                "User-Agent": "wordpress_reconcile/1.0",
+                "User-Agent": "wordpress_projection_ops.reconcile/1.0",
             },
         )
         if resp.status_code >= 400:
@@ -338,7 +293,6 @@ async def _emit_synthetic_term_delete(
 
 
 def _emit_drift_metric(namespace: str, value: int) -> None:
-    """Send a CloudWatch metric so ops sees drift-before-reconcile."""
     try:
         cw = boto3.client(
             "cloudwatch",
@@ -359,7 +313,7 @@ def _emit_drift_metric(namespace: str, value: int) -> None:
         log.warning("cloudwatch metric emit failed", extra={"error": str(exc)})
 
 
-async def _run(event: dict[str, Any]) -> dict[str, Any]:
+async def run(event: dict[str, Any]) -> dict[str, Any]:
     wp_base_url = event.get("wp_base_url") or os.environ.get(
         "WP_BASE_URL", _DEFAULT_WP_BASE_URL
     )
@@ -371,9 +325,6 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
 
     webhook_url = os.environ.get("SELF_WEBHOOK_URL")
     if not webhook_url:
-        # Default: hit the same ingress the mu-plugin does. In prod this
-        # resolves to contenthub.communityhealth.media; on dev, devhub.
-        # Configured via TF env var on the Lambda.
         log.warning(
             "SELF_WEBHOOK_URL not configured — reconcile can detect drift "
             "but cannot emit synthetics",
@@ -384,7 +335,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     webhook_secret = _load_webhook_secret() if webhook_url else None
 
     log.info(
-        "wordpress_reconcile start",
+        "reconcile_drift start",
         extra={
             "wp_base_url": wp_base_url,
             "max_pages": max_pages,
@@ -400,7 +351,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         follow_redirects=True,
         auth=auth,
     ) as client:
-        # ── Post reconcile ───────────────────────────────────────────
+        # Post reconcile.
         wp_ids = await _fetch_wp_post_ids(client, wp_base_url, max_pages)
         ch_ids = await _fetch_ch_live_post_ids()
         phantom_ids = ch_ids - wp_ids
@@ -432,9 +383,9 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
                         "synthetic post delete failed",
                         extra={"post_id": pid, "result": result},
                     )
-                await asyncio.sleep(0.2)  # gentle self-throttle
+                await asyncio.sleep(0.2)
 
-        # ── Term reconcile ───────────────────────────────────────────
+        # Term reconcile.
         term_summary: dict[str, dict[str, Any]] = {}
         for taxonomy, rest_path in _TAXONOMY_REST_PATH.items():
             wp_slugs = await _fetch_wp_term_slugs(client, wp_base_url, rest_path)
@@ -491,7 +442,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(_REQUEST_DELAY_S)
 
     log.info(
-        "wordpress_reconcile done",
+        "reconcile_drift done",
         extra={
             "dry_run": dry_run,
             "post_phantoms": len(phantom_ids),
@@ -502,15 +453,9 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "status": "ok",
-        "job": "wordpress_reconcile",
+        "op": "reconcile_drift",
         "dry_run": dry_run,
         "post_phantoms": len(phantom_ids),
         "post_deletes": post_deletes,
         "term_summary": term_summary,
     }
-
-
-def handler(event: dict, context) -> dict:
-    install_paths()
-    configure_logging()
-    return run_async(_run(event or {}))

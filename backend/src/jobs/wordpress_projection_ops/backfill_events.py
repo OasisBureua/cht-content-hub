@@ -1,29 +1,24 @@
-"""wordpress_backfill — one-shot Lambda that populates youtube_video_id +
-featured_media_url on existing wordpress_events rows.
+"""backfill_events — one of the ops under wordpress_projection_ops.
 
-Runs against a WordPress site that ingested events BEFORE the mu-plugin v0.2
-(which extracts these fields on the WP side). Fetches each unique post_id
-via the WordPress REST API and updates the row.
+Populates youtube_video_id + featured_media_url on existing wordpress_events
+rows that predate mu-plugin v0.2 (which extracts those fields on the WP
+side at ingest time).
+
+Runs the same code path the old standalone `wordpress_backfill` Lambda
+did — moved here as part of the consolidation into one wordpress-domain
+Lambda.
 
 Design:
-- **Idempotent**: only UPDATEs rows where `youtube_video_id IS NULL AND event != 'deleted'`.
-  Re-invocations after a full run are no-ops.
-- **Rate limited**: sleeps 250ms between REST hits to avoid tripping WAF.
-- **Fault tolerant**: individual post fetch failures are logged and skipped;
-  the run continues. Returns per-row status.
-- **No new secrets**: WP REST is publicly readable for published posts.
+- Idempotent: only UPDATEs rows where youtube_video_id IS NULL AND event != 'deleted'.
+- Rate limited (1 req/sec + 30s back-off on 429).
+- Fault tolerant: individual post fetch failures skip the row and continue.
 
-Invocation:
-    aws lambda invoke \\
-      --function-name contenthub-dev-sync-wordpress-backfill \\
-      --payload '{}' \\
-      /tmp/resp.json && cat /tmp/resp.json
-
-Payload (all optional):
+Payload:
     {
-      "wp_base_url": "https://communityhealth.media",  # defaults to WP_BASE_URL env
-      "batch_size": 500,                                # cap rows processed this invoke
-      "dry_run": false                                  # if true, no UPDATE, just report
+      "op": "backfill_events",
+      "wp_base_url": "https://communityhealth.media",
+      "batch_size": 500,
+      "dry_run": false
     }
 """
 
@@ -38,8 +33,6 @@ from typing import Any
 
 import boto3
 import httpx
-
-from shared.runtime import configure_logging, install_paths, run_async
 
 log = logging.getLogger(__name__)
 
@@ -58,13 +51,6 @@ _RATE_LIMIT_BACKOFF_S = 30.0
 
 
 def _load_wp_credentials() -> tuple[str | None, str | None]:
-    """Read WordPress app-password credentials from Secrets Manager.
-
-    Returns (user, app_password) or (None, None) if not configured.
-    WordPress REST WAF rejects unauthenticated requests to
-    /wp-json/wp/v2/posts/*; an application password bypasses that
-    while being revokable independently from a login password.
-    """
     arn = os.environ.get("APP_SECRETS_ARN", "")
     if not arn:
         return None, None
@@ -91,14 +77,7 @@ def _extract_youtube_id(content: str | None) -> str | None:
 async def _fetch_wp_post(
     client: httpx.AsyncClient, base_url: str, post_id: int
 ) -> tuple[dict[str, Any] | None, str]:
-    """Fetch one WordPress post via REST.
-
-    Returns (data, status) where status is one of:
-      - 'ok': valid post payload in data
-      - 'not_found': WP returned 404 (post deleted or fake/seed ID)
-      - 'rate_limited': WP returned 429 (caller should back off)
-      - 'error': other HTTP or network error
-    """
+    """Fetch one WordPress post via REST. Returns (data, status)."""
     url = f"{base_url.rstrip('/')}/wp-json/wp/v2/posts/{post_id}"
     params = {"_fields": "id,content,featured_media_url,jetpack_featured_media_url"}
     try:
@@ -125,36 +104,11 @@ async def _fetch_wp_post(
         return None, "error"
 
 
-async def _fetch_featured_media_url(
-    client: httpx.AsyncClient, base_url: str, post_id: int
-) -> str | None:
-    """Some WP configs don't expose featured_media_url on the post object.
-    Fall back to /media/<id> when featured_media (an ID) is populated."""
-    url = f"{base_url.rstrip('/')}/wp-json/wp/v2/media/{post_id}"
-    params = {"_fields": "source_url"}
-    try:
-        resp = await client.get(url, params=params)
-        if resp.status_code != 200:
-            return None
-        return resp.json().get("source_url")
-    except httpx.HTTPError:
-        return None
-
-
 async def _process_post(
     client: httpx.AsyncClient,
     base_url: str,
     post_id: int,
 ) -> dict[str, Any]:
-    """Fetch WP data + return status + extracted fields.
-
-    Statuses:
-      - 'ok': fetched successfully; youtube_video_id may still be None if the
-        post has no YouTube embed
-      - 'not_found': WP returned 404 (seed IDs, deleted posts)
-      - 'rate_limited': WP returned 429; caller must back off
-      - 'error': other HTTP/network failure
-    """
     data, status = await _fetch_wp_post(client, base_url, post_id)
     if status != "ok" or data is None:
         return {
@@ -178,7 +132,7 @@ async def _process_post(
     }
 
 
-async def _run(event: dict[str, Any]) -> dict[str, Any]:
+async def run(event: dict[str, Any]) -> dict[str, Any]:
     from database import async_session_maker
     from sqlalchemy import text as sql_text
 
@@ -209,7 +163,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         post_ids = [int(r["post_id"]) for r in rows]
 
     log.info(
-        "wordpress_backfill start",
+        "backfill_events start",
         extra={
             "post_count": len(post_ids),
             "wp_base_url": wp_base_url,
@@ -220,7 +174,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     if not post_ids:
         return {
             "status": "ok",
-            "job": "wordpress_backfill",
+            "op": "backfill_events",
             "dry_run": dry_run,
             "post_ids_queued": 0,
             "processed": 0,
@@ -233,7 +187,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         }
 
     updated = 0
-    would_update = 0  # dry-run only; how many rows would have been written
+    would_update = 0
     skipped_not_found = 0
     skipped_no_data = 0
     rate_limited = 0
@@ -244,7 +198,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     wp_user, wp_app_pw = _load_wp_credentials()
     auth = (wp_user, wp_app_pw) if wp_user and wp_app_pw else None
     log.info(
-        "wordpress_backfill auth",
+        "backfill_events auth",
         extra={"authenticated": auth is not None, "wp_user": wp_user or "none"},
     )
     async with httpx.AsyncClient(
@@ -254,9 +208,6 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
             info = await _process_post(client, wp_base_url, post_id)
 
             if info["status"] == "rate_limited":
-                # Row stays eligible for future runs. Back off and STOP the
-                # batch — hitting 429s means we're too fast; better to end
-                # early and let another invocation resume than keep firing.
                 rate_limited += 1
                 results_summary.append(info)
                 log.warning(
@@ -297,7 +248,6 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             async with async_session_maker() as db:
-                # Update all rows for this post_id (there may be publish + updates)
                 await db.execute(
                     sql_text(
                         """
@@ -320,9 +270,9 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
             results_summary.append(info)
             await asyncio.sleep(_REQUEST_DELAY_S)
 
-    processed = len(results_summary)  # actual attempts, may be < len(post_ids) if halted
+    processed = len(results_summary)
     log.info(
-        "wordpress_backfill done",
+        "backfill_events done",
         extra={
             "post_ids_queued": len(post_ids),
             "processed": processed,
@@ -336,15 +286,14 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
-    # Clear CHT cache only when real writes happened
     if updated > 0 and not dry_run:
         from shared.cht_cache import clear_cht_catalog_cache
 
-        clear_cht_catalog_cache(job="wordpress_backfill")
+        clear_cht_catalog_cache(job="wordpress_projection_ops.backfill_events")
 
     return {
         "status": "ok",
-        "job": "wordpress_backfill",
+        "op": "backfill_events",
         "dry_run": dry_run,
         "post_ids_queued": len(post_ids),
         "processed": processed,
@@ -354,12 +303,5 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         "skipped_no_data": skipped_no_data,
         "rate_limited": rate_limited,
         "failures": failures,
-        # Sample of first 10 results for CloudWatch visibility
         "sample": results_summary[:10],
     }
-
-
-def handler(event: dict, context) -> dict:
-    install_paths()
-    configure_logging()
-    return run_async(_run(event or {}))

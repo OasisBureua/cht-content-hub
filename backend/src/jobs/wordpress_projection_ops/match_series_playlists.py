@@ -1,37 +1,24 @@
-"""wordpress_series_playlist_match — WPR-6 fuzzy-match Lambda.
+"""match_series_playlists — one of the ops under wordpress_projection_ops.
 
-One-shot Lambda (also safe to schedule) that proposes candidate
-`YouTube playlist ↔ WordPress series` links for curator review.
+Scores every (YT playlist, WP series) pair for the fuzzy-match review
+queue. Inserts pending review rows for candidates at/above threshold.
 
-Flow:
-  1. Read every YT playlist known to ContentHub via `playlist_tags`.
-     Skip any that already carry an approved link (`wp_series_slug IS NOT NULL`).
-  2. Fetch the current YT title for each (reusing `fetch_playlist_title`
-     from the doctor-tagger's core module).
-  3. Parse doctor surnames from each title.
-  4. Read every non-tombstoned `wordpress_series` row from Layer 2.
-     Parse doctor surnames from each series slug.
-  5. Score every (playlist, series) pair with `playlist_series_matcher_core`.
-     Skip pairs where the reviewer has already decided (rejected/approved).
-  6. Insert pending `playlist_series_match_review` rows for candidates
-     at/above the match threshold.
-
-Idempotent: re-invoking produces zero net writes if state hasn't changed,
-because the DB's composite unique constraint (youtube_playlist_id,
-wp_series_slug, status) blocks duplicate pending rows, and previously
-rejected/approved pairs are excluded before scoring.
+Idempotent: previously-decided pairs (approved/rejected) are excluded
+before scoring; already-pending pairs are excluded before insert.
 
 Config:
     - YOUTUBE_API_KEY (env) — required for playlist-title fetches
-    - MATCH_THRESHOLD_OVERRIDE (event) — override the default 0.5
-    - MAX_PLAYLISTS (event) — cap per-invocation cost, default 500
-    - DRY_RUN (event) — score + report but do not insert
+    - match_threshold_override (event) — override the default 0.5
+    - max_playlists (event) — cap per-invocation cost, default 500
+    - dry_run (event) — score + report but do not insert
 
-Invocation:
-    aws lambda invoke \\
-      --function-name contenthub-dev-sync-wordpress-series-playlist-match \\
-      --payload '{}' \\
-      /tmp/resp.json && cat /tmp/resp.json
+Payload:
+    {
+      "op": "match_series_playlists",
+      "match_threshold_override": 0.5,
+      "max_playlists": 500,
+      "dry_run": false
+    }
 """
 
 from __future__ import annotations
@@ -41,8 +28,6 @@ import os
 from typing import Any
 
 import httpx
-
-from shared.runtime import configure_logging, install_paths, run_async
 
 log = logging.getLogger(__name__)
 
@@ -97,12 +82,7 @@ async def _fetch_ch_series() -> list[dict[str, Any]]:
 
 
 async def _fetch_already_decided_pairs() -> set[tuple[str, str]]:
-    """Return {(playlist_id, series_slug)} for pairs already approved/rejected.
-
-    We don't want the matcher to keep re-proposing pairs the curator has
-    already ruled on — even if new pending rows would be blocked by the
-    unique index, generating candidate rows to insert wastes work.
-    """
+    """Return {(playlist_id, series_slug)} for approved/rejected pairs."""
     from database import async_session_maker
     from models.playlist_series_match_review import PlaylistSeriesMatchReview
     from sqlalchemy import select
@@ -122,11 +102,7 @@ async def _fetch_already_decided_pairs() -> set[tuple[str, str]]:
 
 
 async def _fetch_pending_pairs() -> set[tuple[str, str]]:
-    """Return {(playlist_id, series_slug)} for pairs already in pending review.
-
-    Skip these when inserting — the unique constraint would block them, and
-    we avoid the wasted round-trip.
-    """
+    """Return {(playlist_id, series_slug)} for pairs already pending review."""
     from database import async_session_maker
     from models.playlist_series_match_review import PlaylistSeriesMatchReview
     from sqlalchemy import select
@@ -212,13 +188,14 @@ async def _insert_pending_candidates(
     return inserted, skipped
 
 
-async def _run(event: dict[str, Any]) -> dict[str, Any]:
+async def run(event: dict[str, Any]) -> dict[str, Any]:
     from jobs.playlist_series_matcher_core import MATCH_THRESHOLD, score_all_pairs
 
     api_key = os.environ.get("YOUTUBE_API_KEY", "")
     if not api_key:
         return {
             "status": "error",
+            "op": "match_series_playlists",
             "reason": "YOUTUBE_API_KEY not configured",
         }
 
@@ -227,7 +204,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     dry_run = bool(event.get("dry_run", False))
 
     log.info(
-        "wordpress_series_playlist_match start",
+        "match_series_playlists start",
         extra={
             "threshold": threshold,
             "max_playlists": max_playlists,
@@ -244,23 +221,19 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     if not playlists or not series:
         return {
             "status": "ok",
-            "job": "wordpress_series_playlist_match",
+            "op": "match_series_playlists",
             "reason": "empty inputs",
             "playlists": len(playlists),
             "series": len(series),
         }
 
     playlists = await _hydrate_playlist_titles(playlists, api_key)
-    log.info(
-        "hydrated playlist titles",
-        extra={"count": len(playlists)},
-    )
+    log.info("hydrated playlist titles", extra={"count": len(playlists)})
 
     already_decided = await _fetch_already_decided_pairs()
     already_pending = await _fetch_pending_pairs()
 
     all_candidates = score_all_pairs(playlists, series, threshold=threshold)
-    # Filter out pairs the curator already decided on.
     fresh = [
         c
         for c in all_candidates
@@ -280,7 +253,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     if dry_run:
         return {
             "status": "ok",
-            "job": "wordpress_series_playlist_match",
+            "op": "match_series_playlists",
             "dry_run": True,
             "playlists_evaluated": len(playlists),
             "series_evaluated": len(series),
@@ -301,7 +274,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     inserted, skipped = await _insert_pending_candidates(fresh, already_pending)
 
     log.info(
-        "wordpress_series_playlist_match done",
+        "match_series_playlists done",
         extra={
             "candidates_inserted": inserted,
             "candidates_skipped_pending": skipped,
@@ -310,16 +283,10 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "status": "ok",
-        "job": "wordpress_series_playlist_match",
+        "op": "match_series_playlists",
         "playlists_evaluated": len(playlists),
         "series_evaluated": len(series),
         "candidates_above_threshold": len(all_candidates),
         "candidates_inserted": inserted,
         "candidates_skipped_pending": skipped,
     }
-
-
-def handler(event: dict, context) -> dict:
-    install_paths()
-    configure_logging()
-    return run_async(_run(event or {}))

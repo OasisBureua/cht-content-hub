@@ -1,35 +1,25 @@
-"""wordpress_seed — one-shot Lambda that ingests ALL published WordPress
-posts from communityhealth.media into wordpress_events.
+"""seed_events — one of the ops under wordpress_projection_ops.
 
-Different from wordpress_backfill (which only updates youtube_video_id
-on rows that already exist): this seeds the whole editorial catalog
-into the table so /clips filters reflect the true WordPress state.
+One-shot: pages through /wp-json/wp/v2/posts and INSERTs into
+wordpress_events for the entire editorial catalog. Idempotent via
+UNIQUE (post_id, modified_gmt) — re-runs are no-ops for rows that exist.
 
-Design:
-- Pages through /wp-json/wp/v2/posts?per_page=100&page=N (WP REST max)
-- Resolves category + tag numeric IDs → slugs (fetches vocab once at start)
-- Extracts youtube_video_id from post content HTML (same regex as mu-plugin)
-- INSERT ... ON CONFLICT DO NOTHING on UNIQUE (post_id, modified_gmt)
-- Fully idempotent — re-invocations skip rows that already match
+Runs the same code path the old standalone `wordpress_seed` Lambda did
+— moved here as part of the consolidation into one wordpress-domain
+Lambda.
 
-Auth: WordPress Application Password from Secrets Manager
-      (wordpress_admin_user + wordpress_admin_app_password keys on
-      contenthub-dev-app-secrets).
+Auth: WordPress Application Password from Secrets Manager (same
+wordpress_admin_user + wordpress_admin_app_password keys used by
+backfill_events).
 
-Rate limited: 1 req/sec cadence (same as wordpress_backfill). WP's WAF
-throttles above ~4 req/sec.
-
-Invocation:
-    aws lambda invoke \\
-      --function-name contenthub-dev-sync-wordpress-seed \\
-      --payload '{}' \\
-      /tmp/resp.json && cat /tmp/resp.json
+Rate limited: 1 req/sec cadence. WP's WAF throttles above ~4 req/sec.
 
 Payload (all optional):
     {
-      "wp_base_url": "https://communityhealth.media",  # defaults
-      "max_pages": 10,   # cap pages to fetch this invoke
-      "dry_run": false   # if true, no INSERT, just report
+      "op": "seed_events",
+      "wp_base_url": "https://communityhealth.media",
+      "max_pages": 20,
+      "dry_run": false
     }
 """
 
@@ -46,8 +36,6 @@ from typing import Any
 import boto3
 import httpx
 
-from shared.runtime import configure_logging, install_paths, run_async
-
 log = logging.getLogger(__name__)
 
 _YOUTUBE_ID_PATTERN = re.compile(
@@ -59,7 +47,7 @@ _UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
-_PER_PAGE = 100  # WP REST maximum
+_PER_PAGE = 100
 _REQUEST_DELAY_S = 1.0
 _HTTP_TIMEOUT_S = 20.0
 _RATE_LIMIT_BACKOFF_S = 30.0
@@ -102,7 +90,7 @@ async def _fetch_vocab(
             url, params={"per_page": _PER_PAGE, "page": page, "_fields": "id,slug"}
         )
         if resp.status_code == 400 and page > 1:
-            break  # ran off end
+            break
         resp.raise_for_status()
         items = resp.json()
         if not items:
@@ -117,12 +105,8 @@ async def _fetch_vocab(
 
 
 def _parse_modified_gmt(value: str | None) -> datetime | None:
-    """WP returns ISO-8601 without timezone (e.g. '2026-07-10T13:10:46').
-    Parse into a tz-aware datetime (UTC) for asyncpg TIMESTAMPTZ binding.
-    """
     if not value:
         return None
-    # Strip trailing Z if present so fromisoformat works
     cleaned = value[:-1] if value.endswith("Z") else value
     try:
         dt = datetime.fromisoformat(cleaned)
@@ -136,10 +120,6 @@ def _parse_modified_gmt(value: str | None) -> datetime | None:
 async def _fetch_posts_page(
     client: httpx.AsyncClient, base_url: str, page: int
 ) -> tuple[list[dict[str, Any]], str]:
-    """Fetch one page of posts. Returns (posts, status).
-
-    Statuses: 'ok', 'empty' (no more pages), 'rate_limited', 'error'.
-    """
     url = f"{base_url.rstrip('/')}/wp-json/wp/v2/posts"
     params = {
         "per_page": _PER_PAGE,
@@ -154,7 +134,6 @@ async def _fetch_posts_page(
     try:
         resp = await client.get(url, params=params)
         if resp.status_code == 400:
-            # Past the last page
             return [], "empty"
         if resp.status_code == 429:
             log.warning(
@@ -209,12 +188,9 @@ async def _insert_post(
         "site_url": "https://communityhealth.media",
         "youtube_video_id": yt_id,
         "featured_media_url": fm_url,
-        "source": "wordpress_seed",
+        "source": "wordpress_projection_ops.seed_events",
     }
 
-    # INSERT ... ON CONFLICT DO NOTHING (Postgres). Unique constraint on
-    # (post_id, modified_gmt) ensures idempotency: re-runs are no-ops for
-    # rows that already exist.
     result = await db.execute(
         sql_text(
             """
@@ -252,12 +228,11 @@ async def _insert_post(
             "featured_media_url": fm_url,
         },
     )
-    # rowcount == 1 on insert, 0 on conflict
     inserted = getattr(result, "rowcount", 0) == 1
     return "inserted" if inserted else "skipped"
 
 
-async def _run(event: dict[str, Any]) -> dict[str, Any]:
+async def run(event: dict[str, Any]) -> dict[str, Any]:
     from database import async_session_maker
     from sqlalchemy import text as sql_text
 
@@ -271,7 +246,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     auth = (wp_user, wp_app_pw) if wp_user and wp_app_pw else None
 
     log.info(
-        "wordpress_seed start",
+        "seed_events start",
         extra={
             "wp_base_url": wp_base_url,
             "max_pages": max_pages,
@@ -344,7 +319,7 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(_REQUEST_DELAY_S)
 
     log.info(
-        "wordpress_seed done",
+        "seed_events done",
         extra={
             "total_seen": total_seen,
             "inserted": inserted,
@@ -358,11 +333,11 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
     if inserted > 0 and not dry_run:
         from shared.cht_cache import clear_cht_catalog_cache
 
-        clear_cht_catalog_cache(job="wordpress_seed")
+        clear_cht_catalog_cache(job="wordpress_projection_ops.seed_events")
 
     return {
         "status": "ok",
-        "job": "wordpress_seed",
+        "op": "seed_events",
         "dry_run": dry_run,
         "total_seen": total_seen,
         "inserted": inserted,
@@ -370,9 +345,3 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         "errors": errors,
         "rate_limited": rate_limited,
     }
-
-
-def handler(event: dict, context) -> dict:
-    install_paths()
-    configure_logging()
-    return run_async(_run(event or {}))
