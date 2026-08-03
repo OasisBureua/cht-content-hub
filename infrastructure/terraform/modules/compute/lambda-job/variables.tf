@@ -79,6 +79,12 @@ variable "log_retention_days" {
   default = 7
 }
 
+variable "extra_env" {
+  type        = map(string)
+  default     = {}
+  description = "Additional environment variables merged into the Lambda's env. Job-specific; module-level defaults still win on key collision."
+}
+
 variable "enabled" {
   type    = bool
   default = true

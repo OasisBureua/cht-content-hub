@@ -473,3 +473,15 @@ variable "dr_api_image" {
   type    = string
   default = ""
 }
+
+variable "wordpress_base_url" {
+  type        = string
+  default     = "https://communityhealth.media"
+  description = "Base URL for the WordPress site the reconcile / backfill / seed Lambdas query via WP REST."
+}
+
+variable "wordpress_webhook_self_url" {
+  type        = string
+  default     = ""
+  description = "Full URL of ContentHub's own /api/wordpress/webhook endpoint, used by wordpress_reconcile to emit signed synthetic delete webhooks. Empty string disables synthetic emission — reconcile still runs in drift-detection-only mode."
+}

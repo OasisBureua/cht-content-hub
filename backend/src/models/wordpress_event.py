@@ -74,6 +74,15 @@ class WordPressEvent(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
 
+    # WP `series` taxonomy — Andrew's custom taxonomy grouping doctor-pair
+    # episodes into playlists. Added by mu-plugin v0.5 (WPR-3 / SCRUM-154).
+    # Pre-v0.5 events default to [] via server_default; the ingest Lambda
+    # uses .get("series", []) so it stays backwards-tolerant even if the
+    # mu-plugin regresses to v0.3/v0.4.
+    series: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+
     site_url: Mapped[str] = mapped_column(String(500), nullable=False)
 
     # ACF (Advanced Custom Fields) block. `null` on Andrew's current site

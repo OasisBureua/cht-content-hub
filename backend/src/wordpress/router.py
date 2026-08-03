@@ -44,8 +44,8 @@ logger = logging.getLogger("contenthub.wordpress")
 router = APIRouter(prefix="/api/wordpress", tags=["wordpress-ingest"])
 
 
-# Payload fields the mu-plugin always sends (see cht-webhook.php).
-_REQUIRED_FIELDS = frozenset(
+# Payload fields the mu-plugin always sends for POST events (see cht-webhook.php).
+_REQUIRED_POST_FIELDS = frozenset(
     {
         "event",
         "post_id",
@@ -61,7 +61,21 @@ _REQUIRED_FIELDS = frozenset(
     }
 )
 
-_VALID_EVENTS = frozenset({"published", "updated", "deleted"})
+# Payload fields the mu-plugin v0.6 sends for TERM events.
+_REQUIRED_TERM_FIELDS = frozenset(
+    {
+        "event",
+        "taxonomy",
+        "term_id",
+        "slug",
+    }
+)
+
+_POST_EVENTS = frozenset({"published", "updated", "deleted"})
+_TERM_EVENTS = frozenset({"term_updated", "term_deleted"})
+_VALID_EVENTS = _POST_EVENTS | _TERM_EVENTS
+
+_VALID_TAXONOMIES = frozenset({"series", "category", "post_tag"})
 
 
 def _valid_signature(
@@ -83,18 +97,66 @@ def _valid_signature(
 
 
 def _shape_check(payload: dict[str, Any]) -> str | None:
-    """Return None if payload has required fields with plausible types, else an error string."""
-    missing = _REQUIRED_FIELDS - payload.keys()
+    """Return None if payload passes shape checks, else an error string.
+
+    Handles two event families:
+      - POST events (published / updated / deleted) — mu-plugin v0.3+
+      - TERM events (term_updated / term_deleted) — mu-plugin v0.6+
+
+    Reject early on `event` field so downstream can trust it.
+    """
+    if "event" not in payload:
+        return "missing required fields: ['event']"
+    event = payload["event"]
+    if event not in _VALID_EVENTS:
+        return f"invalid event: {event!r}"
+
+    if event in _TERM_EVENTS:
+        return _term_shape_check(payload)
+    return _post_shape_check(payload)
+
+
+def _post_shape_check(payload: dict[str, Any]) -> str | None:
+    """Shape checks for published / updated / deleted events."""
+    missing = _REQUIRED_POST_FIELDS - payload.keys()
     if missing:
         return f"missing required fields: {sorted(missing)}"
-    if payload["event"] not in _VALID_EVENTS:
-        return f"invalid event: {payload['event']!r}"
     if not isinstance(payload["post_id"], int):
         return "post_id must be an integer"
     if not isinstance(payload["categories"], list):
         return "categories must be an array"
     if not isinstance(payload["tags"], list):
         return "tags must be an array"
+    # `series` is optional (only present on mu-plugin v0.5+). If present,
+    # must be an array of strings — same shape contract as categories/tags.
+    if "series" in payload:
+        if not isinstance(payload["series"], list):
+            return "series must be an array"
+        if not all(isinstance(s, str) for s in payload["series"]):
+            return "series entries must be strings"
+    return None
+
+
+def _term_shape_check(payload: dict[str, Any]) -> str | None:
+    """Shape checks for term_updated / term_deleted events (mu-plugin v0.6)."""
+    missing = _REQUIRED_TERM_FIELDS - payload.keys()
+    if missing:
+        return f"missing required fields: {sorted(missing)}"
+    if payload["taxonomy"] not in _VALID_TAXONOMIES:
+        return f"invalid taxonomy: {payload['taxonomy']!r}"
+    if not isinstance(payload["term_id"], int):
+        return "term_id must be an integer"
+    if not isinstance(payload["slug"], str) or not payload["slug"]:
+        return "slug must be a non-empty string"
+    # name/description/parent_slug are all optional — even name can be absent
+    # on term_deleted events (we only need slug + taxonomy + term_id to
+    # identify the term).
+    if "name" in payload and payload["name"] is not None:
+        if not isinstance(payload["name"], str):
+            return "name must be a string when present"
+    if "parent_slug" in payload and payload["parent_slug"] is not None:
+        if not isinstance(payload["parent_slug"], str):
+            return "parent_slug must be a string when present"
     return None
 
 
@@ -147,15 +209,15 @@ async def wordpress_webhook(
 
     # 4. Enqueue to SQS. Skip in local dev when queue URL is unset — the
     #    signature has been verified, that's the interesting part for tests.
+    # Log extras vary by event family — post events carry post_id +
+    # modified_gmt, term events carry taxonomy + slug + term_id.
+    log_extras = _log_extras_for(payload)
+
     queue_url = settings.wordpress_events_queue_url
     if not queue_url:
         logger.info(
             "wordpress webhook accepted (dev mode — no queue configured)",
-            extra={
-                "post_id": payload["post_id"],
-                "event": payload["event"],
-                "modified_gmt": payload["modified_gmt"],
-            },
+            extra=log_extras,
         )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -171,26 +233,32 @@ async def wordpress_webhook(
     except (BotoCoreError, ClientError) as exc:
         logger.error(
             "wordpress webhook SQS enqueue failed",
-            extra={
-                "post_id": payload["post_id"],
-                "event": payload["event"],
-                "error": str(exc),
-            },
+            extra={**log_extras, "error": str(exc)},
         )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"accepted": False, "reason": "queue unavailable"},
         )
 
-    logger.info(
-        "wordpress webhook enqueued",
-        extra={
-            "post_id": payload["post_id"],
-            "event": payload["event"],
-            "modified_gmt": payload["modified_gmt"],
-        },
-    )
+    logger.info("wordpress webhook enqueued", extra=log_extras)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={"accepted": True, "enqueued": True},
     )
+
+
+def _log_extras_for(payload: dict[str, Any]) -> dict[str, Any]:
+    """Structured-log fields for the accepted payload, event-family aware."""
+    event = payload.get("event")
+    if event in _TERM_EVENTS:
+        return {
+            "event": event,
+            "taxonomy": payload.get("taxonomy"),
+            "slug": payload.get("slug"),
+            "term_id": payload.get("term_id"),
+        }
+    return {
+        "event": event,
+        "post_id": payload.get("post_id"),
+        "modified_gmt": payload.get("modified_gmt"),
+    }

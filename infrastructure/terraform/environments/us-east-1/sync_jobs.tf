@@ -79,34 +79,63 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
-    # One-shot: for wordpress_events rows ingested before mu-plugin v0.2 (which
-    # extracts youtube_video_id + featured_media_url server-side), fetch each
-    # post via WP REST and UPDATE the row. Idempotent — WHERE youtube_video_id
-    # IS NULL. Rate-limited 4 req/sec (250ms sleep) to be polite with WP + WAF.
-    # 900s timeout supports ~3.5k posts per invocation; batch_size caps per-run.
-    wordpress_backfill = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_backfill", false)
-      handler                        = "jobs.wordpress_backfill.handler.handler"
+    # WordPress mirror ops — SINGLE Lambda dispatching to 6 modes via
+    # event["op"]. Consolidated from what would otherwise be six separate
+    # Lambdas (per review guidance on Lambda sprawl), all sharing the
+    # WordPress domain + same trigger profile + same memory footprint +
+    # same auth path.
+    #
+    #   Layer 1 (event log) ops:
+    #     - seed_events         (manual): one-shot ingest all published
+    #       WP posts into wordpress_events. Idempotent via UNIQUE constraint.
+    #     - backfill_events     (manual): fill youtube_video_id +
+    #       featured_media_url on pre-v0.2 rows.
+    #
+    #   Layer 2 (projected state) ops:
+    #     - backfill_projection (manual): hydrate Layer 2 tables from WP REST.
+    #     - match_series_playlists (manual): WPR-6 fuzzy-match, insert
+    #       pending review rows. Curator approves/rejects via admin endpoint.
+    #     - seed_tag_namespace  (manual): WPR-11, run rulebook against
+    #       wordpress_tags, UPSERT wp_tag_namespace_map.
+    #
+    #   Standing defense:
+    #     - reconcile_drift     (DAILY CRON DEFAULT): WPR-17. Diffs WP REST
+    #       vs Layer 2, emits signed synthetic delete webhooks for phantoms.
+    #       CloudWatch drift alarm.
+    #
+    # Each op module lives at backend/src/jobs/wordpress_projection_ops/<op>.py.
+    # Dispatcher + registry at backend/src/jobs/wordpress_projection_ops/__init__.py.
+    # Lambda entry point at sync/jobs/wordpress_projection_ops/handler.py.
+    #
+    # Daily 03:00 UTC (23:00 US-East summer time — avoids peak editorial
+    # window). Cron fires with no payload → dispatcher defaults to
+    # reconcile_drift. Manual invokes pass {"op": "..."} for other modes.
+    #
+    # Not folded in here (deliberately): `wordpress_ingest` — SQS-triggered
+    # hot path for WP webhooks, different scale profile.
+    wordpress_projection_ops = {
+      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_projection_ops", false)
+      handler                        = "jobs.wordpress_projection_ops.handler.handler"
       timeout                        = 900
       memory_size                    = 512
-      schedule_expression            = null
+      schedule_expression            = "cron(0 3 * * ? *)"
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
-    # One-shot: page through WP REST /posts and INSERT into wordpress_events
-    # for the entire editorial catalog. Idempotent via UNIQUE (post_id,
-    # modified_gmt) — re-runs are no-ops for rows that exist. Runs at
-    # 1 req/sec (same cadence as backfill). 900s supports the full catalog
-    # (~500 posts / ~5 pages / ~8 min) with margin for vocab fetches.
-    wordpress_seed = {
-      enabled                        = lookup(var.sync_jobs_enabled, "wordpress_seed", false)
-      handler                        = "jobs.wordpress_seed.handler.handler"
-      timeout                        = 900
-      memory_size                    = 512
-      schedule_expression            = null
-      sqs_trigger                    = false
-      reserved_concurrent_executions = 1
-    }
+  }
+}
+
+locals {
+  # Per-job extra environment variables. `wordpress_projection_ops` needs
+  # its own ingress URL (same host the mu-plugin hits) so its reconcile_drift
+  # op can emit signed synthetic delete webhooks. Empty string on dev falls
+  # back to drift-only reporting (no synthetic emission). All ops that hit
+  # WordPress REST also need the base URL.
+  sync_job_extra_env = {
+    wordpress_projection_ops = merge(
+      var.wordpress_webhook_self_url != "" ? { SELF_WEBHOOK_URL = var.wordpress_webhook_self_url } : {},
+      { WP_BASE_URL = var.wordpress_base_url }
+    )
   }
 }
 
@@ -133,6 +162,11 @@ module "sync_lambda" {
   cht_cache_clear_url            = var.cht_cache_clear_url
   log_retention_days             = local.log_retention
   enabled                        = true
+
+  # Per-job env vars. Merged with the module's default env; module defaults
+  # win on collision. wordpress_reconcile needs its own ingress URL so it
+  # can fire synthetic HMAC-signed webhooks at the ECS route.
+  extra_env = lookup(local.sync_job_extra_env, each.key, {})
 
   depends_on = [module.app_secrets]
 }
