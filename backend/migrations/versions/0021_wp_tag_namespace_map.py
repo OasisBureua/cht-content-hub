@@ -50,7 +50,7 @@ install()
 from migrations.helpers import index_exists, table_exists  # noqa: E402
 
 revision: str = "0021_wp_tag_namespace_map"
-down_revision: Union[str, None] = "0020_playlist_series_link_and_review"
+down_revision: Union[str, None] = "0020_playlist_series_link_review"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
