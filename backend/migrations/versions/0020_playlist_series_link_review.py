@@ -26,9 +26,15 @@ Design notes:
   playlist_tags update in the same transaction. Rejected rows stay for
   audit ("we already looked at this pair, don't re-suggest").
 
-Revision ID: 0020_playlist_series_link_and_review
+Revision ID: 0020_playlist_series_link_review
 Revises: 0019_wordpress_series_slug_alias
 Create Date: 2026-07-29
+
+Note: revision ID shortened from `0020_playlist_series_link_and_review` (36
+chars) to `0020_playlist_series_link_review` (32 chars) on 2026-08-03 to fit
+alembic's default alembic_version VARCHAR(32) column. The original ID broke
+dev deployment when alembic tried to write it into version_num. All prior
+migrations (0014-0019) are <=32 chars and applied cleanly.
 """
 
 from __future__ import annotations
@@ -51,7 +57,7 @@ install()
 
 from migrations.helpers import index_exists, table_exists  # noqa: E402
 
-revision: str = "0020_playlist_series_link_and_review"
+revision: str = "0020_playlist_series_link_review"
 down_revision: Union[str, None] = "0019_wordpress_series_slug_alias"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
