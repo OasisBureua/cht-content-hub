@@ -1078,3 +1078,170 @@ async def test_tags_list_returns_term_metadata(
     assert her2["name"] == "HER2 Positive"
     assert her2["description"] == "HER2+ breast cancer"
     assert her2["post_count"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WPR-13 (SCRUM-164) — Input-robustness proving on dev
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unicode_slug_roundtrips_cleanly(db_session: AsyncSession):
+    """WPR-13: unicode slugs on post + series + tag + category ingest and query without corruption."""
+    await _insert_event(
+        db_session,
+        post_id=9101,
+        slug="célulars-y-cáncer-日本語",
+        title="Células y cáncer — 日本語 test",
+        categories=["oncología"],
+        tags=["biomarker-hé"],
+        series=["dr-müller-dr-顾"],
+    )
+    await db_session.commit()
+
+    post = (
+        await db_session.execute(
+            select(WordPressPost).where(WordPressPost.post_id == 9101)
+        )
+    ).scalar_one()
+    assert post.slug == "célulars-y-cáncer-日本語"
+    assert "日本語" in post.title
+
+    series = (
+        await db_session.execute(
+            select(WordPressSeries).where(WordPressSeries.slug == "dr-müller-dr-顾")
+        )
+    ).scalar_one()
+    assert series.slug == "dr-müller-dr-顾"
+
+
+@pytest.mark.asyncio
+async def test_high_cardinality_tags_project_all(db_session: AsyncSession):
+    """WPR-13: post with 25 tags projects all tag rows + all M:M memberships."""
+    many_tags = [f"tag-{i:02d}" for i in range(25)]
+    await _insert_event(
+        db_session,
+        post_id=9102,
+        slug="high-cardinality-post",
+        title="Post with 25 tags",
+        tags=many_tags,
+    )
+    await db_session.commit()
+
+    memberships = set(
+        (
+            await db_session.execute(
+                select(WordPressPostTag.tag_slug).where(
+                    WordPressPostTag.post_id == 9102
+                )
+            )
+        ).scalars()
+    )
+    assert memberships == set(many_tags)
+    assert len(memberships) == 25
+
+    tag_rows = (
+        await db_session.execute(
+            select(WordPressTag).where(WordPressTag.slug.in_(many_tags))
+        )
+    ).scalars().all()
+    assert len(tag_rows) == 25
+
+
+@pytest.mark.asyncio
+async def test_unknown_category_prefix_ingests_without_error(
+    db_session: AsyncSession,
+):
+    """WPR-13: unrecognized editorial prefixes (q-*, x-*) ingest cleanly and degrade to no CHT surface effect.
+
+    The projection layer stays vocabulary-agnostic — filtering by prefix is a
+    CHT-side responsibility. This test asserts the ingest never crashes on a
+    new prefix Andrew invents.
+    """
+    await _insert_event(
+        db_session,
+        post_id=9103,
+        slug="post-with-experimental-prefix",
+        title="Experimental category prefix",
+        categories=["q-experimental", "x-internal"],
+    )
+    await db_session.commit()
+
+    memberships = set(
+        (
+            await db_session.execute(
+                select(WordPressPostCategory.category_slug).where(
+                    WordPressPostCategory.post_id == 9103
+                )
+            )
+        ).scalars()
+    )
+    assert memberships == {"q-experimental", "x-internal"}
+
+
+@pytest.mark.asyncio
+async def test_duplicate_series_slug_via_publish_reuses_existing_row(
+    db_session: AsyncSession,
+):
+    """WPR-13: two posts referencing the same series slug share one wordpress_series row (no silent duplication)."""
+    await _insert_event(
+        db_session,
+        post_id=9104,
+        slug="post-a-in-series",
+        title="Post A",
+        series=["shared-series"],
+    )
+    await _insert_event(
+        db_session,
+        post_id=9105,
+        slug="post-b-in-series",
+        title="Post B",
+        series=["shared-series"],
+    )
+    await db_session.commit()
+
+    series_rows = (
+        await db_session.execute(
+            select(WordPressSeries).where(WordPressSeries.slug == "shared-series")
+        )
+    ).scalars().all()
+    assert len(series_rows) == 1
+
+    memberships = set(
+        (
+            await db_session.execute(
+                select(WordPressPostSeries.post_id).where(
+                    WordPressPostSeries.series_slug == "shared-series"
+                )
+            )
+        ).scalars()
+    )
+    assert memberships == {9104, 9105}
+
+
+@pytest.mark.asyncio
+async def test_zero_taxonomy_post_projects_cleanly(db_session: AsyncSession):
+    """WPR-13: post with no categories, no tags, no series ingests and shows up in wordpress_posts without associations."""
+    await _insert_event(
+        db_session,
+        post_id=9106,
+        slug="taxonomy-less-post",
+        title="Post with no tags/cats/series",
+    )
+    await db_session.commit()
+
+    post = (
+        await db_session.execute(
+            select(WordPressPost).where(WordPressPost.post_id == 9106)
+        )
+    ).scalar_one()
+    assert post.slug == "taxonomy-less-post"
+    assert post.deleted_at is None
+
+    for assoc_model, col in [
+        (WordPressPostCategory, WordPressPostCategory.post_id),
+        (WordPressPostTag, WordPressPostTag.post_id),
+        (WordPressPostSeries, WordPressPostSeries.post_id),
+    ]:
+        rows = (await db_session.execute(select(col).where(col == 9106))).scalars().all()
+        assert rows == [], f"{assoc_model.__name__} unexpectedly has rows for post 9106"
