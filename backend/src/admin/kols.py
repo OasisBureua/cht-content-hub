@@ -27,6 +27,7 @@ from admin.cache import notify_cht_cache_clear
 from admin.deps import verify_admin_api_key
 from config import Settings, get_settings
 from database import get_db
+from hcp_intel.kol_hcp_matcher import resolve_and_persist
 from models.kol import KOL
 from schemas.admin_kols import (
     KOLAdminListOut,
@@ -35,6 +36,7 @@ from schemas.admin_kols import (
     KOLHeadshotPresignOut,
     KOLHeadshotPresignRequest,
     KOLRefreshOut,
+    KOLRematchOut,
 )
 from services import kol_queries, kol_write
 
@@ -227,6 +229,49 @@ async def refresh_admin_kol(
     await notify_cht_cache_clear(scope="contenthub")
 
     return KOLRefreshOut(status="enqueued", slug=kol.slug, hcp_npi=kol.hcp_npi)
+
+
+# ---------------------------------------------------------------------------
+# Re-run kol_hcp_matcher for one KOL. Not wired into any job — the matcher in
+# hcp_intel/kol_hcp_matcher.py existed with no caller before this route. Only
+# runs for statuses a human hasn't already decided on (manually_locked and
+# auto_locked are left alone, same "sync respects manual lock" convention as
+# openalex_backfill.py).
+# ---------------------------------------------------------------------------
+
+_REMATCH_ELIGIBLE_STATUSES = {"unresolved", "needs_review", "no_match"}
+
+
+@router.post(
+    "/kols/{slug}/rematch-hcp",
+    response_model=KOLRematchOut,
+    responses={
+        404: {"description": "No KOL with that slug."},
+        409: {"description": "KOL's hcp_match_status is auto_locked or manually_locked — not eligible for rematch."},
+    },
+)
+async def rematch_admin_kol_hcp(
+    slug: str,
+    _key: Annotated[str, Depends(verify_admin_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> KOLRematchOut:
+    kol, _resolved = await kol_queries.get_kol_by_slug(db, slug)
+
+    if kol.hcp_match_status not in _REMATCH_ELIGIBLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"hcp_match_status is '{kol.hcp_match_status}' — not eligible for rematch.",
+        )
+
+    result = await resolve_and_persist(db, kol)
+    await db.flush()
+
+    return KOLRematchOut(
+        slug=kol.slug,
+        status=result.status,
+        confidence=result.confidence,
+        hcp_npi=result.hcp_npi,
+    )
 
 
 # ---------------------------------------------------------------------------
