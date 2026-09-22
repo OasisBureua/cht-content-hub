@@ -38,8 +38,7 @@ from schemas.campaigns import (
     TemplateListOut,
     TemplateOut,
 )
-from schemas.report_packet import ReportInputPacketOut
-from services import campaign_integrations, campaign_reports, campaigns, platform_data, report_packet
+from services import campaign_integrations, campaign_reports, campaigns, platform_data
 
 router = APIRouter(prefix="/api/admin", tags=["admin-campaigns"])
 
@@ -170,30 +169,6 @@ async def get_campaign_validation(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> DataValidationOut:
     return await campaign_reports.build_data_validation(db, campaign_id)
-
-
-@router.get(
-    "/campaigns/{campaign_id}/report-packet",
-    response_model=ReportInputPacketOut,
-)
-async def get_report_packet(
-    campaign_id: int,
-    _key: Annotated[str, Depends(verify_admin_api_key)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    window_start: date | None = Query(default=None, alias="windowStart"),
-    window_end: date | None = Query(default=None, alias="windowEnd"),
-    sources: list[str] = Query(default=[]),
-) -> ReportInputPacketOut:
-    """cht-reports' generate-time data pull. Not the CHT report/generate
-    routes below — those build Content Hub's own HubSpot-based analytics
-    report, a separate feature for a separate consumer."""
-    return await report_packet.build_report_packet(
-        db,
-        campaign_id,
-        window_start=window_start,
-        window_end=window_end,
-        sources=sources or None,
-    )
 
 
 @router.post("/campaigns/{campaign_id}/insights", response_model=InsightsOut)

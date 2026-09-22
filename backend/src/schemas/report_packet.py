@@ -1,6 +1,6 @@
 """Report-packet API schema — cht-reports' generate-time data contract.
 
-cht-reports calls GET /api/admin/campaigns/{id}/report-packet at report
+cht-reports calls GET /api/campaigns/{id}/report-packet at report
 generation time. This is a different consumer and contract than the
 campaigns.py UI schemas: cht-reports wants warehouse snapshots (rows +
 files), not a pre-computed report-ready view.

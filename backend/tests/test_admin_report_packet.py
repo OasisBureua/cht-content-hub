@@ -18,14 +18,14 @@ def admin_headers(**extra: str) -> dict[str, str]:
 
 @pytest.mark.asyncio
 async def test_report_packet_requires_api_key(http_client: AsyncClient):
-    response = await http_client.get("/api/admin/campaigns/1/report-packet")
+    response = await http_client.get("/api/campaigns/1/report-packet")
     assert response.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_report_packet_404_for_missing_campaign(client: AsyncClient):
     response = await client.get(
-        "/api/admin/campaigns/999999/report-packet",
+        "/api/campaigns/999999/report-packet",
         headers=admin_headers(),
     )
     assert response.status_code == 404
@@ -41,7 +41,7 @@ async def test_report_packet_marks_missing_sources(client: AsyncClient):
     campaign_id = create.json()["id"]
 
     response = await client.get(
-        f"/api/admin/campaigns/{campaign_id}/report-packet",
+        f"/api/campaigns/{campaign_id}/report-packet",
         headers=admin_headers(),
     )
     assert response.status_code == 200
@@ -73,7 +73,7 @@ async def test_report_packet_includes_hubspot_data(client: AsyncClient):
     )
 
     response = await client.get(
-        f"/api/admin/campaigns/{campaign_id}/report-packet",
+        f"/api/campaigns/{campaign_id}/report-packet",
         headers=admin_headers(),
     )
     body = response.json()
@@ -104,7 +104,7 @@ async def test_report_packet_includes_linked_shoot_transcript(
     await db_session.commit()
 
     response = await client.get(
-        f"/api/admin/campaigns/{campaign_id}/report-packet",
+        f"/api/campaigns/{campaign_id}/report-packet",
         headers=admin_headers(),
     )
     body = response.json()
@@ -137,7 +137,7 @@ async def test_report_packet_excludes_shoots_without_transcript(
     await db_session.commit()
 
     response = await client.get(
-        f"/api/admin/campaigns/{campaign_id}/report-packet",
+        f"/api/campaigns/{campaign_id}/report-packet",
         headers=admin_headers(),
     )
     body = response.json()
@@ -175,7 +175,7 @@ async def test_report_packet_excludes_shoots_linked_to_other_campaigns(
     await db_session.commit()
 
     response = await client.get(
-        f"/api/admin/campaigns/{campaign_a}/report-packet",
+        f"/api/campaigns/{campaign_a}/report-packet",
         headers=admin_headers(),
     )
     body = response.json()
@@ -193,7 +193,7 @@ async def test_report_packet_window_and_sources_passthrough(client: AsyncClient)
     campaign_id = create.json()["id"]
 
     response = await client.get(
-        f"/api/admin/campaigns/{campaign_id}/report-packet",
+        f"/api/campaigns/{campaign_id}/report-packet",
         headers=admin_headers(),
         params={
             "windowStart": "2026-08-01",
