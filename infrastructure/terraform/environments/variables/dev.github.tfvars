@@ -71,6 +71,8 @@ sync_jobs_enabled = {
   # + backfill_projection + match_series_playlists + seed_tag_namespace +
   # reconcile_drift). See sync_jobs.tf comment for op details.
   wordpress_projection_ops       = true
+  # CPR-13 Zoom export ingest — keep OFF until CPR-12 M2M + export API ready.
+  platform_export_ingest         = false
 }
 
 # Platform integration secrets are NOT stored here (committed file).

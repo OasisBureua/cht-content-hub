@@ -28,11 +28,34 @@ def ensure_lambda_secrets() -> None:
         log.info("Loaded DATABASE_URL from Secrets Manager")
 
     app_arn = os.environ.get("APP_SECRETS_ARN", "")
-    if app_arn and not os.environ.get("INTERNAL_CACHE_SECRET"):
+    if app_arn:
         payload = json.loads(client.get_secret_value(SecretId=app_arn)["SecretString"])
-        secret = payload.get("internal_cache_secret", "")
-        if secret:
-            os.environ["INTERNAL_CACHE_SECRET"] = secret
-            log.info("Loaded INTERNAL_CACHE_SECRET from Secrets Manager")
+        if not os.environ.get("INTERNAL_CACHE_SECRET"):
+            secret = payload.get("internal_cache_secret", "")
+            if secret:
+                os.environ["INTERNAL_CACHE_SECRET"] = secret
+                log.info("Loaded INTERNAL_CACHE_SECRET from Secrets Manager")
+
+        # CPR-13 M2M / export client settings (optional until CPR-12 is live).
+        # Prefer env already set on the Lambda; fill gaps from app-secrets JSON.
+        _export_env_from_secret = {
+            "PLATFORM_EXPORT_BASE_URL": "platform_export_base_url",
+            "PLATFORM_EXPORT_HTTP_MODE": "platform_export_http_mode",
+            "PLATFORM_EXPORT_TOKEN_URL": "platform_export_token_url",
+            "PLATFORM_EXPORT_CLIENT_ID": "platform_export_client_id",
+            "PLATFORM_EXPORT_CLIENT_SECRET": "platform_export_client_secret",
+            "PLATFORM_EXPORT_SCOPE": "platform_export_scope",
+            "PLATFORM_EXPORT_TRANSCRIPT_BUCKET": "platform_export_transcript_bucket",
+        }
+        loaded_export = False
+        for env_name, secret_key in _export_env_from_secret.items():
+            if os.environ.get(env_name):
+                continue
+            value = payload.get(secret_key, "")
+            if value:
+                os.environ[env_name] = str(value)
+                loaded_export = True
+        if loaded_export:
+            log.info("Loaded PLATFORM_EXPORT_* from Secrets Manager")
 
     _loaded = True

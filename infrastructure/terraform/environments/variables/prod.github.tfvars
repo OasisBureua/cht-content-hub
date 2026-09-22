@@ -81,6 +81,8 @@ sync_jobs_enabled = {
   # completes for WPR-2. Flip to true after atomic release so daily
   # reconcile_drift cron protects prod.
   wordpress_projection_ops = false
+  # CPR-13 Zoom export ingest — off until CPR-12 M2M + export API are live.
+  platform_export_ingest   = false
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
