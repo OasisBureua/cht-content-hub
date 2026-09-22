@@ -67,6 +67,15 @@ class KOLRefreshOut(BaseModel):
     cooldown_remaining_seconds: int | None = None
 
 
+class KOLRematchOut(BaseModel):
+    """Response for POST /api/admin/kols/{slug}/rematch-hcp."""
+
+    slug: str
+    status: str  # "auto_locked" | "needs_review" | "no_match"
+    confidence: float
+    hcp_npi: str | None = None
+
+
 class KOLHeadshotPresignRequest(BaseModel):
     """POST body for /api/admin/kols/{slug}/headshot/presign."""
 
