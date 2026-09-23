@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import API_KEY, api_headers
+from hcp_intel.models import HCP
 from models.kol import KOL
 from utils.kol_public import kol_slug
 
@@ -202,6 +203,93 @@ async def test_refresh_cooldown_applies_after_first_call(
     body = r.json()
     assert body["status"] == "cooldown"
     assert body["cooldown_remaining_seconds"] > 0
+
+
+# ---------------------------------------------------------------------------
+# POST /rematch-hcp
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rematch_hcp_resolves_unmatched_kol(
+    client: AsyncClient, db_session: AsyncSession
+):
+    hcp = HCP(
+        npi="1487856779",
+        first_name="Rena",
+        last_name="Callahan",
+        hospital_affiliations="UCLA Health",
+    )
+    kol = KOL(
+        slug=kol_slug("Dr. Rena Callahan"),
+        name="Dr. Rena Callahan",
+        institution="UCLA Health",
+        hcp_match_status="unresolved",
+    )
+    db_session.add_all([hcp, kol])
+    await db_session.flush()
+
+    r = await client.post(
+        f"/api/admin/kols/{kol.slug}/rematch-hcp", headers=api_headers()
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "auto_locked"
+    assert body["hcp_npi"] == "1487856779"
+
+    await db_session.refresh(kol)
+    assert kol.hcp_match_status == "auto_locked"
+    assert kol.hcp_npi == "1487856779"
+
+
+@pytest.mark.asyncio
+async def test_rematch_hcp_rejects_manually_locked(
+    client: AsyncClient, db_session: AsyncSession
+):
+    kol = KOL(
+        slug=kol_slug("Dr. Locked"),
+        name="Dr. Locked",
+        hcp_npi="1111111111",
+        hcp_match_status="manually_locked",
+    )
+    db_session.add(kol)
+    await db_session.flush()
+
+    r = await client.post(
+        f"/api/admin/kols/{kol.slug}/rematch-hcp", headers=api_headers()
+    )
+    assert r.status_code == 409
+
+    await db_session.refresh(kol)
+    assert kol.hcp_match_status == "manually_locked"
+    assert kol.hcp_npi == "1111111111"
+
+
+@pytest.mark.asyncio
+async def test_rematch_hcp_rejects_auto_locked(
+    client: AsyncClient, db_session: AsyncSession
+):
+    kol = KOL(
+        slug=kol_slug("Dr. AutoLocked"),
+        name="Dr. AutoLocked",
+        hcp_npi="2222222222",
+        hcp_match_status="auto_locked",
+    )
+    db_session.add(kol)
+    await db_session.flush()
+
+    r = await client.post(
+        f"/api/admin/kols/{kol.slug}/rematch-hcp", headers=api_headers()
+    )
+    assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_rematch_hcp_404_for_missing_slug(client: AsyncClient):
+    r = await client.post(
+        "/api/admin/kols/does-not-exist/rematch-hcp", headers=api_headers()
+    )
+    assert r.status_code == 404
 
 
 # ---------------------------------------------------------------------------
