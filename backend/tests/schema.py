@@ -17,11 +17,23 @@ from models.campaign import (
 from models.client import Client
 from models.clip import Clip
 from models.kol import KOL, KOLGroup, KOLGroupMember
+from models.playlist_series_match_review import PlaylistSeriesMatchReview
 from models.playlist_tag import PlaylistTag
 from models.post import Post
 from models.project import Project
 from models.shoot import Shoot
 from models.tagger_observability import TagDiffRow, TaggerRun
+from models.wordpress_projection import (
+    WordPressCategory,
+    WordPressPost,
+    WordPressPostCategory,
+    WordPressPostSeries,
+    WordPressPostTag,
+    WordPressSeries,
+    WordPressSeriesSlugAlias,
+    WordPressTag,
+)
+from models.wp_tag_namespace_map import WpTagNamespaceMap
 
 ORM_TABLES = [
     ReportTemplate.__table__,
@@ -36,11 +48,23 @@ ORM_TABLES = [
     KOLGroup.__table__,
     KOLGroupMember.__table__,
     PlaylistTag.__table__,
+    PlaylistSeriesMatchReview.__table__,
     Shoot.__table__,
     Clip.__table__,
     Post.__table__,
     TaggerRun.__table__,
     TagDiffRow.__table__,
+    # WordPress Layer 2 projected-state tables. Order matters for FK
+    # dependencies: term tables + posts before association tables.
+    WordPressSeries.__table__,
+    WordPressCategory.__table__,
+    WordPressTag.__table__,
+    WordPressPost.__table__,
+    WordPressPostSeries.__table__,
+    WordPressPostCategory.__table__,
+    WordPressPostTag.__table__,
+    WordPressSeriesSlugAlias.__table__,
+    WpTagNamespaceMap.__table__,
 ]
 
 _HCP_SIGNALS_DDL = """
@@ -125,6 +149,7 @@ CREATE TABLE IF NOT EXISTS wordpress_events (
     permalink VARCHAR(1000) NOT NULL,
     categories JSON NOT NULL DEFAULT '[]',
     tags JSON NOT NULL DEFAULT '[]',
+    series JSON NOT NULL DEFAULT '[]',
     site_url VARCHAR(500) NOT NULL,
     acf JSON,
     raw_payload JSON NOT NULL,

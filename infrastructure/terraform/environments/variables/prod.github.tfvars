@@ -70,14 +70,17 @@ sync_jobs_enabled = {
   post_tagging           = false
   playlist_doctor_tagger = false
   wordpress_ingest       = true
-  # One-shot seed/backfill jobs. Prod was seeded during 2026-07-12 release
-  # (1ffdd81 chore(prod): enable wordpress_ingest + this release). Handlers
-  # are idempotent (skip existing rows) but keeping them enabled is
-  # ambiguous about intent — flip to false post-seed. Re-enable temporarily
-  # if a one-off restore is ever needed.
-  clips_seed         = false
-  wordpress_backfill = false
-  wordpress_seed     = false
+  # clips_seed one-shot Lambda. Prod was seeded during 2026-07-12 release
+  # (1ffdd81 chore(prod): enable wordpress_ingest + this release). Handler
+  # is idempotent (skips if clips already has ≥100 rows) but flip to false
+  # post-seed to keep intent clear. Re-enable temporarily for one-off restore.
+  clips_seed              = false
+  # Consolidated WP mirror ops Lambda (6 ops dispatched by event.op:
+  # seed_events, backfill_events, backfill_projection, match_series_playlists,
+  # seed_tag_namespace, reconcile_drift). Kept OFF on prod until dev burn-in
+  # completes for WPR-2. Flip to true after atomic release so daily
+  # reconcile_drift cron protects prod.
+  wordpress_projection_ops = false
 }
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
@@ -110,3 +113,7 @@ dr_api_image                = "233636046512.dkr.ecr.us-east-2.amazonaws.com/cont
 
 # Route53 failover: keep false until ECS healthy in both regions; arm via ./scripts/arm-route53-failover.sh
 enable_route53_failover = false
+
+# WPR-17 reconcile Lambda — same self-URL pattern on prod.
+wordpress_base_url         = "https://communityhealth.media"
+wordpress_webhook_self_url = "https://contenthub.communityhealth.media/api/wordpress/webhook"

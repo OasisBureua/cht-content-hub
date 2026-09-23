@@ -31,9 +31,41 @@ def _parse_modified_gmt(value: Any) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
+_POST_EVENTS = frozenset({"published", "updated", "deleted"})
+_TERM_EVENTS = frozenset({"term_updated", "term_deleted"})
+
+
 async def _insert_event(payload: dict[str, Any]) -> dict[str, Any]:
-    """Insert one WordPress event into the DB. Idempotent on (post_id, modified_gmt)."""
+    """Insert one WordPress webhook event, then project to Layer 2.
+
+    Post events (published / updated / deleted) go through the wordpress_events
+    append-only log AND the Layer 2 projection tables in the same transaction.
+    If the projection fails, the transaction rolls back and SQS redelivers —
+    the event log stays consistent with projected state.
+
+    Term events (term_updated / term_deleted, from mu-plugin v0.6) skip the
+    Layer 1 event log — there is no per-webhook history for term-lifecycle
+    events; only the current-state projection matters. The event log's
+    (post_id, modified_gmt) uniqueness key isn't meaningful for term events
+    either.
+
+    Idempotency:
+      - Post events: idempotent on (post_id, modified_gmt) at Layer 1.
+        Projection uses SELECT+branch UPSERT, also idempotent.
+      - Term events: idempotent via SELECT+branch UPSERT at Layer 2.
+    """
     from database import async_session_maker
+
+    event = payload.get("event")
+
+    if event in _TERM_EVENTS:
+        return await _insert_term_event(payload)
+
+    if event not in _POST_EVENTS:
+        # Should have been rejected at the router — defensive.
+        return {"status": "error", "reason": f"unknown event: {event!r}"}
+
+    from jobs.wordpress_ingest_projection import project_post_event
     from models.wordpress_event import WordPressEvent
     from sqlalchemy import select
 
@@ -69,6 +101,11 @@ async def _insert_event(payload: dict[str, Any]) -> dict[str, Any]:
             permalink=payload["permalink"],
             categories=payload["categories"],
             tags=payload["tags"],
+            # `series` added in mu-plugin v0.5. Tolerant of pre-v0.5
+            # payloads that omit the field — column defaults to [] server
+            # side but SQLAlchemy needs an explicit value to avoid a NULL
+            # constraint violation on this INSERT path.
+            series=payload.get("series") or [],
             site_url=payload["site_url"],
             acf=payload.get("acf"),
             raw_payload=payload,
@@ -77,15 +114,44 @@ async def _insert_event(payload: dict[str, Any]) -> dict[str, Any]:
             featured_media_url=payload.get("featured_media_url"),
         )
         db.add(row)
-        await db.commit()
-        await db.refresh(row)
+        # Flush to get row.id populated (required as last_event_id in
+        # wordpress_posts) without committing — projection runs in the
+        # same transaction so a failure downstream rolls back everything.
+        await db.flush()
         inserted_id = row.id
+
+        # Layer 2 projection — inside the same transaction.
+        await project_post_event(db, payload, inserted_id)
+
+        await db.commit()
 
     return {
         "status": "inserted",
         "id": inserted_id,
         "post_id": post_id,
         "event": payload["event"],
+    }
+
+
+async def _insert_term_event(payload: dict[str, Any]) -> dict[str, Any]:
+    """Handle term-lifecycle webhook events (mu-plugin v0.6).
+
+    Layer 1 skipped — the event log's uniqueness key isn't meaningful for
+    terms, and full term history isn't a requirement (backfill can rebuild
+    from WP REST at any time).
+    """
+    from database import async_session_maker
+    from jobs.wordpress_ingest_projection import project_term_event
+
+    async with async_session_maker() as db:
+        await project_term_event(db, payload)
+        await db.commit()
+
+    return {
+        "status": "term_projected",
+        "event": payload["event"],
+        "taxonomy": payload.get("taxonomy"),
+        "slug": payload.get("slug"),
     }
 
 
@@ -141,8 +207,9 @@ def _clear_cht_cache_if_material(results: list[dict[str, Any]]) -> None:
     invocation — the WP event is already durably in the DB, and the
     5-min TTL will catch up eventually.
     """
-    inserted = any(r.get("status") == "inserted" for r in results)
-    if not inserted:
+    material_statuses = {"inserted", "term_projected"}
+    material = any(r.get("status") in material_statuses for r in results)
+    if not material:
         return
     clear_cht_catalog_cache(job="wordpress_ingest")
 

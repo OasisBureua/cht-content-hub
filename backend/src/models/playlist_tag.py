@@ -42,6 +42,14 @@ class PlaylistTag(Base):
     # Values: biomarker | drug | trial | doctor_pair | mixed | archive
     lane: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    # WPR-6: curator-approved link from this YouTube playlist to a
+    # WordPress series (the WP-side authoring taxonomy). Null when
+    # unlinked. Populated only via the human-review approval flow, not
+    # by fuzzy-match Lambda directly.
+    wp_series_slug: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
