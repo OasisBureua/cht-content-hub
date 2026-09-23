@@ -7,7 +7,6 @@ POST .../report/generate. HubSpot sync stays on CHT → PATCH campaign.
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
