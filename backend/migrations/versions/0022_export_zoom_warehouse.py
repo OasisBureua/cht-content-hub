@@ -3,11 +3,8 @@
 Creates flat ``export_*`` tables in the public schema (assumption A1 from
 the CPR-13 plan — not a separate Postgres ``reports`` schema yet).
 
-Chain note: this revision follows ``0021_wp_tag_namespace_map`` on current
-``develop``. Sebastian's ``feature/cpr-13-report-packet`` also adds
-``0022_shoot_campaign_link`` from the same parent. After that PR merges,
-rebase this branch and re-point ``down_revision`` to
-``0022_shoot_campaign_link`` (rename this file to ``0023_…`` if needed).
+Chain note: this revision and ``0022_shoot_campaign_link`` both revise
+``0021_wp_tag_namespace_map``. They are joined by ``0023_merge_cpr13_heads``.
 
 Revision ID: 0022_export_zoom_warehouse
 Revises: 0021_wp_tag_namespace_map
