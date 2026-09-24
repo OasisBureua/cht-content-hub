@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,6 +13,7 @@ from database import Base
 from db_types import StringArray
 
 if TYPE_CHECKING:
+    from models.campaign import Campaign
     from models.client import Client
     from models.kol import KOLGroup
     from models.project import Project
@@ -36,6 +37,16 @@ class Shoot(Base):
     kol_group_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("kol_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    # Reporting: which campaign's report should include this shoot's
+    # transcript. Admin-settable, optional (report-packet endpoint,
+    # CPR-13). Same optional-FK shape as project_id/kol_group_id.
+    campaign_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("campaigns.id", ondelete="SET NULL"),
         nullable=True,
         index=True
     )
@@ -89,6 +100,10 @@ class Shoot(Base):
         "KOLGroup",
         back_populates="shoots",
         foreign_keys=[kol_group_id]
+    )
+    campaign: Mapped["Campaign | None"] = relationship(
+        "Campaign",
+        foreign_keys=[campaign_id]
     )
 
     @property

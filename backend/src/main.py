@@ -27,6 +27,7 @@ from admin.playlist_series_review import (  # noqa: E402
 from admin.playlist_tags import router as admin_playlist_tags_router  # noqa: E402
 from admin.clip_tags import router as admin_clip_tags_router  # noqa: E402
 from admin.tagger import router as admin_tagger_router  # noqa: E402
+from admin.report_packet_router import router as admin_report_packet_router  # noqa: E402
 from admin.router import router as admin_router  # noqa: E402
 from public.clips import router as public_clips_router  # noqa: E402
 from public.doctors import router as public_doctors_router  # noqa: E402
@@ -71,6 +72,7 @@ app.include_router(public_tags_router)
 app.include_router(public_transcripts_router)
 app.include_router(public_wordpress_router)
 app.include_router(admin_router)
+app.include_router(admin_report_packet_router)
 app.include_router(admin_kols_router)
 app.include_router(admin_kol_intel_router)
 app.include_router(admin_playlist_tags_router)
