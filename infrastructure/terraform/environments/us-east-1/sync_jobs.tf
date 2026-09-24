@@ -122,6 +122,20 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    # CPR-13 — pull Zoom export packets from cht-platform-tool into Hub Aurora.
+    # Default OFF until CPR-12 M2M (Cognito) + export HTTP API + optional
+    # transcript S3 GetObject IAM are provisioned. Flip
+    # sync_jobs_enabled.platform_export_ingest = true after PLATFORM_EXPORT_*
+    # secrets are in app-secrets. Daily 05:00 UTC (after kol_hcp_matcher).
+    platform_export_ingest = {
+      enabled                        = lookup(var.sync_jobs_enabled, "platform_export_ingest", false)
+      handler                        = "jobs.platform_export_ingest.handler.handler"
+      timeout                        = 900
+      memory_size                    = 1024
+      schedule_expression            = "cron(0 5 * * ? *)"
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
   }
 }
 
@@ -136,6 +150,17 @@ locals {
       var.wordpress_webhook_self_url != "" ? { SELF_WEBHOOK_URL = var.wordpress_webhook_self_url } : {},
       { WP_BASE_URL = var.wordpress_base_url }
     )
+    platform_export_ingest = merge(
+      var.platform_export_base_url != "" ? { PLATFORM_EXPORT_BASE_URL = var.platform_export_base_url } : {},
+      var.platform_export_m2m_secret_arn != "" ? {
+        PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
+      } : {},
+      { PLATFORM_EXPORT_HTTP_MODE = "input_packet" }
+    )
+  }
+
+  sync_job_extra_secret_arns = {
+    platform_export_ingest = compact([var.platform_export_m2m_secret_arn])
   }
 }
 
@@ -166,7 +191,8 @@ module "sync_lambda" {
   # Per-job env vars. Merged with the module's default env; module defaults
   # win on collision. wordpress_reconcile needs its own ingress URL so it
   # can fire synthetic HMAC-signed webhooks at the ECS route.
-  extra_env = lookup(local.sync_job_extra_env, each.key, {})
+  extra_env         = lookup(local.sync_job_extra_env, each.key, {})
+  extra_secret_arns = lookup(local.sync_job_extra_secret_arns, each.key, [])
 
   depends_on = [module.app_secrets]
 }

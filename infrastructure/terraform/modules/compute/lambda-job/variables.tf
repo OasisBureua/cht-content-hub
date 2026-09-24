@@ -85,6 +85,12 @@ variable "extra_env" {
   description = "Additional environment variables merged into the Lambda's env. Job-specific; module-level defaults still win on key collision."
 }
 
+variable "extra_secret_arns" {
+  type        = list(string)
+  default     = []
+  description = "Additional Secrets Manager ARNs the Lambda may GetSecretValue (e.g. Cognito M2M export)."
+}
+
 variable "enabled" {
   type    = bool
   default = true

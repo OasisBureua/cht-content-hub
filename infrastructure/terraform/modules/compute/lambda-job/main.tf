@@ -55,7 +55,10 @@ resource "aws_iam_role_policy" "lambda_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [var.database_secret_arn, var.app_secrets_arn]
+      Resource = concat(
+        [var.database_secret_arn, var.app_secrets_arn],
+        var.extra_secret_arns
+      )
     }]
   })
 }

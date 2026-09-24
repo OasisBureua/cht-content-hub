@@ -1,0 +1,11 @@
+{
+  "campaignId": 7,
+  "sessions": [],
+  "attendance": [],
+  "surveyResponses": [],
+  "inputCompleteness": {
+    "sessions": { "rowCount": 0, "status": "missing" },
+    "attendance": { "rowCount": 0, "status": "missing" },
+    "surveyResponses": { "rowCount": 0, "status": "missing" }
+  }
+}

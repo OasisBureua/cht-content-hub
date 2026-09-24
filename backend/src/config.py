@@ -101,6 +101,48 @@ class Settings(BaseSettings):
         validation_alias="KOL_REFRESH_COOLDOWN_SECONDS",
     )
 
+    # CPR-13 — cht-platform-tool Zoom export consumer (Hub is M2M client).
+    # Empty until Uche provisions Cognito + Sebastian ships the export API.
+    platform_export_base_url: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_BASE_URL",
+    )
+    platform_export_http_mode: str = Field(
+        default="input_packet",
+        validation_alias="PLATFORM_EXPORT_HTTP_MODE",
+    )
+    platform_export_token_url: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_TOKEN_URL",
+    )
+    platform_export_client_id: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_CLIENT_ID",
+    )
+    platform_export_client_secret: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_CLIENT_SECRET",
+    )
+    platform_export_scope: str = Field(
+        default="platform/export.read",
+        validation_alias="PLATFORM_EXPORT_SCOPE",
+    )
+    # Bucket holding raw Zoom WebVTT objects referenced by transcriptS3Key.
+    platform_export_transcript_bucket: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_TRANSCRIPT_BUCKET",
+    )
+    platform_export_fixture_dir: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_FIXTURE_DIR",
+    )
+    # Dedicated Cognito M2M secret (e.g. cht-dev-cognito-m2m-export ARN/name).
+    # When set, fills token_url / client_id / client_secret / scope from SM JSON.
+    platform_export_m2m_secret_arn: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_M2M_SECRET_ARN",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
