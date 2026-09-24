@@ -70,6 +70,10 @@ async def record_run(
         clip_post_skipped_models_missing=stats.clip_post_skipped_models_missing,
     )
     db.add(run)
+    # Flush the parent first. TagDiffRow.run_id FKs to tagger_runs.id and
+    # there is no ORM relationship, so a single flush can INSERT tag_diffs
+    # before tagger_runs (SQLite and Postgres both reject that).
+    await db.flush()
 
     for d in diffs:
         db.add(
