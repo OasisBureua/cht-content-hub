@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -73,7 +74,10 @@ def test_resolve_runtime_http_requires_base_url():
 
 def test_resolve_runtime_fixture_requires_dir():
     with pytest.raises(ExportIngestConfigError, match="PLATFORM_EXPORT_FIXTURE_DIR"):
-        resolve_export_ingest_runtime(Settings(), source="fixture")
+        resolve_export_ingest_runtime(
+            Settings(platform_export_fixture_dir=""),
+            source="fixture",
+        )
 
 
 def test_resolve_runtime_fixture_ok():
@@ -162,6 +166,60 @@ async def test_admin_export_ingest_endpoint(client: AsyncClient, db_session: Asy
 async def test_admin_export_ingest_requires_api_key(http_client: AsyncClient):
     response = await http_client.post("/api/admin/campaigns/1/export-ingest")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_http_requires_export_campaign_id(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Needs Export Campaign Id"},
+    )
+    assert create.status_code in (200, 201)
+    campaign_id = create.json()["id"]
+
+    response = await client.post(
+        f"/api/admin/campaigns/{campaign_id}/export-ingest",
+        headers=admin_headers(),
+        params={"source": "http"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    detail = body.get("detail") or body.get("message") or str(body)
+    assert "exportCampaignId" in str(detail)
+
+
+@pytest.mark.asyncio
+async def test_ingest_rewrites_string_export_campaign_id(
+    db_session: AsyncSession,
+):
+    """Live CPR-28 uses string Program.campaignId; warehouse FK is Hub int."""
+    from services.export_ingest.normalize import normalize_export_payload
+
+    await _create_campaign_via_orm(db_session, campaign_id=7)
+    raw = json.loads(
+        (FIXTURES / "cpr28_live_shaped_packet.json").read_text(encoding="utf-8")
+    )
+    packet = normalize_export_payload(raw)
+    memory = FixtureExportClient()
+    memory.put(packet)
+
+    run = await ingest_campaign(
+        db_session,
+        7,
+        client=memory,
+        trigger="manual",
+        export_campaign_id="AZ-25-01_LIV001",
+    )
+    await db_session.commit()
+
+    assert run.status == "success"
+    assert run.campaign_id == 7
+    session = (await db_session.execute(select(ExportSession))).scalar_one()
+    assert session.campaign_id == 7
+    assert session.zoom_uuid == "AbCdEf=="
 
 
 async def _create_campaign_via_orm(db_session: AsyncSession, *, campaign_id: int) -> int:

@@ -18,6 +18,8 @@ class ExportClientError(RuntimeError):
 class ExportClient(Protocol):
     """Fetches (or assembles) a campaign-scoped export packet."""
 
-    async def fetch_campaign_packet(self, campaign_id: int) -> PlatformExportPacket:
-        """Return the canonical ingest packet for a Hub campaign id."""
+    async def fetch_campaign_packet(
+        self, campaign_id: str | int
+    ) -> PlatformExportPacket:
+        """Return the canonical ingest packet for an export campaign id."""
         ...

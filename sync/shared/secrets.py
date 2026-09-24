@@ -36,8 +36,7 @@ def ensure_lambda_secrets() -> None:
                 os.environ["INTERNAL_CACHE_SECRET"] = secret
                 log.info("Loaded INTERNAL_CACHE_SECRET from Secrets Manager")
 
-        # CPR-13 M2M / export client settings (optional until CPR-12 is live).
-        # Prefer env already set on the Lambda; fill gaps from app-secrets JSON.
+        # Optional: PLATFORM_EXPORT_* may also live in app-secrets JSON.
         _export_env_from_secret = {
             "PLATFORM_EXPORT_BASE_URL": "platform_export_base_url",
             "PLATFORM_EXPORT_HTTP_MODE": "platform_export_http_mode",
@@ -46,6 +45,7 @@ def ensure_lambda_secrets() -> None:
             "PLATFORM_EXPORT_CLIENT_SECRET": "platform_export_client_secret",
             "PLATFORM_EXPORT_SCOPE": "platform_export_scope",
             "PLATFORM_EXPORT_TRANSCRIPT_BUCKET": "platform_export_transcript_bucket",
+            "PLATFORM_EXPORT_M2M_SECRET_ARN": "platform_export_m2m_secret_arn",
         }
         loaded_export = False
         for env_name, secret_key in _export_env_from_secret.items():
@@ -56,6 +56,16 @@ def ensure_lambda_secrets() -> None:
                 os.environ[env_name] = str(value)
                 loaded_export = True
         if loaded_export:
-            log.info("Loaded PLATFORM_EXPORT_* from Secrets Manager")
+            log.info("Loaded PLATFORM_EXPORT_* from app Secrets Manager")
+
+    # Dedicated Cognito M2M export secret (Uche: cht-dev-cognito-m2m-export).
+    m2m_arn = os.environ.get("PLATFORM_EXPORT_M2M_SECRET_ARN", "")
+    if m2m_arn:
+        try:
+            from services.export_ingest.m2m_secrets import apply_m2m_secret_to_environ
+
+            apply_m2m_secret_to_environ(m2m_arn, region_name=region)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Failed loading PLATFORM_EXPORT_M2M_SECRET_ARN: %s", exc)
 
     _loaded = True

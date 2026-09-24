@@ -1,31 +1,17 @@
 """CPR-13 — platform Zoom export payload DTOs (Hub ingest contract).
 
-These models describe what Content Hub *consumes* from cht-platform-tool's
-export API. They are intentionally HTTP-path agnostic: the live client may
-call a single input-packet endpoint or CPR-12's versioned GETs
-(`/api/export/v1/sessions|attendance|surveys`). Mappers and warehouse
-upserts should depend on these DTOs, not on URL strings.
+Path-agnostic: fixture JSON or CPR-28 live input-packet both normalize to
+these models before warehouse upsert.
 
 Field alignment notes
 ---------------------
-* ``platform_tool_program_id`` is Platform ``Program.id`` (cuid TEXT), never
-  an integer FK into Hub.
-* ``campaign_id`` is Hub ``campaigns.id``. Platform will set
-  ``Program.campaignId`` (CPR-12); until then fixtures may supply it.
-* Zoom IDs are stored as two optional fields — ``zoom_meeting_id``
-  (``Program.zoomMeetingId`` / session meeting id) and ``zoom_uuid``
-  (``ZoomRecordingSession.zoomUuid``). Do not collapse them into one
-  ``zoom_meeting_uuid`` column at ingest time.
-* Transcript: hedge both ``transcript_s3_key`` (raw WebVTT on platform S3)
-  and ``transcript_text`` (filled after Hub strips cues on ingest).
-* Session fields that Sebastian's report-packet later exposes
-  (``platform_tool_program_id``, ``kind``, ``title``, ``session_date``,
-  ``transcript_text``) use the same snake_case names so warehouse →
-  report-packet mapping stays 1:1 when Phase H lands.
-
-Out of scope here: Hub report-packet *response* schemas (see
-``schemas/report_packet.py`` on Sebastian's branch), Cognito M2M, and
-Zoom API calls.
+* ``platform_tool_program_id`` is Platform ``Program.id`` (cuid TEXT).
+* ``campaign_id`` on the wire may be a Hub **string code** (e.g.
+  ``AZ-25-01_LIV001`` per CPR-28). Ingest rewrites to Hub integer
+  ``campaigns.id`` before warehouse FK writes.
+* Zoom: ``zoom_meeting_id`` + ``zoom_uuid`` (live sends ``zoomMeetingUuid``).
+* Transcript: ``transcript_s3_key`` + ``transcript_status`` (ok|missing);
+  Hub GetObject + VTT strip fills ``transcript_text``.
 """
 
 from __future__ import annotations
@@ -34,7 +20,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from schemas.campaigns import ApiModel
 
@@ -69,7 +55,7 @@ class ExportSession(ApiModel):
     """One Zoom-backed program/session row from the platform export."""
 
     platform_tool_program_id: str
-    campaign_id: int | None = None
+    campaign_id: str | int | None = None
     kind: str | None = None
     title: str | None = None
     session_date: datetime | None = None
@@ -77,36 +63,49 @@ class ExportSession(ApiModel):
     zoom_uuid: str | None = None
     transcript_s3_key: str | None = None
     transcript_text: str | None = None
+    transcript_status: str | None = None
     zoom_session_ended_at: datetime | None = None
+    chm_program_id: str | None = None
+
+    @field_validator("campaign_id", mode="before")
+    @classmethod
+    def _campaign_id_as_str_or_int(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return None
+        return value
 
 
 class ExportAttendanceEvent(ApiModel):
-    """One raw JOINED/LEFT (or import) attendance event."""
+    """Attendance row — fixture raw JOINED/LEFT or CPR-28 JOINED rollup."""
 
     platform_tool_program_id: str
-    source: AttendanceSource
-    event: AttendanceEventType
-    occurred_at: datetime
+    source: AttendanceSource = AttendanceSource.WEBHOOK
+    event: AttendanceEventType = AttendanceEventType.JOINED
+    occurred_at: datetime | None = None
     participant_email: str | None = None
     participant_name: str | None = None
     duration_seconds: int | None = None
-    # Optional identity fields for idempotent upserts once export includes them.
     platform_event_id: str | None = None
     zoom_participant_id: str | None = None
     zoom_meeting_id: str | None = None
     join_time: datetime | None = None
     leave_time: datetime | None = None
+    user_id: str | None = None
+
+    @model_validator(mode="after")
+    def _require_occurred_at(self) -> ExportAttendanceEvent:
+        if self.occurred_at is None and self.join_time is not None:
+            self.occurred_at = self.join_time
+        if self.occurred_at is None:
+            raise ValueError("occurred_at or join_time is required")
+        return self
 
 
 class ExportSurveyResponse(ApiModel):
-    """CPR-14 adjacency — typed so sessions/attendance are not blocked.
-
-    Warehouse persistence for surveys is out of scope for CPR-13 v1 beyond
-    accepting the field on the packet.
-    """
+    """Flattened survey response row (fixture or CPR-28 nested surveys)."""
 
     platform_tool_program_id: str | None = None
-    campaign_id: int | None = None
+    campaign_id: str | int | None = None
     respondent_id: str | None = None
     source: str = "unknown"
     survey_type: str | None = None
@@ -116,19 +115,22 @@ class ExportSurveyResponse(ApiModel):
 
 
 class PlatformExportPacket(ApiModel):
-    """Canonical bulk payload Hub ETL consumes (path-agnostic).
+    """Canonical bulk payload Hub ETL consumes."""
 
-    Whether the HTTP client fetched one blob or assembled three GETs, the
-    ingest orchestrator always normalizes to this shape before mapping.
-    """
-
-    campaign_id: int
+    campaign_id: str | int
     sessions: list[ExportSession] = Field(default_factory=list)
     attendance: list[ExportAttendanceEvent] = Field(default_factory=list)
     survey_responses: list[ExportSurveyResponse] = Field(default_factory=list)
     input_completeness: dict[str, ExportSourceCompleteness] = Field(
         default_factory=dict
     )
+
+    @field_validator("campaign_id", mode="before")
+    @classmethod
+    def _require_campaign_id(cls, value: Any) -> Any:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError("campaign_id is required")
+        return value
 
 
 class ExportIngestRunOut(ApiModel):

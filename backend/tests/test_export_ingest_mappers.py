@@ -49,6 +49,14 @@ def test_map_session_prefers_explicit_campaign_id():
     assert map_session(session, default_campaign_id=42)["campaign_id"] == 7
 
 
+def test_map_session_string_export_id_falls_back_to_hub_default():
+    session = ExportSession(
+        platform_tool_program_id="p1",
+        campaign_id="AZ-25-01_LIV001",
+    )
+    assert map_session(session, default_campaign_id=42)["campaign_id"] == 42
+
+
 def test_attendance_dedupe_prefers_platform_event_id():
     event = ExportAttendanceEvent(
         platform_tool_program_id="p1",

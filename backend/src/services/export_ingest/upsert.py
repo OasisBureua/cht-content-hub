@@ -47,12 +47,12 @@ def enrich_session_transcript(
     session: ExportSessionDTO,
     store: TranscriptStore,
 ) -> ExportSessionDTO:
-    """Fill ``transcript_text`` from S3 VTT when missing."""
-    if session.transcript_text:
+    """Fill ``transcript_text`` from S3 VTT when missing and status allows."""
+    from services.export_ingest.normalize import should_fetch_transcript
+
+    if not should_fetch_transcript(session):
         return session
-    if not session.transcript_s3_key:
-        return session
-    raw = store.get_vtt(session.transcript_s3_key)
+    raw = store.get_vtt(session.transcript_s3_key or "")
     return session.model_copy(update={"transcript_text": strip_vtt(raw)})
 
 
@@ -145,6 +145,11 @@ async def upsert_packet(
     transcript_store: TranscriptStore | None = None,
 ) -> IngestCounts:
     """Upsert all packet rows. Does not write an ingest-run audit row."""
+    if not isinstance(packet.campaign_id, int):
+        raise TypeError(
+            "packet.campaign_id must be Hub integer campaigns.id before upsert "
+            "(call rewrite_packet_hub_campaign_id first)"
+        )
     campaign_id = packet.campaign_id
 
     for session in packet.sessions:
@@ -185,6 +190,10 @@ async def ingest_packet(
 ) -> ExportIngestRun:
     """Upsert packet contents and record an ``export_ingest_runs`` audit row."""
     started = datetime.now(timezone.utc)
+    if not isinstance(packet.campaign_id, int):
+        raise TypeError(
+            "packet.campaign_id must be Hub integer campaigns.id before ingest"
+        )
     run = ExportIngestRun(
         campaign_id=packet.campaign_id,
         trigger=trigger,

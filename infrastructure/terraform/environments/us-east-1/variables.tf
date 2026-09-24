@@ -381,6 +381,18 @@ variable "sync_jobs_enabled" {
   description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
 }
 
+variable "platform_export_base_url" {
+  type        = string
+  default     = ""
+  description = "cht-platform-tool base URL for CPR-13 export ingest (e.g. https://devapp.communityhealth.media)"
+}
+
+variable "platform_export_m2m_secret_arn" {
+  type        = string
+  default     = ""
+  description = "Secrets Manager ARN for Cognito M2M export credentials (client_id/client_secret/token_url/scope)"
+}
+
 variable "enable_ecr_replication" {
   description = "Replicate contenthub-* ECR repos to ecr_replication_destination_region (prod primary only)."
   type        = bool

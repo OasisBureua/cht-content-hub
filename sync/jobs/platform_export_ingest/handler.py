@@ -6,13 +6,14 @@ loads secrets, resolves the export client, and runs ``ingest_campaigns_batch``.
 Event payload (optional)::
 
     {
-      "campaignIds": [1, 2],   # omit = all campaigns (newest first)
-      "limit": 50,             # optional cap
-      "source": "http"         # or "fixture" when PLATFORM_EXPORT_FIXTURE_DIR set
+      "campaignIds": [1, 2],
+      "exportCampaignIds": {"1": "AZ-25-01_LIV001"},
+      "limit": 50,
+      "source": "http"
     }
 
 Enable via Terraform ``sync_jobs_enabled.platform_export_ingest = true`` once
-CPR-12 M2M + export API (and optional transcript S3 IAM) are provisioned.
+M2M + export are provisioned. Keep disabled until live smoke succeeds.
 """
 
 from __future__ import annotations
@@ -37,6 +38,19 @@ def _parse_event(event: dict | None) -> dict:
     return event
 
 
+def _export_campaign_map(event: dict) -> dict[int, str] | None:
+    raw = event.get("exportCampaignIds") or event.get("export_campaign_ids")
+    if not raw or not isinstance(raw, dict):
+        return None
+    out: dict[int, str] = {}
+    for key, value in raw.items():
+        try:
+            out[int(key)] = str(value).strip()
+        except (TypeError, ValueError):
+            continue
+    return out or None
+
+
 async def _run(event: dict) -> dict:
     from config import get_settings
     from database import async_session_maker
@@ -51,6 +65,7 @@ async def _run(event: dict) -> dict:
     source = str(event.get("source") or "http")
     campaign_ids = event.get("campaignIds") or event.get("campaign_ids")
     limit = event.get("limit")
+    export_map = _export_campaign_map(event)
 
     try:
         runtime = resolve_export_ingest_runtime(settings, source=source)
@@ -68,6 +83,7 @@ async def _run(event: dict) -> dict:
             client=runtime.client,
             transcript_store=runtime.transcript_store,
             campaign_ids=list(campaign_ids) if campaign_ids else None,
+            export_campaign_ids=export_map,
             limit=int(limit) if limit is not None else None,
             trigger="schedule",
         )

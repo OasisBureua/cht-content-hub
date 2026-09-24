@@ -7,6 +7,7 @@ from pathlib import Path
 
 from schemas.platform_export import PlatformExportPacket
 from services.export_ingest.client import ExportClientError
+from services.export_ingest.normalize import normalize_export_payload
 
 
 class FixtureExportClient:
@@ -14,26 +15,31 @@ class FixtureExportClient:
 
     def __init__(
         self,
-        packets: dict[int, PlatformExportPacket] | None = None,
+        packets: dict[str | int, PlatformExportPacket] | None = None,
         *,
         directory: Path | str | None = None,
     ) -> None:
-        self._packets = dict(packets or {})
+        self._packets: dict[str, PlatformExportPacket] = {
+            str(k): v for k, v in (packets or {}).items()
+        }
         self._directory = Path(directory) if directory is not None else None
 
     def put(self, packet: PlatformExportPacket) -> None:
-        self._packets[packet.campaign_id] = packet
+        self._packets[str(packet.campaign_id)] = packet
 
-    async def fetch_campaign_packet(self, campaign_id: int) -> PlatformExportPacket:
-        if campaign_id in self._packets:
-            return self._packets[campaign_id]
+    async def fetch_campaign_packet(
+        self, campaign_id: str | int
+    ) -> PlatformExportPacket:
+        key = str(campaign_id)
+        if key in self._packets:
+            return self._packets[key]
 
         if self._directory is not None:
-            path = self._directory / f"campaign_{campaign_id}_packet.json"
+            path = self._directory / f"campaign_{key}_packet.json"
             if path.is_file():
                 raw = json.loads(path.read_text(encoding="utf-8"))
-                packet = PlatformExportPacket.model_validate(raw)
-                self._packets[campaign_id] = packet
+                packet = normalize_export_payload(raw)
+                self._packets[key] = packet
                 return packet
 
         raise ExportClientError(

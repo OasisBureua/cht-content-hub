@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.cache import notify_cht_cache_clear
@@ -154,12 +154,29 @@ async def trigger_export_ingest(
         default="http",
         description="Export source: 'http' (platform API) or 'fixture' (local JSON)",
     ),
+    export_campaign_id: str | None = Query(
+        default=None,
+        alias="exportCampaignId",
+        description=(
+            "Platform Program.campaignId string for live export "
+            "(e.g. AZ-25-01_LIV001). Required when source=http."
+        ),
+    ),
 ) -> ExportIngestRunOut:
-    """Pull platform Zoom export for this campaign into the Hub warehouse.
+    """Pull platform Zoom export for this Hub campaign into the warehouse.
 
-    Does not modify report-packet. Blocked on CPR-12 when ``source=http``
-    until PLATFORM_EXPORT_* settings are provisioned.
+    Hub ``campaign_id`` is the integer PK. Live CPR-28 export keys off the
+    string ``exportCampaignId`` linked on platform Programs.
     """
+    normalized = (source or "http").strip().lower()
+    if normalized == "http" and not (export_campaign_id and export_campaign_id.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "exportCampaignId is required when source=http "
+                "(platform Program.campaignId, e.g. AZ-25-01_LIV001)"
+            ),
+        )
     runtime = resolve_export_ingest_runtime_http(settings, source=source)
     run = await ingest_campaign(
         db,
@@ -167,6 +184,7 @@ async def trigger_export_ingest(
         client=runtime.client,
         transcript_store=runtime.transcript_store,
         trigger="manual",
+        export_campaign_id=export_campaign_id,
     )
     return ExportIngestRunOut.model_validate(run)
 

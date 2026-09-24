@@ -62,11 +62,12 @@ def map_session(
     *,
     default_campaign_id: int | None = None,
 ) -> dict[str, Any]:
-    campaign_id = (
+    raw_campaign = (
         session.campaign_id
         if session.campaign_id is not None
         else default_campaign_id
     )
+    campaign_id = _as_hub_campaign_id(raw_campaign, default_campaign_id)
     return {
         "platform_tool_program_id": session.platform_tool_program_id,
         "campaign_id": campaign_id,
@@ -109,9 +110,10 @@ def map_survey(
     *,
     default_campaign_id: int | None = None,
 ) -> dict[str, Any]:
-    campaign_id = (
+    raw_campaign = (
         row.campaign_id if row.campaign_id is not None else default_campaign_id
     )
+    campaign_id = _as_hub_campaign_id(raw_campaign, default_campaign_id)
     return {
         "dedupe_key": survey_dedupe_key(row),
         "campaign_id": campaign_id,
@@ -123,3 +125,15 @@ def map_survey(
         "submission_id": row.submission_id,
         "answers": dict(row.answers or {}),
     }
+
+
+def _as_hub_campaign_id(
+    value: str | int | None, default: int | None
+) -> int | None:
+    if isinstance(value, int):
+        return value
+    if default is not None:
+        return default
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None

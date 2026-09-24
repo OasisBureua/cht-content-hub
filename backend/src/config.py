@@ -136,6 +136,12 @@ class Settings(BaseSettings):
         default="",
         validation_alias="PLATFORM_EXPORT_FIXTURE_DIR",
     )
+    # Dedicated Cognito M2M secret (e.g. cht-dev-cognito-m2m-export ARN/name).
+    # When set, fills token_url / client_id / client_secret / scope from SM JSON.
+    platform_export_m2m_secret_arn: str = Field(
+        default="",
+        validation_alias="PLATFORM_EXPORT_M2M_SECRET_ARN",
+    )
 
 
 @lru_cache

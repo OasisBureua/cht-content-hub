@@ -20,6 +20,8 @@ from services import campaigns as campaign_service
 from services.export_ingest.client import ExportClient, ExportClientError
 from services.export_ingest.client_fixture import FixtureExportClient
 from services.export_ingest.client_http import build_http_export_client
+from services.export_ingest.m2m_secrets import resolve_m2m_settings_fields
+from services.export_ingest.normalize import rewrite_packet_hub_campaign_id
 from services.export_ingest.transcript_s3 import (
     MemoryTranscriptStore,
     S3TranscriptStore,
@@ -65,7 +67,7 @@ def resolve_export_ingest_runtime(
     """Build client + optional transcript store from settings.
 
     ``source``:
-    * ``http`` — live/stub HTTP client (requires ``platform_export_base_url``)
+    * ``http`` — live HTTP client (requires ``platform_export_base_url`` + M2M)
     * ``fixture`` — JSON fixtures under ``platform_export_fixture_dir``
     """
     normalized = (source or "http").strip().lower()
@@ -84,13 +86,30 @@ def resolve_export_ingest_runtime(
                 "Platform export HTTP client is not configured "
                 "(set PLATFORM_EXPORT_BASE_URL)"
             )
+        try:
+            token_url, client_id, client_secret, scope = resolve_m2m_settings_fields(
+                secret_arn=(settings.platform_export_m2m_secret_arn or "").strip(),
+                token_url=settings.platform_export_token_url,
+                client_id=settings.platform_export_client_id,
+                client_secret=settings.platform_export_client_secret,
+                scope=settings.platform_export_scope,
+                region_name=settings.aws_region,
+            )
+        except RuntimeError as exc:
+            raise ExportIngestConfigError(str(exc)) from exc
+        if not (token_url and client_id and client_secret):
+            raise ExportIngestConfigError(
+                "Platform export M2M is not configured "
+                "(set PLATFORM_EXPORT_M2M_SECRET_ARN or "
+                "TOKEN_URL + CLIENT_ID + CLIENT_SECRET)"
+            )
         client = build_http_export_client(
             base_url=base_url,
             mode=settings.platform_export_http_mode,
-            token_url=settings.platform_export_token_url,
-            client_id=settings.platform_export_client_id,
-            client_secret=settings.platform_export_client_secret,
-            export_scope=settings.platform_export_scope,
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            export_scope=scope,
         )
     else:
         raise ExportIngestConfigError("source must be 'http' or 'fixture'")
@@ -124,29 +143,27 @@ async def ingest_campaign(
     client: ExportClient,
     transcript_store: TranscriptStore | None = None,
     trigger: str = "manual",
+    export_campaign_id: str | None = None,
 ) -> ExportIngestRun:
-    """Fetch export packet for a Hub campaign and upsert into the warehouse."""
+    """Fetch export packet and upsert into the warehouse for a Hub campaign.
+
+    ``campaign_id`` is Hub ``campaigns.id`` (integer FK for warehouse rows).
+    ``export_campaign_id`` is the platform ``Program.campaignId`` string used
+    to call the live export API (e.g. ``AZ-25-01_LIV001``). When omitted,
+    the Hub integer id is used (fixture path / numeric export ids).
+    """
     await campaign_service._get_campaign_row(db, campaign_id)
+    fetch_key: str | int = (
+        export_campaign_id.strip()
+        if export_campaign_id and export_campaign_id.strip()
+        else campaign_id
+    )
     try:
-        packet = await client.fetch_campaign_packet(campaign_id)
+        packet = await client.fetch_campaign_packet(fetch_key)
     except ExportClientError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # Hub campaign id is authoritative for this ingest (fixture packets may
-    # carry a different sample campaignId on nested rows).
-    packet = packet.model_copy(
-        update={
-            "campaign_id": campaign_id,
-            "sessions": [
-                s.model_copy(update={"campaign_id": campaign_id})
-                for s in packet.sessions
-            ],
-            "survey_responses": [
-                s.model_copy(update={"campaign_id": campaign_id})
-                for s in packet.survey_responses
-            ],
-        }
-    )
+    packet = rewrite_packet_hub_campaign_id(packet, campaign_id)
 
     return await ingest_packet(
         db,
@@ -181,13 +198,19 @@ async def ingest_campaigns_batch(
     client: ExportClient,
     transcript_store: TranscriptStore | None = None,
     campaign_ids: list[int] | None = None,
+    export_campaign_ids: dict[int, str] | None = None,
     limit: int | None = None,
     trigger: str = "schedule",
 ) -> BatchIngestResult:
-    """Ingest one or many campaigns; continue on per-campaign failures."""
+    """Ingest one or many campaigns; continue on per-campaign failures.
+
+    ``export_campaign_ids`` maps Hub ``campaigns.id`` → platform
+    ``Program.campaignId`` string for live HTTP fetch.
+    """
     ids = await list_campaign_ids_for_ingest(
         db, campaign_ids=campaign_ids, limit=limit
     )
+    export_map = export_campaign_ids or {}
     batch = BatchIngestResult()
 
     for campaign_id in ids:
@@ -199,6 +222,7 @@ async def ingest_campaigns_batch(
                 client=client,
                 transcript_store=transcript_store,
                 trigger=trigger,
+                export_campaign_id=export_map.get(campaign_id),
             )
             batch.succeeded += 1
             batch.results.append(

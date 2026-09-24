@@ -150,6 +150,17 @@ locals {
       var.wordpress_webhook_self_url != "" ? { SELF_WEBHOOK_URL = var.wordpress_webhook_self_url } : {},
       { WP_BASE_URL = var.wordpress_base_url }
     )
+    platform_export_ingest = merge(
+      var.platform_export_base_url != "" ? { PLATFORM_EXPORT_BASE_URL = var.platform_export_base_url } : {},
+      var.platform_export_m2m_secret_arn != "" ? {
+        PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
+      } : {},
+      { PLATFORM_EXPORT_HTTP_MODE = "input_packet" }
+    )
+  }
+
+  sync_job_extra_secret_arns = {
+    platform_export_ingest = compact([var.platform_export_m2m_secret_arn])
   }
 }
 
@@ -180,7 +191,8 @@ module "sync_lambda" {
   # Per-job env vars. Merged with the module's default env; module defaults
   # win on collision. wordpress_reconcile needs its own ingress URL so it
   # can fire synthetic HMAC-signed webhooks at the ECS route.
-  extra_env = lookup(local.sync_job_extra_env, each.key, {})
+  extra_env         = lookup(local.sync_job_extra_env, each.key, {})
+  extra_secret_arns = lookup(local.sync_job_extra_secret_arns, each.key, [])
 
   depends_on = [module.app_secrets]
 }

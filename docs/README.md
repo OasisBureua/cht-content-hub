@@ -16,6 +16,7 @@ Operational docs for the CHT Content Hub producer service.
 | [cache-sync-contract.md](./cache-sync-contract.md) | Lambda/worker → CHT cache clear |
 | [WEBHOOK_API.md](./WEBHOOK_API.md) | ops-console webhook ingest |
 | [Content_Hub_Migration_Plan.pdf](./Content_Hub_Migration_Plan.pdf) | PDF export of migration plan |
+| [CPR-REPORT-PIPELINE-AGENT-CONTEXT.md](./CPR-REPORT-PIPELINE-AGENT-CONTEXT.md) | CPR waves/tickets (Track H) — schema, export ingest, packet, VTT |
 
 CI workflow details: [.github/CI_CD.md](../.github/CI_CD.md)
 
