@@ -56,14 +56,14 @@ with the explicit CRUD names only (`*` is not a Cognito scope name).
 
 ## 2. Hub’s outbound client (per env)
 
-Hub also gets **its own** M2M client. That client does **not** request `hub/…`
-(Hub does not call itself). It requests **platform** scopes.
+Hub reuses the platform-provisioned export client. Terraform does **not**
+mint a second client (`create_m2m_client = false`). That client does **not**
+request `hub/…` (Hub does not call itself). It requests **platform** scopes.
 
 | Env | Client | Secret |
 |---|---|---|
-| Dev | `cht-hub-m2m-dev` | SM `cht-dev-cognito-m2m-hub` |
-| Test | `cht-hub-m2m-test` | SM `cht-test-cognito-m2m-hub` |
-| Prod | `cht-hub-m2m-prod` | SM `cht-prod-cognito-m2m-hub` |
+| Dev | `cht-contenthub-m2m-dev` | SM `cht-dev-cognito-m2m-export` |
+| Prod | `cht-contenthub-m2m-prod` | SM `cht-prod-cognito-m2m-export` |
 
 | Scope on **platform** RS | Hub uses it for |
 |---|---|
@@ -74,8 +74,8 @@ Hub also gets **its own** M2M client. That client does **not** request `hub/…`
 
 JSON in SM: `{ "client_id", "client_secret", "token_url", "scope" }`.
 
-Fold `cht-*-cognito-m2m-export` into this client when convenient so Hub has
-**one** identity per env.
+Do **not** create `cht-hub-m2m-{env}` / `cht-*-cognito-m2m-hub`. One outbound
+identity per env is the export client above.
 
 ---
 
@@ -116,7 +116,7 @@ Hub terraform does not create platform’s or reports’ clients.
 
 | Input | Purpose |
 |---|---|
-| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS + Hub M2M client |
+| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS only |
 | `cognito_auth_domain` | Host for token URL |
 | `HUB_M2M_ISSUER` | `https://cognito-idp.us-east-1.amazonaws.com/<poolId>` (derived if unset) |
 | `HUB_M2M_RESOURCE` | Resource-server identifier, default `hub` |
@@ -173,7 +173,7 @@ cht-reports: own client, `hub/reports.read` only.
 
 ## 8. Cutover
 
-1. Merge/apply Hub → `hub` RS + `cht-hub-m2m-{env}` appear in Cognito.
+1. Merge/apply Hub → `hub` RS appears in Cognito. Outbound stays the export client.
 2. Platform + reports clients allowed `hub/…`; they send Bearer.
-3. Point Hub export at Hub’s client secret (`cht-*-cognito-m2m-hub`).
+3. Keep Hub export pointed at `cht-*-cognito-m2m-export`.
 4. Drop unused `PUBLIC_API_KEY` / `INTERNAL_CACHE_SECRET` after callers are on M2M.

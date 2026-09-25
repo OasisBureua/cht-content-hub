@@ -1,4 +1,5 @@
-# Hub's Cognito resource server + outbound M2M client on the shared CHT pool.
+# Hub's Cognito resource server on the shared CHT pool.
+# Does not create an outbound client (create_m2m_client = false).
 # No-op until cognito_user_pool_id is set.
 
 locals {

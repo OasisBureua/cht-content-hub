@@ -90,8 +90,8 @@ sync_jobs_enabled = {
 # cht-platform-session-assets once vtt_object_ingest is enabled in prod.
 platform_export_transcript_bucket = "cht-platform-session-assets"
 
-# Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub` +
-# cht-hub-m2m-prod on apply.
+# Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub` only.
+# Outbound stays cht-contenthub-m2m-prod / cht-prod-cognito-m2m-export.
 cognito_user_pool_id = "us-east-1_whXKKxAdX"
 cognito_auth_domain  = "chm-platform.auth.us-east-1.amazoncognito.com"
 

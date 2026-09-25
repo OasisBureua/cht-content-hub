@@ -402,7 +402,7 @@ variable "platform_export_transcript_bucket" {
 variable "cognito_user_pool_id" {
   type        = string
   default     = ""
-  description = "Shared CHT Cognito user pool. When set, apply creates the hub resource server + Hub M2M client."
+  description = "Shared CHT Cognito user pool. When set, apply creates the hub resource server only."
 }
 
 variable "cognito_auth_domain" {

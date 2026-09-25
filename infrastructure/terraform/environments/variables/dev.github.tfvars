@@ -80,8 +80,8 @@ sync_jobs_enabled = {
 # Same bucket platform-tool notifies on (prefix zoom-recordings/, suffix .vtt).
 platform_export_transcript_bucket = "cht-dev-session-assets"
 
-# Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub` +
-# outbound client cht-hub-m2m-dev on apply.
+# Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub` only.
+# Outbound stays cht-contenthub-m2m-dev / cht-dev-cognito-m2m-export.
 cognito_user_pool_id = "us-east-1_J51gzfO0I"
 cognito_auth_domain  = "chm-dev.auth.us-east-1.amazoncognito.com"
 
