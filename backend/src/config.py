@@ -33,9 +33,8 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
 
-    # CHT server-to-server auth for /api/public/*
+    # Unused for CRUD (Bearer M2M). Kept so existing Secrets Manager keys load.
     public_api_key: str = "change-this-in-production"
-    # CHT proxy auth for /api/admin/* (defaults to public key in dev)
     admin_api_key: str = Field(
         default="",
         validation_alias="ADMIN_API_KEY",
@@ -142,6 +141,14 @@ class Settings(BaseSettings):
         default="",
         validation_alias="PLATFORM_EXPORT_M2M_SECRET_ARN",
     )
+
+    # Inbound M2M. Hub's Cognito resource-server identifier is hub_m2m_resource
+    # (tokens carry hub/catalog.read). Prod/dev: issuer + JWKS. Tests: HS256.
+    hub_m2m_issuer: str = Field(default="", validation_alias="HUB_M2M_ISSUER")
+    hub_m2m_audience: str = Field(default="", validation_alias="HUB_M2M_AUDIENCE")
+    hub_m2m_jwks_url: str = Field(default="", validation_alias="HUB_M2M_JWKS_URL")
+    hub_m2m_resource: str = Field(default="hub", validation_alias="HUB_M2M_RESOURCE")
+    hub_m2m_test_secret: str = Field(default="", validation_alias="HUB_M2M_TEST_SECRET")
 
 
 @lru_cache

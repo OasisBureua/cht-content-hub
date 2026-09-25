@@ -12,15 +12,14 @@ docker compose up -d
 cd backend
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # set PUBLIC_API_KEY
+cp .env.example .env   # set HUB_M2M_ISSUER (or HUB_M2M_TEST_SECRET locally)
 
 cd src
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ```bash
-export PUBLIC_API_KEY=dev-change-me
-curl -H "X-API-Key: $PUBLIC_API_KEY" http://localhost:8000/api/public/kols
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/public/kols
 curl http://localhost:8000/health
 ```
 
@@ -66,6 +65,6 @@ See [docs/step-4-backend.md](../docs/step-4-backend.md) for the full Step 4 chec
 | GET | `/api/public/kols/{slug}` |
 | GET | `/api/public/kols/{slug}/publications` |
 
-Auth: header `X-API-Key` (must match `PUBLIC_API_KEY` / Terraform `public_api_key`).
+Auth: `Authorization: Bearer <access_token>` with `hub/catalog.read` (or `hub/catalog.*`).
 
 Next: [docs/kol-hcp-intel-migration.md](../docs/kol-hcp-intel-migration.md) — HCP upsert, admin studio, migrations.

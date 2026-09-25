@@ -6,9 +6,9 @@ cht-platform-tool CHT proxy (SCRUM-79-82, not yet shipped).
 
 ## Auth
 
-`X-API-Key` header, matching every other `/api/admin/*` endpoint. CHT holds
-the key and enforces the Studio Cognito JWT + `chm-*` group check before
-proxying user requests.
+`Authorization: Bearer <access_token>` with `hub/admin.{read|create|update|delete}`
+matching the HTTP method. Platform-tool holds the M2M client and enforces the
+Studio Cognito user JWT + `chm-*` group check before proxying.
 
 ## Base URL
 

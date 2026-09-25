@@ -62,6 +62,12 @@ resource "aws_db_instance" "main" {
     Name        = "${local.prefix}-db"
     Environment = var.environment
   }
+
+  # AWS auto-minor upgrades change engine_version out of band. Ignoring it
+  # stops Terraform from updating the instance on every deploy.
+  lifecycle {
+    ignore_changes = [engine_version]
+  }
 }
 
 resource "aws_secretsmanager_secret" "database" {

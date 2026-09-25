@@ -70,3 +70,47 @@ async def test_notify_rejects_invalid_scope(monkeypatch):
     monkeypatch.setenv("INTERNAL_CACHE_SECRET", "secret")
     result = await notify_cht_cache_clear(scope="everything")  # type: ignore[arg-type]
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_notify_prefers_m2m_bearer(monkeypatch):
+    """M2M token is sent as Bearer; cacheKey is omitted."""
+    import admin.cache as cache_mod
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        text = "{}"
+
+        def json(self):
+            return {"total": 1}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return _Resp()
+
+    async def _token():
+        return "m2m-tok"
+
+    monkeypatch.setenv("CHT_CACHE_CLEAR_URL", "https://x/api/internal/cache/clear/all")
+    monkeypatch.setenv("INTERNAL_CACHE_SECRET", "legacy-secret")
+    monkeypatch.setattr(cache_mod, "_m2m_cache_clear_token", _token)
+    monkeypatch.setattr(cache_mod.httpx, "AsyncClient", _Client)
+    result = await cache_mod.notify_cht_cache_clear(scope="contenthub")
+    assert result is True
+    assert captured["headers"].get("Authorization") == "Bearer m2m-tok"
+    assert "cacheKey" not in captured["url"]
+    assert "scope=contenthub" in captured["url"]

@@ -25,6 +25,12 @@ variable "deployment_package_path" {
   description = "Path to shared sync-lambda.zip"
 }
 
+variable "source_code_hash" {
+  type        = string
+  default     = ""
+  description = "When set, used instead of hashing the zip. Pass a hash of repo sources so pip/zip timestamp churn does not update the function."
+}
+
 variable "timeout" {
   type    = number
   default = 300

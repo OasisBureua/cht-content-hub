@@ -9,8 +9,6 @@ scope ``platform/export.read``. Always sends ``X-Request-Id``.
 
 from __future__ import annotations
 
-import base64
-import time
 import uuid
 from enum import StrEnum
 from typing import Any
@@ -18,6 +16,7 @@ from urllib.parse import quote
 
 import httpx
 
+from auth.outbound import CachedBearerAuth, TokenCache, fetch_access_token
 from schemas.platform_export import ExportSession, PlatformExportPacket
 from services.export_ingest.client import ExportClientError
 from services.export_ingest.normalize import normalize_export_payload
@@ -41,6 +40,7 @@ class HttpExportClient:
         client_secret: str = "",
         export_scope: str = "platform/export.read",
         timeout_seconds: float = 30.0,
+        token_cache: TokenCache | None = None,
     ) -> None:
         if not base_url:
             raise ValueError("platform export base_url is required")
@@ -55,6 +55,7 @@ class HttpExportClient:
         self.client_secret = client_secret
         self.export_scope = export_scope
         self.timeout_seconds = timeout_seconds
+        self._token_cache = token_cache
 
     async def aclose(self) -> None:
         if self._owns_client and self._client is not None:
@@ -63,66 +64,44 @@ class HttpExportClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
+            auth = None
+            if self.token_url and self.client_id and self.client_secret:
+                auth = CachedBearerAuth(
+                    token_url=self.token_url,
+                    client_id=self.client_id,
+                    client_secret=self.client_secret,
+                    scope=self.export_scope,
+                    cache=self._token_cache,
+                )
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout_seconds,
+                auth=auth,
             )
         return self._client
 
-    def _token_valid(self) -> bool:
-        if not self._bearer_token:
-            return False
-        # Static bearer (tests) has no expiry.
-        if self._token_expires_at <= 0:
-            return True
-        return time.time() < self._token_expires_at - 60
-
     async def _access_token(self, client: httpx.AsyncClient, *, force: bool = False) -> str:
-        if not force and self._token_valid():
-            return self._bearer_token  # type: ignore[return-value]
-        if not (self.token_url and self.client_id and self.client_secret):
-            # Static bearer (tests / injected token) — no refresh path.
-            if self._bearer_token:
-                return self._bearer_token
-            raise ExportClientError(
-                "Export M2M is not configured "
-                "(set bearer_token or token_url + client_id + client_secret)"
-            )
-        basic = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode()
-        ).decode()
-        try:
-            response = await client.post(
-                self.token_url,
-                data={
-                    "grant_type": "client_credentials",
-                    "scope": self.export_scope,
-                },
-                headers={
-                    "Authorization": f"Basic {basic}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
-            if response.status_code in (401, 403):
-                raise ExportClientError(
-                    f"M2M token request failed with HTTP {response.status_code}"
+        if self.token_url and self.client_id and self.client_secret:
+            try:
+                return await fetch_access_token(
+                    token_url=self.token_url,
+                    client_id=self.client_id,
+                    client_secret=self.client_secret,
+                    scope=self.export_scope,
+                    cache=self._token_cache,
+                    http=client,
+                    force=force,
                 )
-            response.raise_for_status()
-            payload = response.json()
-        except ExportClientError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise ExportClientError(f"M2M token request failed: {exc}") from exc
-        token = payload.get("access_token")
-        if not token:
-            raise ExportClientError("M2M token response missing access_token")
-        self._bearer_token = str(token)
-        expires_in = payload.get("expires_in")
-        try:
-            self._token_expires_at = time.time() + float(expires_in or 3600)
-        except (TypeError, ValueError):
-            self._token_expires_at = time.time() + 3600
-        return self._bearer_token
+            except Exception as exc:  # noqa: BLE001
+                if isinstance(exc, ExportClientError):
+                    raise
+                raise ExportClientError(f"M2M token request failed: {exc}") from exc
+        if self._bearer_token:
+            return self._bearer_token
+        raise ExportClientError(
+            "Export M2M is not configured "
+            "(set bearer_token or token_url + client_id + client_secret)"
+        )
 
     async def _auth_headers(
         self, client: httpx.AsyncClient, *, force_token: bool = False

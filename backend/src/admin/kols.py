@@ -5,9 +5,9 @@
 - SCRUM-63: Presigned KOL headshot PUT (direct browser → S3)
 - SCRUM-64: Cache-clear notification on every write / refresh completion
 
-Auth: existing X-API-Key server-to-server (`verify_admin_api_key`). CHT holds
-the API key and does its own Studio Cognito JWT + chm-* group check before
-proxying user requests here.
+Auth: Bearer M2M (`verify_admin_api_key`) with `hub/admin.{crud}`. Platform
+holds the client and does its own Studio Cognito JWT + chm-* group check
+before proxying user requests here.
 """
 
 from __future__ import annotations
