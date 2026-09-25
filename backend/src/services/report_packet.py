@@ -12,6 +12,9 @@ Data sources:
   campaign; otherwise shoot ``diarized_transcript`` fallback (Uche:
   Zoom first, shoot fallback only — no union for the same event)
 * ``surveyResponses`` — CPR-13 ``export_survey_responses``
+* ``template`` — CPR-25 pointer (``type``/``semver``/``s3Key``) to the
+  template body in the cht-reports bucket: the campaign's linked template,
+  else the latest ``executive_summary`` version
 
 When an export session has ``transcript_s3_key`` but empty
 ``transcript_text``, and ``PLATFORM_EXPORT_TRANSCRIPT_BUCKET`` is set,
@@ -30,6 +33,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.campaign import ReportTemplate
 from models.export_warehouse import ExportSession, ExportSurveyResponse
 from models.shoot import Shoot
 from schemas.report_packet import (
@@ -37,6 +41,7 @@ from schemas.report_packet import (
     ReportPacketPlatformSliceOut,
     ReportPacketSessionOut,
     ReportPacketSurveyOut,
+    ReportPacketTemplateOut,
     SourceCompletenessOut,
     SourceStatus,
 )
@@ -50,6 +55,8 @@ from services.export_ingest.transcript_s3 import (
 from services.export_ingest.vtt import strip_vtt
 
 log = logging.getLogger(__name__)
+
+DEFAULT_TEMPLATE_TYPE = "executive_summary"
 
 
 async def build_report_packet(
@@ -113,6 +120,13 @@ async def build_report_packet(
         status=SourceStatus.OK if survey_responses else SourceStatus.MISSING,
     )
 
+    template = await _resolve_template(db, campaign.template_id)
+    input_completeness["template"] = SourceCompletenessOut(
+        fetched_at=template.updated_at if template else None,
+        row_count=1 if template else 0,
+        status=SourceStatus.OK if template else SourceStatus.MISSING,
+    )
+
     return ReportInputPacketOut(
         campaign_id=campaign.id,
         campaign_name=campaign.name,
@@ -123,8 +137,52 @@ async def build_report_packet(
         platform_slices=platform_slices,
         sessions=sessions,
         survey_responses=survey_responses,
+        template=(
+            ReportPacketTemplateOut(
+                id=template.id,
+                type=template.type,
+                semver=template.semver,
+                s3_key=template.s3_key,
+            )
+            if template
+            else None
+        ),
         input_completeness=input_completeness,
     )
+
+
+async def _resolve_template(
+    db: AsyncSession, template_id: int | None
+) -> ReportTemplate | None:
+    """CPR-25: the campaign's linked template, else the latest Executive Summary.
+
+    Only rows with an S3 body (``s3_key`` + ``semver``) count; older admin
+    template rows are catalog entries without a body.
+    """
+    if template_id is not None:
+        linked = await db.get(ReportTemplate, template_id)
+        if linked is not None and linked.s3_key and linked.semver:
+            return linked
+
+    rows = list(
+        (
+            await db.execute(
+                select(ReportTemplate).where(
+                    ReportTemplate.type == DEFAULT_TEMPLATE_TYPE,
+                    ReportTemplate.s3_key.is_not(None),
+                    ReportTemplate.semver.is_not(None),
+                )
+            )
+        ).scalars()
+    )
+    return max(rows, key=lambda r: _semver_key(r.semver), default=None)
+
+
+def _semver_key(semver: str | None) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in (semver or "").split("."))
+    except ValueError:
+        return (-1,)
 
 
 def _resolve_transcript_store() -> TranscriptStore | None:
