@@ -171,6 +171,23 @@
       "Resource": "*"
     },
     {
+      "Sid": "CognitoPoolKmsDecrypt",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:CreateGrant",
+        "kms:GenerateDataKey",
+        "kms:GenerateDataKeyWithoutPlaintext"
+      ],
+      "Resource": [
+        "arn:aws:kms:us-east-1:233636046512:key/mrk-fba1b0aa57a540b2b1ad2044a6c97f2f",
+        "arn:aws:kms:us-east-1:233636046512:alias/cht-dev-cognito-mrk",
+        "arn:aws:kms:us-east-1:233636046512:key/mrk-9dbd1eff291c4438b6ddae7bf012267f",
+        "arn:aws:kms:us-east-1:233636046512:alias/cht-platform-cognito-mrk"
+      ]
+    },
+    {
       "Sid": "CognitoHubResourceServer",
       "Effect": "Allow",
       "Action": [

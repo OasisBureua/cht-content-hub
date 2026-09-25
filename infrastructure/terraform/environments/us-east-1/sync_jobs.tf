@@ -146,8 +146,8 @@ locals {
       reserved_concurrent_executions = 1
     }
     # CPR-9 — S3 ObjectCreated on zoom-recordings/*.vtt → warehouse text.
-    # Direct S3 notify (not SQS). Platform-tool owns the bucket notification
-    # + lambda:AddPermission; this job owns GetObject + row update.
+    # Direct S3 notify (not SQS). Hub owns lambda:AddPermission; platform-tool
+    # owns the bucket notification. This job owns GetObject + row update.
     # Does not replace platform_export_ingest (backfill / late campaignId).
     vtt_object_ingest = {
       enabled                        = lookup(var.sync_jobs_enabled, "vtt_object_ingest", false)

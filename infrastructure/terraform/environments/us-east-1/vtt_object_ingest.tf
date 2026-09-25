@@ -53,6 +53,19 @@ resource "aws_iam_role_policy" "vtt_object_ingest_async_dlq" {
   })
 }
 
+# CPR-29 — Hub owns this. Platform CI cannot AddPermission on our function.
+# Platform sets the bucket notification to this Lambda after apply.
+resource "aws_lambda_permission" "vtt_object_ingest_s3" {
+  count = local.vtt_object_ingest_enabled && var.platform_export_transcript_bucket != "" ? 1 : 0
+
+  statement_id   = "AllowS3SessionAssetsInvokeVttObjectIngest"
+  action         = "lambda:InvokeFunction"
+  function_name  = module.sync_lambda["vtt_object_ingest"].function_name
+  principal      = "s3.amazonaws.com"
+  source_arn     = "arn:aws:s3:::${var.platform_export_transcript_bucket}"
+  source_account = "233636046512"
+}
+
 resource "aws_lambda_function_event_invoke_config" "vtt_object_ingest" {
   count = local.vtt_object_ingest_enabled ? 1 : 0
 

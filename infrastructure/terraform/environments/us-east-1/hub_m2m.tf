@@ -33,7 +33,7 @@ module "hub_cognito" {
   identifier           = "hub"
   name                 = "Content Hub API"
   scopes               = local.hub_m2m_scopes
-  create_m2m_client    = true
+  create_m2m_client    = false
   m2m_client_name      = "cht-hub-m2m-${var.environment}"
   m2m_outbound_scopes  = var.hub_m2m_outbound_scopes
   m2m_secret_name      = local.hub_m2m_secret_name
