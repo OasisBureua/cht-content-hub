@@ -83,12 +83,17 @@ sync_jobs_enabled = {
   wordpress_projection_ops = false
   # CPR-13 Zoom export ingest — off until CPR-12 M2M + export API are live.
   platform_export_ingest   = false
+  # CPR-9 S3 VTT → warehouse. Enable after dev smoke; then wire platform notify.
+  vtt_object_ingest        = false
 }
+
+# cht-platform-session-assets once vtt_object_ingest is enabled in prod.
+platform_export_transcript_bucket = "cht-platform-session-assets"
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
 wordpress_ingress_cidr_blocks = []
 
-cht_cache_clear_url = "https://testapp.communityhealth.media/api/internal/cache/clear/all"
+cht_cache_clear_url = "https://app.communityhealth.media/api/internal/cache/clear/all"
 
 # ── DR (us-east-2) — applied by deploy-prod.yml after use1 ───────────────────
 dr_vpc_id = "vpc-0fbc2514f4e3467f2"

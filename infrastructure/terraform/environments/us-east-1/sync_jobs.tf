@@ -2,6 +2,15 @@
 
 locals {
   sync_lambda_package = var.sync_lambda_package_path != "" ? var.sync_lambda_package_path : abspath("${path.module}/../../../../dist/sync-lambda.zip")
+  # Hash our sources + lockfile, not the zip. pip/zip timestamps must not
+  # UpdateFunctionCode on every deploy.
+  _sync_root        = abspath("${path.module}/../../../../sync")
+  _backend_src_root = abspath("${path.module}/../../../../backend/src")
+  sync_lambda_source_hash = base64sha256(join("", concat(
+    [filesha256("${local._sync_root}/requirements.txt")],
+    [for f in sort(fileset(local._sync_root, "**/*.py")) : filesha256("${local._sync_root}/${f}")],
+    [for f in sort(fileset(local._backend_src_root, "**/*.py")) : filesha256("${local._backend_src_root}/${f}")],
+  )))
 
   sync_jobs = {
     cache_clear = {
@@ -136,6 +145,19 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    # CPR-9 — S3 ObjectCreated on zoom-recordings/*.vtt → warehouse text.
+    # Direct S3 notify (not SQS). Platform-tool owns the bucket notification
+    # + lambda:AddPermission; this job owns GetObject + row update.
+    # Does not replace platform_export_ingest (backfill / late campaignId).
+    vtt_object_ingest = {
+      enabled                        = lookup(var.sync_jobs_enabled, "vtt_object_ingest", false)
+      handler                        = "jobs.vtt_object_ingest.handler.handler"
+      timeout                        = 60
+      memory_size                    = 256
+      schedule_expression            = null
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
   }
 }
 
@@ -157,6 +179,9 @@ locals {
       } : {},
       { PLATFORM_EXPORT_HTTP_MODE = "input_packet" }
     )
+    vtt_object_ingest = {
+      PLATFORM_EXPORT_TRANSCRIPT_BUCKET = var.platform_export_transcript_bucket
+    }
   }
 
   sync_job_extra_secret_arns = {
@@ -175,6 +200,7 @@ module "sync_lambda" {
   job_name                       = each.key
   handler                        = each.value.handler
   deployment_package_path        = local.sync_lambda_package
+  source_code_hash               = local.sync_lambda_source_hash
   timeout                        = each.value.timeout
   memory_size                    = each.value.memory_size
   schedule_expression            = each.value.schedule_expression

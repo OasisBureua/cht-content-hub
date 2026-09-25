@@ -6,8 +6,8 @@ CHT's `/api/admin/kol-network/:slug/*` proxy (SCRUM-65 CHT side).
 Not exposed publicly. `/engagement` and `/open-payments` in particular are
 individually-attributable data that should never leak to non-admin surfaces.
 
-Auth: X-API-Key server-to-server (`verify_admin_api_key`). CHT enforces the
-admin JWT + chm-* group check before proxying user requests here.
+Auth: Bearer M2M (`verify_admin_api_key`) with `hub/admin.{crud}`. Platform
+enforces the admin JWT + chm-* group check before proxying user requests here.
 
 Routes (all under /api/admin/kols/{slug}):
 - GET /engagement    — WebinarAttendance aggregates

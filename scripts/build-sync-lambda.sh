@@ -28,7 +28,8 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$OUT_DIR"
 
 echo "→ install dependencies"
-"$PYTHON" -m pip install -r "$REPO_ROOT/sync/requirements.txt" -t "$BUILD_DIR" --quiet --upgrade
+# No --upgrade: CI must not churn wheels every run or every Lambda gets a new hash.
+"$PYTHON" -m pip install -r "$REPO_ROOT/sync/requirements.txt" -t "$BUILD_DIR" --quiet
 
 echo "→ copy sync handlers"
 cp -R "$REPO_ROOT/sync/jobs" "$REPO_ROOT/sync/shared" "$BUILD_DIR/"
@@ -43,11 +44,25 @@ rsync -a \
 echo "→ strip bulky test / cache dirs from vendored packages"
 find "$BUILD_DIR" -type d \( -name '__pycache__' -o -name 'tests' -o -name 'test' \) -prune -exec rm -rf {} + 2>/dev/null || true
 
+echo "→ normalize mtimes (stable Lambda source_code_hash unless contents change)"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1704067200}"
+"$PYTHON" - "$BUILD_DIR" "$SOURCE_DATE_EPOCH" <<'PY'
+import os
+import sys
+
+root, epoch_s = sys.argv[1], sys.argv[2]
+epoch = int(epoch_s)
+for dirpath, dirnames, filenames in os.walk(root):
+    os.utime(dirpath, (epoch, epoch))
+    for name in dirnames + filenames:
+        os.utime(os.path.join(dirpath, name), (epoch, epoch))
+PY
+
 echo "→ zip"
 rm -f "$OUT_ZIP"
 (
   cd "$BUILD_DIR"
-  zip -r9q "$OUT_ZIP" . -x '*.pyc' -x '*__pycache__*'
+  find . -type f ! -name '*.pyc' ! -path '*__pycache__*' | LC_ALL=C sort | zip -X -q "$OUT_ZIP" -@
 )
 
 if [ -n "$VERSION" ]; then

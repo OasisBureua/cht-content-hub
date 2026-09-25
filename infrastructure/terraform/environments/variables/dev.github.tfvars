@@ -73,7 +73,12 @@ sync_jobs_enabled = {
   wordpress_projection_ops       = true
   # CPR-13 Zoom export ingest — keep OFF until CPR-12 M2M + export API ready.
   platform_export_ingest         = false
+  # CPR-9 S3 VTT → warehouse. Platform-tool wires notify after this ARN exists.
+  vtt_object_ingest              = true
 }
+
+# Same bucket platform-tool notifies on (prefix zoom-recordings/, suffix .vtt).
+platform_export_transcript_bucket = "cht-dev-session-assets"
 
 # Platform integration secrets are NOT stored here (committed file).
 # Add GitHub Environment "development" secrets → TF_VAR_* on deploy.

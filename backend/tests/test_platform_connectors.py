@@ -7,6 +7,7 @@ from datetime import date
 import httpx
 import pytest
 
+from conftest import api_headers
 from services.connectors.linkedin_ads import fetch_linkedin_ads_metrics
 from services.connectors.youtube import fetch_youtube_metrics
 
@@ -163,7 +164,7 @@ async def test_platform_sync_live_linkedin(client, monkeypatch):
 
     create = await client.post(
         "/api/admin/campaigns",
-        headers={"X-API-Key": "test-public-key"},
+        headers=api_headers(),
         json={
             "name": "Live LinkedIn",
             "platforms": ["linkedin"],
@@ -175,20 +176,20 @@ async def test_platform_sync_live_linkedin(client, monkeypatch):
 
     await client.patch(
         "/api/admin/integrations",
-        headers={"X-API-Key": "test-public-key"},
+        headers=api_headers(),
         json={"platforms": {"linkedin": {"enabled": True}}},
     )
 
     sync = await client.post(
         f"/api/admin/campaigns/{campaign_id}/platforms/linkedin/sync",
-        headers={"X-API-Key": "test-public-key"},
+        headers=api_headers(),
     )
     assert sync.status_code == 200
     assert sync.json()["rowCount"] == 1
 
     platform_data = await client.get(
         f"/api/admin/campaigns/{campaign_id}/platform-data",
-        headers={"X-API-Key": "test-public-key"},
+        headers=api_headers(),
     )
     linkedin = next(
         item for item in platform_data.json()["items"] if item["platform"] == "linkedin"

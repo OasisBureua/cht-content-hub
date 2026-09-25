@@ -133,3 +133,9 @@ variable "create_service" {
   default     = true
   description = "When false, create task definition + SG only (no ECS service or autoscaling)."
 }
+
+variable "extra_environment" {
+  type        = map(string)
+  default     = {}
+  description = "Non-secret container env (e.g. HUB_M2M_ISSUER). Empty values are omitted."
+}
