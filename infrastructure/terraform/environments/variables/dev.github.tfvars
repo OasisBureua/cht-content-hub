@@ -84,6 +84,7 @@ platform_export_transcript_bucket = "cht-dev-session-assets"
 # Outbound stays cht-contenthub-m2m-dev / cht-dev-cognito-m2m-export.
 cognito_user_pool_id = "us-east-1_J51gzfO0I"
 cognito_auth_domain  = "chm-dev.auth.us-east-1.amazoncognito.com"
+platform_export_m2m_secret_arn = "cht-dev-cognito-m2m-export"
 
 # Platform integration secrets are NOT stored here (committed file).
 # Add GitHub Environment "development" secrets → TF_VAR_* on deploy.

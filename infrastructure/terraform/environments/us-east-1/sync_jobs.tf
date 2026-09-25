@@ -217,8 +217,16 @@ module "sync_lambda" {
   # Per-job env vars. Merged with the module's default env; module defaults
   # win on collision. wordpress_reconcile needs its own ingress URL so it
   # can fire synthetic HMAC-signed webhooks at the ECS route.
-  extra_env         = lookup(local.sync_job_extra_env, each.key, {})
-  extra_secret_arns = lookup(local.sync_job_extra_secret_arns, each.key, [])
+  extra_env = merge(
+    var.platform_export_m2m_secret_arn != "" ? {
+      PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
+    } : {},
+    lookup(local.sync_job_extra_env, each.key, {}),
+  )
+  extra_secret_arns = compact(concat(
+    [local.outbound_m2m_secret_iam_arn],
+    lookup(local.sync_job_extra_secret_arns, each.key, []),
+  ))
 
   depends_on = [module.app_secrets]
 }

@@ -80,6 +80,19 @@ def jwks_url_for(settings: Settings) -> str:
     return f"{issuer}/.well-known/jwks.json"
 
 
+def cognito_issuer_aliases(issuer: str) -> list[str]:
+    """Accept both Cognito iss hosts (cognito-idp and issuer-cognito-idp)."""
+    value = (issuer or "").strip().rstrip("/")
+    if not value:
+        return []
+    aliases = {value}
+    if "://issuer-cognito-idp." in value:
+        aliases.add(value.replace("://issuer-cognito-idp.", "://cognito-idp.", 1))
+    elif "://cognito-idp." in value:
+        aliases.add(value.replace("://cognito-idp.", "://issuer-cognito-idp.", 1))
+    return sorted(aliases)
+
+
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     issuer = (settings.hub_m2m_issuer or "").strip()
     test_secret = (settings.hub_m2m_test_secret or "").strip()
@@ -102,7 +115,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
             )
             decode_kwargs = {
                 "algorithms": ["RS256"],
-                "issuer": issuer,
+                "issuer": cognito_issuer_aliases(issuer),
                 "options": {
                     "verify_aud": bool(settings.hub_m2m_audience),
                     "require": ["exp", "iss"],

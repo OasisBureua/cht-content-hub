@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from auth.m2m import (
+    cognito_issuer_aliases,
     crud_for_method,
     decode_access_token,
     has_required_scope,
@@ -35,6 +36,13 @@ def _settings() -> Settings:
         hub_m2m_issuer="https://hub.test",
         hub_m2m_test_secret="test-m2m-hs256",
     )
+
+
+def test_cognito_issuer_aliases_both_hosts():
+    pool = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_J51gzfO0I"
+    live = "https://issuer-cognito-idp.us-east-1.amazonaws.com/us-east-1_J51gzfO0I"
+    assert set(cognito_issuer_aliases(pool)) == {pool, live}
+    assert set(cognito_issuer_aliases(live)) == {pool, live}
 
 
 def test_crud_scope_mapping():

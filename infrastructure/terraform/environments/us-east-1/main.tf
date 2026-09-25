@@ -89,6 +89,7 @@ module "iam" {
   wordpress_events_queue_arn = try(module.sync_lambda["wordpress_ingest"].sqs_queue_arn, "")
   hcp_intel_poll_enabled     = lookup(var.sync_jobs_enabled, "hcp_intel_poll", false)
   hcp_intel_poll_queue_arn   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_arn, "")
+  extra_secret_arns          = compact([local.outbound_m2m_secret_iam_arn])
 }
 
 module "s3_assets" {
@@ -214,8 +215,11 @@ module "ecs_api" {
   assets_bucket              = module.s3_assets.bucket_name
   extra_environment = {
     HUB_M2M_ISSUER   = local.hub_m2m_issuer
+    HUB_M2M_JWKS_URL = local.hub_m2m_jwks_url
     HUB_M2M_AUDIENCE = var.hub_m2m_audience
     HUB_M2M_RESOURCE = "hub"
+    CHT_CACHE_CLEAR_URL            = var.cht_cache_clear_url
+    PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
   }
 
   depends_on = [module.app_secrets, module.sync_lambda, module.s3_assets]

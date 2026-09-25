@@ -118,7 +118,8 @@ Hub terraform does not create platform’s or reports’ clients.
 |---|---|
 | `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS only |
 | `cognito_auth_domain` | Host for token URL |
-| `HUB_M2M_ISSUER` | `https://cognito-idp.us-east-1.amazonaws.com/<poolId>` (derived if unset) |
+| `HUB_M2M_ISSUER` | Token `iss` (`https://issuer-cognito-idp.us-east-1.amazonaws.com/<poolId>`). Decode also aliases `cognito-idp`. |
+| `HUB_M2M_JWKS_URL` | `https://cognito-idp.us-east-1.amazonaws.com/<poolId>/.well-known/jwks.json` |
 | `HUB_M2M_RESOURCE` | Resource-server identifier, default `hub` |
 | `HUB_M2M_AUDIENCE` | Optional `aud` / `client_id` check |
 | `HUB_M2M_TEST_SECRET` | Tests only (HS256). Never set in AWS |
