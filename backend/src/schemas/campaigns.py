@@ -294,6 +294,8 @@ class TemplateOut(ApiModel):
     name: str
     type: str
     description: str
+    semver: str | None = None
+    s3_key: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -306,3 +308,6 @@ class TemplateCreate(ApiModel):
     name: str
     type: str
     description: str = ""
+    # CPR-25: pointer to the template body in the cht-reports bucket.
+    semver: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
+    s3_key: str | None = Field(default=None, max_length=500)

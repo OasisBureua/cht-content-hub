@@ -44,6 +44,15 @@ class ReportPacketSurveyOut(ApiModel):
     answers: dict[str, Any]
 
 
+class ReportPacketTemplateOut(ApiModel):
+    """CPR-25: where the worker loads the prompt + HTML skeleton from."""
+
+    id: int
+    type: str
+    semver: str
+    s3_key: str
+
+
 class ReportPacketPlatformSliceOut(ApiModel):
     platform: str
     fetch_date: date
@@ -63,4 +72,5 @@ class ReportInputPacketOut(ApiModel):
     platform_slices: list[ReportPacketPlatformSliceOut]
     sessions: list[ReportPacketSessionOut]
     survey_responses: list[ReportPacketSurveyOut]
+    template: ReportPacketTemplateOut | None = None
     input_completeness: dict[str, SourceCompletenessOut]
