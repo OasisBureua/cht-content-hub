@@ -171,6 +171,27 @@
       "Resource": "*"
     },
     {
+      "Sid": "CognitoHubResourceServer",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:CreateResourceServer",
+        "cognito-idp:DescribeResourceServer",
+        "cognito-idp:UpdateResourceServer",
+        "cognito-idp:DeleteResourceServer",
+        "cognito-idp:ListResourceServers",
+        "cognito-idp:CreateUserPoolClient",
+        "cognito-idp:DescribeUserPoolClient",
+        "cognito-idp:UpdateUserPoolClient",
+        "cognito-idp:DeleteUserPoolClient",
+        "cognito-idp:ListUserPoolClients",
+        "cognito-idp:DescribeUserPool"
+      ],
+      "Resource": [
+        "arn:aws:cognito-idp:us-east-1:233636046512:userpool/us-east-1_J51gzfO0I",
+        "arn:aws:cognito-idp:us-east-1:233636046512:userpool/us-east-1_whXKKxAdX"
+      ]
+    },
+    {
       "Sid": "DeployLogsRead",
       "Effect": "Allow",
       "Action": [
