@@ -20,6 +20,7 @@ Each environment gets its **own** Lambda functions, queues, and schedules. Dev a
 | `post_tagging` | every 12h | EventBridge → Lambda | no (catalog not on Hub yet) |
 | `playlist_doctor_tagger` | 04:30 UTC | EventBridge → Lambda | no |
 | `platform_export_ingest` | daily 05:00 UTC | EventBridge → Lambda | no (CPR-13; needs CPR-12 M2M) |
+| `vtt_object_ingest` | S3 ObjectCreated | direct S3 notify (not SQS) | no (CPR-9; enable per env + platform notify) |
 
 **Do not migrate:** `kol_cache_warm` (CHT owns Redis).
 
@@ -68,6 +69,7 @@ sync/
 │   ├── openalex_backfill/
 │   ├── kol_hcp_matcher/
 │   ├── platform_export_ingest/
+│   ├── vtt_object_ingest/
 │   └── cache_clear/
 └── shared/
     ├── runtime.py            # path setup + asyncio.run

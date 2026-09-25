@@ -37,3 +37,9 @@ variable "hcp_intel_poll_enabled" {
   type        = bool
   default     = false
 }
+
+variable "extra_secret_arns" {
+  description = "Additional Secrets Manager ARNs the ECS task role may read (e.g. cht-*-cognito-m2m-export)."
+  type        = list(string)
+  default     = []
+}

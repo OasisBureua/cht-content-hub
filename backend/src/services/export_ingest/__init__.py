@@ -51,6 +51,13 @@ from services.export_ingest.upsert import (
     upsert_packet,
 )
 from services.export_ingest.vtt import strip_vtt
+from services.export_ingest.vtt_object import (
+    VttObjectResult,
+    apply_vtt_object,
+    decode_object_key,
+    parse_vtt_object_key,
+    stripped_text_hash,
+)
 
 __all__ = [
     "AttendanceEventType",
@@ -70,7 +77,12 @@ __all__ = [
     "S3TranscriptStore",
     "TranscriptStore",
     "TranscriptStoreError",
+    "VttObjectResult",
+    "apply_vtt_object",
     "attendance_dedupe_key",
+    "decode_object_key",
+    "parse_vtt_object_key",
+    "stripped_text_hash",
     "build_http_export_client",
     "enrich_session_transcript",
     "ingest_campaign",

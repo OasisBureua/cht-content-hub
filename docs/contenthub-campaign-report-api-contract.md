@@ -52,7 +52,7 @@ Content Hub (background + storage)
 
 | Caller | Header |
 |---|---|
-| CHT → Content Hub | `X-API-Key: ${CONTENTHUB_API_KEY}`, `X-Request-Id: <uuid>` |
+| CHT → Content Hub | `Authorization: Bearer <access_token>` (`hub/admin.*`), `X-Request-Id: <uuid>` |
 | Browser → CHT | Session / admin JWT |
 
 After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.

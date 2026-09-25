@@ -14,6 +14,7 @@ Operational docs for the CHT Content Hub producer service.
 | [contenthub-admin-architecture.md](./contenthub-admin-architecture.md) | Admin routes and Cognito group matrix |
 | [cht-public-api-contract.md](./cht-public-api-contract.md) | CHT catalog API contract |
 | [cache-sync-contract.md](./cache-sync-contract.md) | Lambda/worker → CHT cache clear |
+| [m2m-callers.md](./m2m-callers.md) | One Cognito resource server per service; Hub owns `hub` |
 | [WEBHOOK_API.md](./WEBHOOK_API.md) | ops-console webhook ingest |
 | [Content_Hub_Migration_Plan.pdf](./Content_Hub_Migration_Plan.pdf) | PDF export of migration plan |
 | [CPR-REPORT-PIPELINE-AGENT-CONTEXT.md](./CPR-REPORT-PIPELINE-AGENT-CONTEXT.md) | CPR waves/tickets (Track H) — schema, export ingest, packet, VTT |

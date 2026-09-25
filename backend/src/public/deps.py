@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, Request
 
+from auth.m2m import require_m2m_token
 from config import Settings, get_settings
 
 
 def verify_public_api_key(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
-    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> str:
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="Missing API key")
-    if x_api_key != settings.public_api_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    return x_api_key
+    """Guard /api/public/* — Bearer ``hub/catalog.{crud}`` required."""
+    return require_m2m_token(
+        request, settings, resource="catalog", authorization=authorization
+    )

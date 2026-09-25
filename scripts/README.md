@@ -31,6 +31,9 @@ See [.github/CI_CD.md](../.github/CI_CD.md):
 | `next-ecr-image-tag.sh [REPO] [REGION]` | Next semver ECR tag per repo |
 | `next-dev-image-tag.sh` | Wrapper → `next-ecr-image-tag.sh` |
 | `verify-github-env-secrets.sh [development\|production]` | Fail fast if GitHub secrets missing |
+| `ci-detect-deploy-scope.sh` | Set api/sync/infra lane outputs for Actions |
+| `ci-resolve-deploy-base.sh` | Resolve the git SHA to diff for deploy scope |
+| `ci-resolve-api-image-from-state.sh` | Keep the applied ECS image on infra/sync-only plans |
 | `build-images.sh [VERSION]` | Build `contenthub-api` locally |
 | `push-images.sh [VERSION] [REGION] [dev\|prod]` | Push to dev or prod ECR repo |
 | `deploy-primary.sh [dev\|prod] [plan]` | Terraform us-east-1 (infra) |

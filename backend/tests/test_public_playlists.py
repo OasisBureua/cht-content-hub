@@ -72,7 +72,7 @@ async def test_playlists_requires_api_key(http_client: AsyncClient):
 async def test_playlists_rejects_invalid_api_key(http_client: AsyncClient):
     response = await http_client.get(
         "/api/public/playlists",
-        headers={"X-API-Key": "wrong-key"},
+        headers={"Authorization": "Bearer not-a-jwt"},
     )
     assert response.status_code == 401
 

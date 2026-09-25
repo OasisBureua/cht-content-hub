@@ -35,7 +35,10 @@ resource "aws_iam_role_policy" "task_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.prefix}-*"
+      Resource = concat(
+        ["arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.prefix}-*"],
+        var.extra_secret_arns,
+      )
     }]
   })
 }

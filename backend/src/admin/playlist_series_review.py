@@ -6,7 +6,7 @@ Endpoints:
 - POST /api/admin/playlist-series-review/{id}/approve  — approve + write playlist_tags
 - POST /api/admin/playlist-series-review/{id}/reject   — reject (audit trail)
 
-Auth: X-API-Key server-to-server. Same auth model as other admin endpoints.
+Auth: Bearer M2M with `hub/admin.{crud}`. Same auth model as other admin endpoints.
 
 On approval:
 - Sets review row status='approved', reviewed_at=now, reviewed_by=<supplied>.

@@ -3,8 +3,8 @@
 GET  /api/admin/playlists/{youtube_playlist_id}/tags   → current tags + lane (404 if no row)
 PATCH /api/admin/playlists/{youtube_playlist_id}/tags  → upsert tags/lane
 
-Auth: X-API-Key server-to-server. CHT holds the key and does its own
-Studio Cognito JWT + chm-* group check before proxying user requests.
+Auth: Bearer M2M with `hub/admin.{crud}`. Platform holds the client and
+does its own Studio Cognito JWT + chm-* group check before proxying.
 
 PATCH is upsert semantics: if no `playlist_tags` row exists for the
 given `youtube_playlist_id`, one is created with the requested tags/lane

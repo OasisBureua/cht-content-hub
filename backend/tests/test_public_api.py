@@ -32,7 +32,7 @@ async def test_kols_requires_api_key(http_client: AsyncClient):
     assert response.status_code == 401
     body = response.json()
     assert body["error"]["code"] == "AUTH_INVALID_KEY"
-    assert body["error"]["message"] == "Missing API key"
+    assert body["error"]["message"] == "Missing bearer token"
     assert body["error"]["status"] == 401
     assert body["error"]["request_id"]
 
@@ -41,12 +41,12 @@ async def test_kols_requires_api_key(http_client: AsyncClient):
 async def test_kols_rejects_invalid_api_key(http_client: AsyncClient):
     response = await http_client.get(
         "/api/public/kols",
-        headers={"X-API-Key": "wrong-key"},
+        headers={"Authorization": "Bearer not-a-jwt"},
     )
     assert response.status_code == 401
     body = response.json()
     assert body["error"]["code"] == "AUTH_INVALID_KEY"
-    assert body["error"]["message"] == "Invalid API key"
+    assert body["error"]["message"] == "Invalid bearer token"
     assert body["error"]["status"] == 401
 
 
@@ -217,7 +217,7 @@ async def test_hcp_upsert_requires_api_key(http_client: AsyncClient):
     assert response.status_code == 401
     body = response.json()
     assert body["error"]["code"] == "AUTH_INVALID_KEY"
-    assert body["error"]["message"] == "Missing API key"
+    assert body["error"]["message"] == "Missing bearer token"
 
 
 @pytest.mark.asyncio

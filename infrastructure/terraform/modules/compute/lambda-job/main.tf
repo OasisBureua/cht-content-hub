@@ -77,7 +77,7 @@ resource "aws_lambda_function" "this" {
   memory_size   = var.memory_size
 
   filename         = var.deployment_package_path
-  source_code_hash = filebase64sha256(var.deployment_package_path)
+  source_code_hash = var.source_code_hash != "" ? var.source_code_hash : filebase64sha256(var.deployment_package_path)
 
   reserved_concurrent_executions = var.reserved_concurrent_executions >= 0 ? var.reserved_concurrent_executions : null
 

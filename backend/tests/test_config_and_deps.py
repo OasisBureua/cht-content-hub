@@ -4,9 +4,30 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from config import Settings, get_settings
+from conftest import mint_test_token
 from public.deps import verify_public_api_key
+
+
+def _request(method: str = "GET") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+
+
+def _m2m_settings() -> Settings:
+    return Settings(
+        hub_m2m_issuer="https://hub.test",
+        hub_m2m_test_secret="test-m2m-hs256",
+    )
 
 
 def test_settings_defaults():
@@ -24,23 +45,25 @@ def test_get_settings_cached():
 
 
 def test_verify_public_api_key_valid():
-    settings = Settings(public_api_key="good-key")
-    assert verify_public_api_key(settings, "good-key") == "good-key"
+    token = mint_test_token("hub/catalog.read")
+    caller = verify_public_api_key(
+        _request(), _m2m_settings(), f"Bearer {token}"
+    )
+    assert caller.startswith("m2m:")
 
 
 def test_verify_public_api_key_missing():
-    settings = Settings(public_api_key="good-key")
     with pytest.raises(HTTPException) as exc:
-        verify_public_api_key(settings, None)
+        verify_public_api_key(_request(), _m2m_settings(), None)
     assert exc.value.status_code == 401
-    assert exc.value.detail == "Missing API key"
+    assert exc.value.detail == "Missing bearer token"
 
 
 def test_verify_public_api_key_invalid():
-    settings = Settings(public_api_key="good-key")
     with pytest.raises(HTTPException) as exc:
-        verify_public_api_key(settings, "bad-key")
+        verify_public_api_key(_request(), _m2m_settings(), "Bearer not-a-jwt")
     assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid bearer token"
 
 
 def test_public_limiter_configured():
