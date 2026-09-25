@@ -80,6 +80,11 @@ sync_jobs_enabled = {
 # Same bucket platform-tool notifies on (prefix zoom-recordings/, suffix .vtt).
 platform_export_transcript_bucket = "cht-dev-session-assets"
 
+# Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub` +
+# outbound client cht-hub-m2m-dev on apply.
+cognito_user_pool_id = "us-east-1_J51gzfO0I"
+cognito_auth_domain  = "chm-dev.auth.us-east-1.amazoncognito.com"
+
 # Platform integration secrets are NOT stored here (committed file).
 # Add GitHub Environment "development" secrets → TF_VAR_* on deploy.
 # See .github/CI_CD.md — e.g. LINKEDIN_ADS_CLIENT_ID, YOUTUBE_API_KEY, OPENAI_API_KEY.

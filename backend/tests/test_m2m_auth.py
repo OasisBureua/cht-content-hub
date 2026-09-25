@@ -43,6 +43,7 @@ def test_crud_scope_mapping():
     assert required_scope("admin", "PATCH") == "hub/admin.update"
     assert required_scope("admin", "DELETE") == "hub/admin.delete"
     assert required_scope("reports", "GET") == "hub/reports.read"
+    assert required_scope("catalog", "GET", server="hub") == "hub/catalog.read"
     assert crud_for_method("PUT") == "update"
 
 
@@ -103,8 +104,8 @@ def test_hs256_token_accepted_and_scope_checked():
             resource="admin",
             authorization=f"Bearer {token}",
         )
-    assert exc.value.status_code == 403
-    assert "hub/admin.update" in str(exc.value.detail)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Unauthorized"
 
 
 def test_invalid_bearer_rejected():
@@ -129,7 +130,7 @@ async def test_public_tags_bearer_wrong_scope(client):
         "/api/public/tags",
         headers={"Authorization": f"Bearer {mint_test_token('hub/reports.read')}"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -138,8 +139,8 @@ async def test_admin_requires_admin_scope(client):
         "/api/admin/tagger/runs",
         headers={"Authorization": f"Bearer {mint_test_token('hub/catalog.read')}"},
     )
-    assert r.status_code == 403
-    assert "hub/admin.read" in r.json()["message"]
+    assert r.status_code == 401
+    assert r.json()["message"] == "Unauthorized"
 
 
 @pytest.mark.asyncio

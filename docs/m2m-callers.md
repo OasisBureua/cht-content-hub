@@ -1,163 +1,144 @@
-# Hub M2M: one client per env, token on every CRUD call
+# M2M: one resource server per service
 
-Hub gets **its own Cognito M2M app client per environment** (dev / test / prod).
-That is Hub’s service identity.
+Whoever **owns the HTTP API** owns a Cognito **resource server**. Callers never
+share that server. Each caller uses **its own** M2M app client and requests
+that server’s scopes.
 
-Every Hub HTTP surface that is essentially CRUD must take
-`Authorization: Bearer <access_token>`. The token’s scopes must match the
-**operation** (read / create / update / delete) on that resource. No more
-shared `X-API-Key` / `INTERNAL_CACHE_SECRET` for those paths.
+Same user pool can host every resource server (the CHT pool already has
+`platform`). Do **not** hang Hub scopes off the `platform` identifier.
+
+| Service | Resource server | Identifier | Token scopes look like | Who requests them |
+|---|---|---|---|---|
+| cht-platform-tool | CHT Platform API | `platform` | `platform/export.read` | Hub (outbound) |
+| Content Hub | Content Hub API | `hub` | `hub/catalog.read`, `hub/admin.update` | Platform, reports, later companion |
+| cht-reports | Reports API (when they expose M2M) | `reports` | `reports/…` | Whoever calls reports |
+| Companion / DaaS | their API | their id | `{id}/…` | Their callers |
+
+Hub **calls** platform → Bearer with `platform/…` (Hub’s client).
+Platform **calls** Hub → Bearer with `hub/…` (platform’s client).
 
 User logins stay Cognito **user** JWTs (`chm-*` groups). WordPress HMAC and
-S3→Lambda notify are not HTTP CRUD and stay as they are.
+S3→Lambda notify are not HTTP CRUD.
 
 ---
 
-## 1. Hub’s client (per env)
+## 1. Hub’s resource server (`hub`)
 
-| Env | Suggested client / secret | Used when Hub calls out |
+Terraform (`modules/identity/cognito-m2m`) creates this on the shared pool
+when `cognito_user_pool_id` is set. Console name: **Content Hub API**.
+
+Cognito issues `{identifier}/{scope_name}`:
+
+| Scope name | Full token scope | Hub routes |
 |---|---|---|
-| Dev | `cht-hub-m2m-dev` → SM `cht-dev-cognito-m2m-hub` | `devapp` / `devhub` |
-| Test | `cht-hub-m2m-test` → SM `cht-test-cognito-m2m-hub` | `testapp` / `testhub` |
-| Prod | `cht-hub-m2m-prod` → SM `cht-prod-cognito-m2m-hub` | `app` / `contenthub` |
+| `catalog.read` / `.create` / `.update` / `.delete` | `hub/catalog.*` | `/api/public/*` |
+| `admin.read` / `.create` / `.update` / `.delete` | `hub/admin.*` | `/api/admin/*` |
+| `reports.read` | `hub/reports.read` | `GET /api/campaigns/{id}/report-packet` |
 
-One client, several **scopes** (do not create a new client per Hub job):
+HTTP verb → CRUD: GET/HEAD → `.read`, POST → `.create`, PUT/PATCH → `.update`,
+DELETE → `.delete`. `hub/{resource}.*` and `hub/{resource}.write` (non-read)
+are accepted if a client is granted those names; Cognito itself is created
+with the explicit CRUD names only (`*` is not a Cognito scope name).
 
-| Scope | Hub uses it for |
-|---|---|
-| `platform/export.read` | `GET …/input-packet` (`platform_export_ingest`) |
-| `platform/cache.clear` | `POST /api/internal/cache/clear` (API + sync jobs) |
-
-`vtt_object_ingest` does not use this client (S3 GetObject + IAM only).
-
-JSON in SM: `{ "client_id", "client_secret", "token_url", "scope" }`.
-Hub Lambdas/API load the **env** secret, request a token with only the
-scopes that call needs, send `Authorization: Bearer`.
-
----
-
-## 2. Inbound: token required on Hub CRUD
-
-Hub is the resource server. Callers (platform, reports, later companion /
-DaaS) use **their** M2M client to get a token, then call Hub. They never
-share Hub’s client secret.
-
-| Operation | Scope shape | Typical Hub routes |
-|---|---|---|
-| Read | `hub/{resource}.read` | `GET /api/public/*`, `GET /api/campaigns/{id}/report-packet`, `GET /api/admin/…` |
-| Create | `hub/{resource}.create` | `POST /api/admin/…`, `POST /api/public/hcp/upsert` |
-| Update | `hub/{resource}.update` | `PATCH /api/admin/clips`, playlists, KOLs, tags |
-| Delete | `hub/{resource}.delete` | admin deletes / unlinks |
-
-Start with a small resource set and grow; do not mint a scope per URL.
-
-| Resource | Covers |
-|---|---|
-| `catalog` | clips, playlists, tags, doctors, transcripts, wordpress reads |
-| `admin` | studio writes (clips/playlists/KOLs/tags/campaigns) |
-| `reports` | report-packet |
-| `webhooks` | only if ops-console moves off `WEBHOOK_API_KEY` |
-
-Examples:
-
-- Platform BFF `GET /api/public/clips` → Bearer with `hub/catalog.read`
-- Platform admin `PATCH /api/admin/clips/{id}` → `hub/admin.update`
-- cht-reports `GET /api/campaigns/42/report-packet` → `hub/reports.read`
-
-Reject missing/expired token or a token that only has `.read` on a `PATCH`.
-`X-API-Key` is not accepted on these paths.
+`X-API-Key` is rejected on these paths.
 
 **Not token CRUD**
 
-| Path | Auth | Why |
+| Path | Auth |
+|---|---|
+| `/health` | none |
+| `/api/wordpress/webhook` | HMAC |
+| `/webhook/*` | `WEBHOOK_API_KEY` until ops M2M (`hub/webhooks.create`) |
+| Staff SPA | user JWT + `chm-*` |
+| S3 → `vtt_object_ingest` | IAM / `lambda:AddPermission` |
+
+---
+
+## 2. Hub’s outbound client (per env)
+
+Hub also gets **its own** M2M client. That client does **not** request `hub/…`
+(Hub does not call itself). It requests **platform** scopes.
+
+| Env | Client | Secret |
 |---|---|---|
-| `/health` | none | probe |
-| `/api/wordpress/webhook` | HMAC | WordPress, not Cognito |
-| `/webhook/*` | `WEBHOOK_API_KEY` until ops M2M | then `hub/webhooks.create` |
-| Staff SPA | user JWT + `chm-*` | not `client_credentials` |
-| S3 → `vtt_object_ingest` | `lambda:AddPermission` | not HTTP |
+| Dev | `cht-hub-m2m-dev` | SM `cht-dev-cognito-m2m-hub` |
+| Test | `cht-hub-m2m-test` | SM `cht-test-cognito-m2m-hub` |
+| Prod | `cht-hub-m2m-prod` | SM `cht-prod-cognito-m2m-hub` |
+
+| Scope on **platform** RS | Hub uses it for |
+|---|---|
+| `platform/export.read` | `GET …/input-packet` (`platform_export_ingest`) |
+| `platform/cache.clear` | `POST /api/internal/cache/clear` (when that scope exists) |
+
+`vtt_object_ingest` does not use this client (S3 GetObject + IAM).
+
+JSON in SM: `{ "client_id", "client_secret", "token_url", "scope" }`.
+
+Fold `cht-*-cognito-m2m-export` into this client when convenient so Hub has
+**one** identity per env.
 
 ---
 
-## 3. Who calls platform (Hub outbound)
+## 3. Other services’ clients (they call Hub)
 
-| Caller | Platform endpoint | Today | Target |
-|---|---|---|---|
-| `platform_export_ingest` + admin export-ingest | `GET /api/export/reports/campaigns/{id}/input-packet` | M2M `platform/export.read` (`cht-*-cognito-m2m-export`) | Same scopes on **Hub’s per-env client** (merge/replace the export-only client) |
-| Cache clear (`admin/cache.py`, `cht_cache.py`) | `POST /api/internal/cache/clear` | `INTERNAL_CACHE_SECRET` `?cacheKey=` | Hub client + `platform/cache.clear` |
-| `vtt_object_ingest` | none | IAM GetObject | no token |
-| Report-packet | none | — | reports calls Hub with `hub/reports.read` |
+Each product that calls Hub has **its** client, allowed **only** the `hub/…`
+scopes it needs:
 
----
-
-## 4. Who calls Hub (they send a token)
-
-| Caller | Hub CRUD | Today | Token they must send |
-|---|---|---|---|
-| cht-platform-tool catalog | read catalog | Bearer | `hub/catalog.read` |
-| cht-platform-tool admin | CUD admin | Bearer | `hub/admin.create` / `.update` / `.delete` |
-| cht-reports | read report-packet | Bearer | `hub/reports.read` |
-| cht-companion / DaaS | when they get routes | — | own client + the CRUD scope for that route |
-| ops-console | create webhook events | API key | later `hub/webhooks.create` |
-
-Each of those products has **its own** M2M client (per env). Hub’s client is
-only for Hub calling platform. A reports leak must not be able to `PATCH`
-clips.
-
----
-
-## 5. Clients to stand up
-
-| Client | Owner | Env copies | Requests |
-|---|---|---|---|
-| `cht-hub-m2m-{env}` | Content Hub | dev, test, prod | `platform/export.read`, `platform/cache.clear` |
-| `cht-platform-m2m-{env}` | Platform | same | `hub/catalog.read`, `hub/admin.*` |
-| `cht-reports-m2m-{env}` | Reports | same | `hub/reports.read` |
-| Companion / DaaS | that product | when needed | only the CRUD scopes they use |
-
-Fold `cht-dev-cognito-m2m-export` into `cht-hub-m2m-dev` when convenient so
-Hub has **one** identity per env, not one client per job.
-
----
-
-## 6. Env vars (Hub)
-
-| Job / service | Token? | Set |
+| Client | Owner | Allowed Hub scopes |
 |---|---|---|
-| API + `platform_export_ingest` | Yes (outbound) | Hub M2M SM ARN per env; `PLATFORM_EXPORT_BASE_URL` |
-| Cache clear | Yes (outbound) | same Hub M2M client; drop `INTERNAL_CACHE_SECRET` after cutover |
-| `vtt_object_ingest` | No | `PLATFORM_EXPORT_TRANSCRIPT_BUCKET` only (`cht-dev-session-assets` / `cht-platform-session-assets`) |
-| Inbound CRUD | Caller sends token | Hub validates JWKS + scope vs method |
+| `cht-platform-m2m-{env}` | Platform | `hub/catalog.read`, `hub/admin.read\|create\|update\|delete` |
+| `cht-reports-m2m-{env}` | Reports | `hub/reports.read` |
+| Companion / DaaS | that product | only the Hub scopes they use |
+
+Those clients are created by **that** product (or by hand on the shared pool).
+Hub terraform does not create platform’s or reports’ clients.
 
 ---
 
-## 7. Dev slice (Hub, live now)
+## 4. Call map
 
-Inbound CRUD is guarded:
-
-| Route family | Bearer scope for GET | Other verbs |
+| Caller | Callee RS | Scope |
 |---|---|---|
-| `/api/public/*` | `hub/catalog.read` | `hub/catalog.create` / `.update` / `.delete` |
-| `/api/admin/*` | `hub/admin.read` | `hub/admin.create` / `.update` / `.delete` |
-| `GET /api/campaigns/{id}/report-packet` | `hub/reports.read` | — |
+| Platform catalog | `hub` | `hub/catalog.read` |
+| Platform admin | `hub` | `hub/admin.create` / `.update` / `.delete` |
+| cht-reports | `hub` | `hub/reports.read` |
+| Hub export ingest | `platform` | `platform/export.read` |
+| Hub cache-clear | `platform` | `platform/cache.clear` (target) |
 
-`X-API-Key` is rejected. Callers must send a Bearer token with the matching
-CRUD scope.
+---
 
-**Platform-tool call (dev)**
+## 5. Hub env / Terraform
 
-1. Create a resource server `hub` on the CHT Cognito pool with scopes
-   `catalog.read`, `admin.read`, `admin.create`, `admin.update`, `admin.delete`,
-   `reports.read` (Cognito exposes them as `hub/catalog.read`, …).
-2. App client `cht-platform-m2m-dev` allowed those scopes (`client_credentials`).
-3. Set Hub `hub_m2m_issuer` (tfvar) to
-   `https://cognito-idp.us-east-1.amazonaws.com/<userPoolId>`.
-4. Token then request:
+| Env | Pool | `cognito_user_pool_id` | `cognito_auth_domain` |
+|---|---|---|---|
+| Dev | `cht-dev-users` | `us-east-1_J51gzfO0I` | `chm-dev.auth.us-east-1.amazoncognito.com` |
+| Prod | `cht-platform-users` | `us-east-1_whXKKxAdX` | `chm-platform.auth.us-east-1.amazoncognito.com` |
+
+| Input | Purpose |
+|---|---|
+| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS + Hub M2M client |
+| `cognito_auth_domain` | Host for token URL |
+| `HUB_M2M_ISSUER` | `https://cognito-idp.us-east-1.amazonaws.com/<poolId>` (derived if unset) |
+| `HUB_M2M_RESOURCE` | Resource-server identifier, default `hub` |
+| `HUB_M2M_AUDIENCE` | Optional `aud` / `client_id` check |
+| `HUB_M2M_TEST_SECRET` | Tests only (HS256). Never set in AWS |
+
+`vtt_object_ingest`: `PLATFORM_EXPORT_TRANSCRIPT_BUCKET` only.
+
+---
+
+## 6. Platform-tool call (dev)
+
+1. Apply Hub terraform with `cognito_user_pool_id` so **Content Hub API** (`hub`)
+   appears next to **CHT Platform API** (`platform`).
+2. On platform’s M2M client, allow the `hub/…` scopes above
+   (`client_credentials`).
+3. Token:
 
 ```http
-POST {token_url}
+POST https://{cognito_auth_domain}/oauth2/token
 Content-Type: application/x-www-form-urlencoded
-Authorization: Basic base64(client_id:client_secret)
+Authorization: Basic base64(platform_client_id:platform_client_secret)
 
 grant_type=client_credentials
 scope=hub/catalog.read hub/admin.read hub/admin.update
@@ -168,12 +149,31 @@ GET https://devhub.communityhealth.media/api/public/tags
 Authorization: Bearer <access_token>
 ```
 
-Wrong scope → 403. Missing or invalid token → 401.
+Missing token, invalid token, or wrong scope → 401.
+
+## 7. cht-platform-tool (same pool, their client)
+
+Platform does **not** create the `hub` resource server (Hub terraform does).
+Platform **does**:
+
+1. App client `cht-platform-m2m-{env}` (`client_credentials`) on the **same**
+   pool (`cht-dev-users` / `cht-platform-users`).
+2. Allow only Hub scopes they need:
+   `hub/catalog.read`, `hub/admin.read`, `hub/admin.create`,
+   `hub/admin.update`, `hub/admin.delete`.
+3. Store `{ client_id, client_secret, token_url, scope }` in SM
+   (e.g. `cht-dev-cognito-m2m-platform`).
+4. HTTP interceptor: warm token at startup, in-memory cache, send
+   `Authorization: Bearer` on every Hub call (`devhub` / `contenthub`).
+   Drop `CONTENTHUB_API_KEY` / `X-API-Key`.
+5. Keep `platform` resource server + scopes for **inbound** Hub calls
+   (`platform/export.read`). Hub’s client requests those, not `hub/…`.
+
+cht-reports: own client, `hub/reports.read` only.
 
 ## 8. Cutover
 
-1. Create Hub resource-server scopes (CRUD) and Hub’s per-env client.
-2. Hub: Bearer required on `/api/public/*`, `/api/admin/*`, report-packet; map HTTP verb → `.read` / `.create` / `.update` / `.delete`.
-3. Platform + reports: their per-env clients request those scopes; send the token.
-4. Hub outbound: cache-clear and export use Hub’s client.
-5. Drop unused `PUBLIC_API_KEY` / `INTERNAL_CACHE_SECRET` from Secrets Manager when callers are all on M2M.
+1. Merge/apply Hub → `hub` RS + `cht-hub-m2m-{env}` appear in Cognito.
+2. Platform + reports clients allowed `hub/…`; they send Bearer.
+3. Point Hub export at Hub’s client secret (`cht-*-cognito-m2m-hub`).
+4. Drop unused `PUBLIC_API_KEY` / `INTERNAL_CACHE_SECRET` after callers are on M2M.

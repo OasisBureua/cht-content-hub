@@ -13,6 +13,7 @@ from config import Settings
 from schemas.platform_export import PlatformExportPacket
 from services.export_ingest.client import ExportClientError
 from services.export_ingest.client_fixture import FixtureExportClient
+from auth.outbound import reset_shared_token_cache
 from services.export_ingest.client_http import (
     ExportHttpMode,
     HttpExportClient,
@@ -21,6 +22,13 @@ from services.export_ingest.client_http import (
 from services.export_ingest.normalize import normalize_export_payload
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "platform_export"
+
+
+@pytest.fixture(autouse=True)
+def _clear_outbound_token_cache():
+    reset_shared_token_cache()
+    yield
+    reset_shared_token_cache()
 
 
 def _fixture_packet() -> dict:

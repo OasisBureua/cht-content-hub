@@ -213,8 +213,9 @@ module "ecs_api" {
   hcp_intel_poll_queue_arn   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_arn, "")
   assets_bucket              = module.s3_assets.bucket_name
   extra_environment = {
-    HUB_M2M_ISSUER   = var.hub_m2m_issuer
+    HUB_M2M_ISSUER   = local.hub_m2m_issuer
     HUB_M2M_AUDIENCE = var.hub_m2m_audience
+    HUB_M2M_RESOURCE = "hub"
   }
 
   depends_on = [module.app_secrets, module.sync_lambda, module.s3_assets]

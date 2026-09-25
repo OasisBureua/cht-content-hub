@@ -142,10 +142,12 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_EXPORT_M2M_SECRET_ARN",
     )
 
-    # Inbound M2M. Prod/dev: HUB_M2M_ISSUER + JWKS (RS256). Tests: HS256 secret.
+    # Inbound M2M. Hub's Cognito resource-server identifier is hub_m2m_resource
+    # (tokens carry hub/catalog.read). Prod/dev: issuer + JWKS. Tests: HS256.
     hub_m2m_issuer: str = Field(default="", validation_alias="HUB_M2M_ISSUER")
     hub_m2m_audience: str = Field(default="", validation_alias="HUB_M2M_AUDIENCE")
     hub_m2m_jwks_url: str = Field(default="", validation_alias="HUB_M2M_JWKS_URL")
+    hub_m2m_resource: str = Field(default="hub", validation_alias="HUB_M2M_RESOURCE")
     hub_m2m_test_secret: str = Field(default="", validation_alias="HUB_M2M_TEST_SECRET")
 
 

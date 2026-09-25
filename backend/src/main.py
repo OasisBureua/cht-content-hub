@@ -45,6 +45,9 @@ logger = logging.getLogger("contenthub-api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from auth.outbound import warm_outbound_tokens
+
+    await warm_outbound_tokens(settings)
     logger.info(
         "contenthub-api ready",
         extra={"service": "contenthub-api", "environment": settings.environment},

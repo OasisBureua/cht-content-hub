@@ -6,9 +6,10 @@ Hub HTTP CRUD (public catalog, admin, report-packet) accepts only
 * Prod/dev: RS256 via ``HUB_M2M_ISSUER`` JWKS.
 * Tests: HS256 via ``HUB_M2M_TEST_SECRET`` (never set in AWS).
 
-Token ``scope`` must include ``hub/{resource}.{read|create|update|delete}``
-for the HTTP method. ``hub/{resource}.*`` and ``hub/{resource}.write``
-(non-read) are also accepted.
+Token ``scope`` must include ``{HUB_M2M_RESOURCE}/{resource}.{crud}``
+(default ``hub/catalog.read``). ``{server}/{resource}.*`` and
+``{server}/{resource}.write`` (non-read) are also accepted. Each service
+owns its own Cognito resource server; Hub only accepts ``hub/…``.
 
 WordPress HMAC and S3→Lambda are not handled here.
 """
@@ -42,8 +43,9 @@ def crud_for_method(method: str) -> str:
     return _METHOD_TO_CRUD.get((method or "GET").upper(), "read")
 
 
-def required_scope(resource: str, method: str) -> str:
-    return f"hub/{resource}.{crud_for_method(method)}"
+def required_scope(resource: str, method: str, *, server: str = "hub") -> str:
+    ident = (server or "hub").strip().strip("/")
+    return f"{ident}/{resource}.{crud_for_method(method)}"
 
 
 def token_scopes(payload: dict[str, Any]) -> set[str]:
@@ -144,7 +146,9 @@ def require_m2m_token(
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     payload = decode_access_token(token, settings)
-    needed = required_scope(resource, request.method)
+    needed = required_scope(
+        resource, request.method, server=settings.hub_m2m_resource
+    )
     if not has_required_scope(token_scopes(payload), needed):
-        raise HTTPException(status_code=403, detail=f"Missing scope {needed}")
+        raise HTTPException(status_code=401, detail="Unauthorized")
     return f"m2m:{payload.get('client_id') or payload.get('sub') or 'ok'}"
