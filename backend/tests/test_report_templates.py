@@ -5,9 +5,13 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from conftest import api_headers
+from conftest import api_headers, mint_test_token
 
 EXEC = "executive_summary"
+
+
+def bearer(scopes: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {mint_test_token(scopes)}"}
 
 
 async def _create_template(client: AsyncClient, **fields) -> dict:
@@ -133,3 +137,31 @@ async def test_packet_ignores_linked_template_without_body(client: AsyncClient):
 
     body = await _packet(client, campaign_id)
     assert body["template"]["semver"] == "4.0.0"
+
+
+@pytest.mark.asyncio
+async def test_create_template_requires_admin_create_scope(client: AsyncClient):
+    payload = {"name": "Scoped", "type": EXEC, "semver": "5.0.0", "s3Key": "templates/x/5.0.0/"}
+    for scopes in ("hub/catalog.*", "hub/reports.*", "hub/admin.read"):
+        response = await client.post("/api/admin/templates", headers=bearer(scopes), json=payload)
+        assert response.status_code == 401, scopes
+    response = await client.post(
+        "/api/admin/templates", headers=bearer("hub/admin.create"), json=payload
+    )
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_packet_template_readable_with_reports_read_scope(client: AsyncClient):
+    await _create_template(client, semver="6.0.0", s3Key="templates/executive_summary/6.0.0/")
+    campaign_id = await _create_campaign(client)
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet", headers=bearer("hub/reports.read")
+    )
+    assert response.status_code == 200
+    assert response.json()["template"]["semver"] == "6.0.0"
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet", headers={"X-API-Key": "test-public-key"}
+    )
+    assert response.status_code == 401
