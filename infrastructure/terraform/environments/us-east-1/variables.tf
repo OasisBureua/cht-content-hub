@@ -402,7 +402,7 @@ variable "platform_export_transcript_bucket" {
 variable "cognito_user_pool_id" {
   type        = string
   default     = ""
-  description = "Shared CHT Cognito user pool. When set, apply creates the hub resource server only."
+  description = "Shared CHT Cognito user pool. When set, apply creates the hub resource server (and the reports caller client if enable_reports_m2m_client)."
 }
 
 variable "cognito_auth_domain" {
@@ -427,6 +427,12 @@ variable "hub_m2m_outbound_scopes" {
   type        = list(string)
   default     = ["platform/export.read"]
   description = "Scopes Hub's M2M client may request on other resource servers (not hub/*)."
+}
+
+variable "enable_reports_m2m_client" {
+  type        = bool
+  default     = false
+  description = "Create cht-reports-m2m-{env} + SM cht-{env}-cognito-m2m-reports (hub/reports.read). Requires hub RS. Dev on; prod off. Does not create cht-platform-m2m."
 }
 
 variable "enable_ecr_replication" {

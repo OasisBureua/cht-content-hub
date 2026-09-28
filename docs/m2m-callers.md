@@ -86,12 +86,18 @@ scopes it needs:
 
 | Client | Owner | Allowed Hub scopes |
 |---|---|---|
-| `cht-platform-m2m-{env}` | Platform | `hub/catalog.read`, `hub/admin.read\|create\|update\|delete` |
-| `cht-reports-m2m-{env}` | Reports | `hub/reports.read` |
+| `cht-platform-m2m-{env}` | Platform TF | `hub/catalog.read`, `hub/admin.read\|create\|update\|delete` |
+| `cht-reports-m2m-{env}` | Hub TF (parked until reports has TF) | `hub/reports.read` |
 | Companion / DaaS | that product | only the Hub scopes they use |
 
-Those clients are created by **that** product (or by hand on the shared pool).
-Hub terraform does not create platform’s or reports’ clients.
+Hub terraform does **not** create `cht-platform-m2m-*`.
+
+Reports has no Cognito stack, so Hub parks `cht-reports-m2m-{env}` next to the
+`hub` RS (`enable_reports_m2m_client`; **dev on, prod off**). That is a
+**create** — the client and `cht-{env}-cognito-m2m-reports` do not exist in AWS
+today. Do not import; do not `removed { destroy = false }` on platform.
+
+JSON in SM: `{ "client_id", "client_secret", "token_url", "scope": "hub/reports.read" }`.
 
 ---
 
@@ -116,13 +122,14 @@ Hub terraform does not create platform’s or reports’ clients.
 
 | Input | Purpose |
 |---|---|
-| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS only |
+| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS (and reports caller if flagged) |
 | `cognito_auth_domain` | Host for token URL |
 | `HUB_M2M_ISSUER` | Token `iss` (`https://issuer-cognito-idp.us-east-1.amazonaws.com/<poolId>`). Decode also aliases `cognito-idp`. |
 | `HUB_M2M_JWKS_URL` | `https://cognito-idp.us-east-1.amazonaws.com/<poolId>/.well-known/jwks.json` |
 | `HUB_M2M_RESOURCE` | Resource-server identifier, default `hub` |
 | `HUB_M2M_AUDIENCE` | Optional `aud` / `client_id` check |
 | `HUB_M2M_TEST_SECRET` | Tests only (HS256). Never set in AWS |
+| `enable_reports_m2m_client` | Create `cht-reports-m2m-{env}` + `cht-{env}-cognito-m2m-reports` (`hub/reports.read`). Dev on, prod off |
 
 `vtt_object_ingest`: `PLATFORM_EXPORT_TRANSCRIPT_BUCKET` only.
 
@@ -170,11 +177,13 @@ Platform **does**:
 5. Keep `platform` resource server + scopes for **inbound** Hub calls
    (`platform/export.read`). Hub’s client requests those, not `hub/…`.
 
-cht-reports: own client, `hub/reports.read` only.
+cht-reports: Hub parks `cht-reports-m2m-{env}` with `hub/reports.read` only
+(`enable_reports_m2m_client`). Platform does not create that client.
 
 ## 8. Cutover
 
 1. Merge/apply Hub → `hub` RS appears in Cognito. Outbound stays the export client.
-2. Platform + reports clients allowed `hub/…`; they send Bearer.
+2. Platform’s client allowed `hub/catalog` + `hub/admin`; reports client
+   (`cht-reports-m2m-{env}`) allowed `hub/reports.read` only; they send Bearer.
 3. Keep Hub export pointed at `cht-*-cognito-m2m-export`.
 4. Drop unused `PUBLIC_API_KEY` / `INTERNAL_CACHE_SECRET` after callers are on M2M.

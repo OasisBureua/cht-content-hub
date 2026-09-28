@@ -145,3 +145,18 @@ output "ecr_dr_registry_url" {
   description = "Regional ECR registry in the DR region (images replicated from us-east-1 when enable_ecr_replication = true)."
   value       = try(module.ecr_replication[0].dr_registry_url, null)
 }
+
+output "reports_m2m_client_id" {
+  description = "cht-reports-m2m-{env} client ID (null when enable_reports_m2m_client is false)"
+  value       = local.reports_m2m_enabled ? aws_cognito_user_pool_client.reports_m2m[0].id : null
+}
+
+output "reports_m2m_secret_name" {
+  description = "SM name cht-{env}-cognito-m2m-reports"
+  value       = local.reports_m2m_enabled ? aws_secretsmanager_secret.reports_m2m[0].name : null
+}
+
+output "reports_m2m_secret_arn" {
+  description = "SM ARN for reports → Hub M2M (hub/reports.read)"
+  value       = local.reports_m2m_enabled ? aws_secretsmanager_secret.reports_m2m[0].arn : null
+}

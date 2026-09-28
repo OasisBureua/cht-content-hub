@@ -65,26 +65,28 @@ sync_jobs_enabled = {
   kol_hcp_matcher        = false
   post_tagging           = true
   playlist_doctor_tagger = false
-  wordpress_ingest               = true
-  clips_seed                     = true
+  wordpress_ingest       = true
+  clips_seed             = true
   # Consolidated WP mirror ops Lambda (6 ops in one: seed_events + backfill_events
   # + backfill_projection + match_series_playlists + seed_tag_namespace +
   # reconcile_drift). See sync_jobs.tf comment for op details.
-  wordpress_projection_ops       = true
+  wordpress_projection_ops = true
   # CPR-13 Zoom export ingest — keep OFF until CPR-12 M2M + export API ready.
-  platform_export_ingest         = false
+  platform_export_ingest = false
   # CPR-9 S3 VTT → warehouse. Platform-tool wires notify after this ARN exists.
-  vtt_object_ingest              = true
+  vtt_object_ingest = true
 }
 
 # Same bucket platform-tool notifies on (prefix zoom-recordings/, suffix .vtt).
 platform_export_transcript_bucket = "cht-dev-session-assets"
 
-# Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub` only.
+# Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-dev / cht-dev-cognito-m2m-export.
-cognito_user_pool_id = "us-east-1_J51gzfO0I"
-cognito_auth_domain  = "chm-dev.auth.us-east-1.amazoncognito.com"
+# Reports caller: cht-reports-m2m-dev / cht-dev-cognito-m2m-reports (create, not import).
+cognito_user_pool_id           = "us-east-1_J51gzfO0I"
+cognito_auth_domain            = "chm-dev.auth.us-east-1.amazoncognito.com"
 platform_export_m2m_secret_arn = "cht-dev-cognito-m2m-export"
+enable_reports_m2m_client      = true
 
 # Platform integration secrets are NOT stored here (committed file).
 # Add GitHub Environment "development" secrets → TF_VAR_* on deploy.
