@@ -19,6 +19,23 @@ from models.export_warehouse import (
     ExportSession,
     ExportSurveyResponse,
 )
+from models.reports_warehouse import (  # noqa: F401
+    ReportsAttendance,
+    ReportsCampaignAnalytic,
+    ReportsCampaignGroup,
+    ReportsCampaignMarketEvent,
+    ReportsClip,
+    ReportsClipAnalytic,
+    ReportsIngestJob,
+    ReportsMarketEvent,
+    ReportsProgram,
+    ReportsQaEntry,
+    ReportsReport,
+    ReportsReportTemplate,
+    ReportsSession,
+    ReportsSponsorSov,
+    ReportsSurveyResponse,
+)
 
 # HCP Intel — full package for migrations + Step 4+ ingestion
 from hcp_intel.models import (  # noqa: F401
