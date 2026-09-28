@@ -52,7 +52,10 @@ class ReportsCampaignGroup(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -63,7 +66,7 @@ class ReportsProgram(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     campaign_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("public.campaigns.id", ondelete="CASCADE"),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -77,7 +80,10 @@ class ReportsProgram(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -107,7 +113,10 @@ class ReportsSession(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -138,7 +147,10 @@ class ReportsClip(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -191,7 +203,10 @@ class ReportsQaEntry(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -264,7 +279,7 @@ class ReportsCampaignAnalytic(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     campaign_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("public.campaigns.id", ondelete="CASCADE"),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
         nullable=False,
     )
     channel: Mapped[str] = mapped_column(Text, nullable=False)
@@ -296,7 +311,10 @@ class ReportsMarketEvent(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -313,7 +331,7 @@ class ReportsCampaignMarketEvent(Base):
 
     campaign_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("public.campaigns.id", ondelete="CASCADE"),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
         nullable=False,
     )
     market_event_id: Mapped[int] = mapped_column(
@@ -384,7 +402,7 @@ class ReportsReport(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     campaign_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("public.campaigns.id"), nullable=True
+        Integer, ForeignKey("campaigns.id"), nullable=True
     )
     campaign_group_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("reports.campaign_groups.id"), nullable=True
@@ -421,7 +439,7 @@ class ReportsIngestJob(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     campaign_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("public.campaigns.id"), nullable=True
+        Integer, ForeignKey("campaigns.id"), nullable=True
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")

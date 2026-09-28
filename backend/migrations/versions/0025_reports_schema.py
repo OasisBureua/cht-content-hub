@@ -9,8 +9,8 @@ Out of this revision:
 * ``reports.campaigns`` (identity stays ``public.campaigns``)
 * ``public.export_*``, ``public.clips``, thin ``public.report_templates``
 
-Revision ID: 0024_reports_schema
-Revises: 0023_merge_cpr13_heads
+Revision ID: 0025_reports_schema
+Revises: 0024_report_template_pointer
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0024_reports_schema"
-down_revision: Union[str, None] = "0023_merge_cpr13_heads"
+revision: str = "0025_reports_schema"
+down_revision: Union[str, None] = "0024_report_template_pointer"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
