@@ -104,3 +104,20 @@ def test_fixture_packet_maps_without_error():
     survey = map_survey(packet.survey_responses[0], default_campaign_id=42)
     assert survey["dedupe_key"] == "submission:sub_abc123"
     assert survey["answers"]["nps"] == 9
+    assert survey["jotform_form_id"] is None
+
+
+def test_map_survey_keeps_packet_source_submission_and_form_id():
+    row = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        source="jotform",
+        submission_id="jf-sub-1",
+        jotform_form_id="jf-99",
+        survey_type="POST_TEST",
+        answers={"q1": "no"},
+    )
+    fields = map_survey(row, default_campaign_id=42)
+    assert fields["source"] == "jotform"
+    assert fields["submission_id"] == "jf-sub-1"
+    assert fields["jotform_form_id"] == "jf-99"
+    assert fields["dedupe_key"] == "submission:jf-sub-1"

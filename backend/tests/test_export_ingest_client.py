@@ -79,6 +79,60 @@ def test_normalize_cpr28_live_shaped_packet():
     assert len(packet.survey_responses) == 1
     assert packet.survey_responses[0].respondent_id == "user_1"
     assert packet.survey_responses[0].answers["nps"] == 9
+    assert packet.survey_responses[0].source == "unknown"
+    assert packet.survey_responses[0].submission_id is None
+    assert packet.survey_responses[0].jotform_form_id is None
+
+
+def test_normalize_persists_packet_survey_fields_without_inventing_ids():
+    packet = normalize_export_payload(
+        {
+            "campaignId": "AZ-25-01_LIV001",
+            "sessions": [],
+            "attendance": [],
+            "surveys": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "surveyId": "survey-jot",
+                    "type": "POST_TEST",
+                    "jotformFormId": "  jf-99  ",
+                    "source": "jotform",
+                    "responses": [
+                        {
+                            "userId": "u2",
+                            "submittedAt": "2026-09-02T12:00:00Z",
+                            "submissionId": "  jf-sub-1  ",
+                            "answers": {"q1": "no"},
+                        }
+                    ],
+                },
+                {
+                    "platformToolProgramId": "prog-1",
+                    "surveyId": "survey-native",
+                    "type": "INTAKE",
+                    "jotformFormId": "   ",
+                    "source": "native",
+                    "responses": [
+                        {
+                            "userId": "u3",
+                            "submittedAt": "2026-09-02T12:05:00Z",
+                            "submissionId": "  ",
+                            "answers": {},
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    jotform = packet.survey_responses[0]
+    native = packet.survey_responses[1]
+    assert jotform.source == "jotform"
+    assert jotform.jotform_form_id == "jf-99"
+    assert jotform.submission_id == "jf-sub-1"
+    assert jotform.survey_type == "POST_TEST"
+    assert native.source == "native"
+    assert native.jotform_form_id is None
+    assert native.submission_id is None
 
 
 @pytest.mark.asyncio

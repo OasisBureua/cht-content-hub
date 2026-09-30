@@ -123,6 +123,7 @@ def map_survey(
         "survey_type": row.survey_type,
         "submitted_at": row.submitted_at,
         "submission_id": row.submission_id,
+        "jotform_form_id": row.jotform_form_id,
         "answers": dict(row.answers or {}),
     }
 

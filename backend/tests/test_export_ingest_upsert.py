@@ -17,6 +17,10 @@ from models.export_warehouse import (
     ExportSurveyResponse,
 )
 from schemas.platform_export import PlatformExportPacket
+from services.export_ingest.normalize import (
+    normalize_export_payload,
+    rewrite_packet_hub_campaign_id,
+)
 from services.export_ingest.upsert import ingest_packet, upsert_packet
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "platform_export"
@@ -63,6 +67,62 @@ async def test_ingest_fixture_packet_persists_rows(db_session: AsyncSession):
     assert len(attendance) == 3
     assert len(surveys) == 1
     assert surveys[0].answers["q1"] == "excellent"
+    assert surveys[0].jotform_form_id is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
+    raw = {
+        "campaignId": "AZ-25-01_LIV001",
+        "sessions": [],
+        "attendance": [],
+        "surveys": [
+            {
+                "platformToolProgramId": "prog-1",
+                "type": "POST_TEST",
+                "jotformFormId": "jf-99",
+                "source": "jotform",
+                "responses": [
+                    {
+                        "userId": "u2",
+                        "submittedAt": "2026-09-02T12:00:00Z",
+                        "submissionId": "jf-sub-1",
+                        "answers": {"q1": "no"},
+                    }
+                ],
+            },
+            {
+                "platformToolProgramId": "prog-1",
+                "type": "FEEDBACK",
+                "source": "native",
+                "responses": [
+                    {
+                        "userId": "u3",
+                        "submittedAt": "2026-09-02T12:05:00Z",
+                        "answers": {"q1": "yes"},
+                    }
+                ],
+            },
+        ],
+    }
+    packet = rewrite_packet_hub_campaign_id(normalize_export_payload(raw), 77)
+    await _seed_campaign(db_session, 77)
+    await ingest_packet(db_session, packet, trigger="manual")
+    await db_session.commit()
+
+    rows = (
+        await db_session.execute(
+            select(ExportSurveyResponse).order_by(ExportSurveyResponse.submission_id)
+        )
+    ).scalars().all()
+    by_respondent = {row.respondent_id: row for row in rows}
+    assert by_respondent["u2"].source == "jotform"
+    assert by_respondent["u2"].submission_id == "jf-sub-1"
+    assert by_respondent["u2"].jotform_form_id == "jf-99"
+    assert by_respondent["u2"].survey_type == "POST_TEST"
+    assert by_respondent["u3"].source == "native"
+    assert by_respondent["u3"].submission_id is None
+    assert by_respondent["u3"].jotform_form_id is None
 
 
 @pytest.mark.asyncio
