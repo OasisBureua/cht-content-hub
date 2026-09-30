@@ -260,7 +260,11 @@ async def shoot_stats_for_kol(db: AsyncSession, kol_id: str) -> ShootStats:
 
 
 def to_public_kol(
-    kol: KOL, slug: str, stats: ShootStats, intel: PublicKOLIntel | None = None
+    kol: KOL,
+    slug: str,
+    stats: ShootStats,
+    intel: PublicKOLIntel | None = None,
+    include_publications: bool = False,
 ) -> PublicKOL:
     return kol_to_public(
         kol=kol,
@@ -268,6 +272,7 @@ def to_public_kol(
         shoot_count=stats.shoot_count,
         first_appeared_at=stats.first_shoot_at,
         intel=intel,
+        include_publications=include_publications,
     )
 
 

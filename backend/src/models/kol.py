@@ -72,6 +72,11 @@ class KOL(Base):
     curated_fields: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+    # UUC-15: curated publications shown under the bio, each
+    # {title, journal, year, url}. See migration 0026.
+    publications: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
