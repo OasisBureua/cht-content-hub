@@ -3,8 +3,8 @@
 source and submission_id already exist on public.export_survey_responses.
 This adds the form id the packet now sends beside them.
 
-Revision ID: 0026_survey_jotform_form_id
-Revises: 0025_reports_schema
+Revision ID: 0027_survey_jotform_form_id
+Revises: 0026_kol_publications
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ install()
 
 from migrations.helpers import column_exists  # noqa: E402
 
-revision: str = "0026_survey_jotform_form_id"
-down_revision: Union[str, None] = "0025_reports_schema"
+revision: str = "0027_survey_jotform_form_id"
+down_revision: Union[str, None] = "0026_kol_publications"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
