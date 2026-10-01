@@ -3,7 +3,7 @@
 **Status:** Draft (Hub implementation + CHT proxy)  
 **Audience:** Content Hub backend, CHT platform backend, CHT admin UI  
 **UI source:** `frontend/src/pages/admin/content-hub/lib/store.ts` + `types.ts` (CHT repo)  
-**Hub implementation:** `backend/src/admin/router.py`, `backend/src/services/campaign_*.py`, `platform_snapshots.py`
+**Hub implementation:** `backend/src/admin/router.py`, `backend/src/services/campaign_*.py`, `backend/src/services/platform_data.py`
 
 ---
 
@@ -17,9 +17,9 @@ CHT Admin UI (/admin/content-hub)
         └─→ HubSpot API  (CHT only — on manual HubSpot sync, not every report view)
 
 Content Hub (background + storage)
-    ├─ Daily cron: resync platform data per active campaign (Phase 2)
     ├─ On-demand: POST .../campaigns/{id}/platforms/{platform}/sync
-    └─ Postgres: campaign_platform_snapshots + hubspot_raw_data on campaign
+    └─ Postgres: campaign_platform_data + hubspot_raw_data on campaign
+    (Daily resync is not running. next_sync_at is stored; no job reads it.)
 ```
 
 ### Ownership
@@ -27,12 +27,12 @@ Content Hub (background + storage)
 | Concern | Owner |
 |---|---|
 | Campaign CRUD, templates | Content Hub |
-| LinkedIn / Meta / YouTube / livestream / survey data | Content Hub (normalized snapshots) |
+| LinkedIn Ads and YouTube metrics | Content Hub API connectors, stored in `campaign_platform_data` |
 | Platform connector credentials (non-HubSpot) | Content Hub (`integration_settings`) |
-| Daily platform resync | Content Hub (Phase 2 scheduler) |
+| Daily platform resync | Not built. `next_sync_at` is stored; no job reads it. |
 | Manual platform refresh | Content Hub (`POST .../sync`) |
 | Report orchestration | CHT (pull from Hub → `POST .../report/generate`) |
-| Report builder logic | Content Hub (port from CHT `reports.ts`) |
+| Analytics report builder | Content Hub `campaign_reports.py`, from stored rows. Not `POST /api/reports`. |
 | HubSpot token + API | CHT only |
 | HubSpot snapshot on campaign | CHT PATCHes `hubspotSyncedAt` + `hubspotRawData` |
 
@@ -42,9 +42,9 @@ Content Hub (background + storage)
 
 | Action | What happens |
 |---|---|
-| Admin clicks Sync / Refresh | Hub pulls from platform → updates `campaign_platform_snapshots`. HubSpot sync via CHT → PATCH campaign. |
+| Admin clicks Sync / Refresh | Hub pulls from platform → updates `campaign_platform_data`. HubSpot sync via CHT → PATCH campaign. |
 | Admin opens report | CHT reads stored state from Hub → `POST .../report/generate`. No live platform calls. |
-| Daily cron (Phase 2) | Hub refreshes snapshots automatically. |
+| Daily resync | Not running. `next_sync_at` is stored on `campaign_platform_data`; no job reads it. |
 
 ---
 
@@ -52,7 +52,7 @@ Content Hub (background + storage)
 
 | Caller | Header |
 |---|---|
-| CHT → Content Hub | `Authorization: Bearer <access_token>` (`hub/admin.*`), `X-Request-Id: <uuid>` |
+| CHT → Content Hub admin | `Authorization: Bearer <access_token>` with scope `hub/admin.{crud}` (`hub/admin.*` is also accepted). `X-API-Key` is not accepted. |
 | Browser → CHT | Session / admin JWT |
 
 After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.
@@ -77,7 +77,7 @@ After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.
 - `POST /campaigns/{id}/sync-all`
 
 ### CSV bootstrap (fallback)
-- `GET/POST /campaigns/{id}/uploads` — ingests into `campaign_platform_snapshots`
+- `GET/POST /campaigns/{id}/uploads` — ingests into `campaign_platform_data`
 
 ### Validation & insights
 - `GET /campaigns/{id}/validation`
@@ -99,6 +99,9 @@ HubSpot (CHT only):
 
 ### Templates
 - `GET/POST /templates`, `DELETE /templates/{id}`
+
+### Not this admin API
+Hub does not serve `POST /api/reports`. The generate-time warehouse packet is a different route, `GET /api/campaigns/{id}/report-packet`, authorized with `hub/reports.{crud}`. `POST /campaigns/{id}/report/generate` above is the older CHT analytics report built from stored snapshots. It is not that packet and not `POST /api/reports`.
 
 ---
 
@@ -122,28 +125,29 @@ Migration: `0006_campaign_platform_data` (consolidates csv_uploads + snapshots)
 
 ### Phase 1 — MVP (this repo, in progress)
 - [x] CRUD campaigns
-- [x] `campaign_platform_snapshots` + CSV → snapshot ingest
+- [x] `campaign_platform_data` + CSV → snapshot ingest
 - [x] `GET .../platform-data`, `GET .../validation`
-- [x] `POST .../report/generate` (placeholder builder)
+- [x] `POST .../report/generate` reads stored `campaign_platform_data` and `hubspot_raw_data`
 - [x] `GET/PATCH /integrations` (stub sync via `stub: true` config)
-- [ ] Deploy + migrations on dev
-- [ ] CHT proxy + store.ts swap
+- [x] CHT proxy: `AdminContentHubController` at `admin/content-hub`, client `frontend/src/pages/admin/content-hub/lib/store.ts`
 
 ### Phase 2 — Sync engine
-- [ ] Real per-platform connectors (LinkedIn first)
-- [ ] Daily cron resync
-- [ ] Port `reports.ts` into `campaign_reports.py`
+- [x] LinkedIn Ads and YouTube connectors (`services/connectors/linkedin_ads.py`, `services/connectors/youtube.py`)
+- [ ] Meta API sync (CSV upload only; `_fetch_connector_rows` rejects other platforms)
+- [ ] Daily cron resync (`next_sync_at` is stored; no job reads it)
+- [x] `campaign_reports.py` builds the analytics and executive reports from stored rows
 
 ### Phase 3 — Polish
-- [ ] AI insights, executive config PATCH, templates UX
+- [ ] AI insights (`POST .../insights` returns a placeholder string, not a model)
+- [ ] Executive config PATCH, templates UX
 - [ ] UI: Upload → Sync where connectors exist
 
 ---
 
 ## CHT checklist
 
-1. `ContentHubReportsService` — proxy + report orchestration
-2. `AdminContentHubController` — `@Controller('admin/content-hub')`
+1. `ContentHubCampaignService` — Hub campaign calls from CHT
+2. `AdminContentHubController` — `@Controller('admin/content-hub')` (this class exists)
 3. Report: `GET .../report` → Hub GET campaign + platform-data → Hub POST report/generate
 4. HubSpot status + sync → PATCH Hub campaign
 5. Redis: cache campaign lists only; invalidate on writes
