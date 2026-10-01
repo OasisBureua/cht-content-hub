@@ -47,11 +47,13 @@ def survey_dedupe_key(row: ExportSurveyResponse) -> str:
     if row.submission_id:
         return f"submission:{row.submission_id}"
     submitted = _iso(row.submitted_at)
+    survey_key = row.survey_id or row.survey_type or ""
     return "|".join(
         [
             row.platform_tool_program_id or "",
             row.respondent_id or "",
             row.source,
+            survey_key,
             submitted,
         ]
     )

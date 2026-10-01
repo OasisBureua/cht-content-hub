@@ -96,6 +96,7 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
             program_id = item.get("platformToolProgramId")
             campaign_id = item.get("campaignId")
             survey_type = item.get("type") or item.get("surveyType")
+            survey_id = _blank_to_none(item.get("surveyId"))
             source = _blank_to_none(item.get("source")) or "unknown"
             jotform_form_id = _blank_to_none(item.get("jotformFormId"))
             for resp in nested:
@@ -107,6 +108,7 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
                         "campaignId": campaign_id,
                         "respondentId": resp.get("userId") or resp.get("respondentId"),
                         "source": source,
+                        "surveyId": survey_id,
                         "surveyType": survey_type,
                         "submittedAt": resp.get("submittedAt"),
                         "submissionId": _blank_to_none(resp.get("submissionId")),

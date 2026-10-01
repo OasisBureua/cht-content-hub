@@ -90,6 +90,40 @@ def test_survey_dedupe_prefers_submission_id():
     assert survey_dedupe_key(row) == "submission:sub_1"
 
 
+def test_survey_dedupe_fallback_includes_survey_id():
+    submitted = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    intake = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        respondent_id="u3",
+        source="native",
+        survey_id="survey-intake",
+        survey_type="INTAKE",
+        submitted_at=submitted,
+    )
+    feedback = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        respondent_id="u3",
+        source="native",
+        survey_id="survey-feedback",
+        survey_type="FEEDBACK",
+        submitted_at=submitted,
+    )
+    intake_key = survey_dedupe_key(intake)
+    feedback_key = survey_dedupe_key(feedback)
+    assert intake_key != feedback_key
+    assert "survey-intake" in intake_key
+    assert "survey-feedback" in feedback_key
+
+    typed_only = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        respondent_id="u3",
+        source="native",
+        survey_type="INTAKE",
+        submitted_at=submitted,
+    )
+    assert survey_dedupe_key(typed_only).endswith("|INTAKE|2026-09-02T12:00:00Z")
+
+
 def test_fixture_packet_maps_without_error():
     packet = _packet()
     session_fields = map_session(

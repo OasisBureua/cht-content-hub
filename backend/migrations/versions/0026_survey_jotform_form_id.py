@@ -38,6 +38,15 @@ def upgrade() -> None:
             "export_survey_responses",
             sa.Column("jotform_form_id", sa.String(length=128), nullable=True),
         )
+    # Pre-CPR-14 ingest invented submission:{surveyId}:{userId}:{index}
+    # and stored source = platform. Re-ingest uses a new key and would
+    # insert a second row. The next ingest recreates these from the packet.
+    if column_exists("export_survey_responses", "source"):
+        op.execute(
+            sa.text(
+                "DELETE FROM export_survey_responses WHERE source = 'platform'"
+            )
+        )
 
 
 def downgrade() -> None:

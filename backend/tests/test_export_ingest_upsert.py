@@ -126,6 +126,58 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_reingest_replaces_legacy_platform_survey_row(
+    db_session: AsyncSession,
+):
+    await _seed_campaign(db_session, 77)
+    db_session.add(
+        ExportSurveyResponse(
+            dedupe_key="submission:survey-native:u3:0",
+            campaign_id=77,
+            platform_tool_program_id="prog-1",
+            respondent_id="u3",
+            source="platform",
+            survey_type="FEEDBACK",
+            submission_id="survey-native:u3:0",
+            answers={"q1": "old"},
+        )
+    )
+    await db_session.flush()
+
+    raw = {
+        "campaignId": "AZ-25-01_LIV001",
+        "sessions": [],
+        "attendance": [],
+        "surveys": [
+            {
+                "platformToolProgramId": "prog-1",
+                "surveyId": "survey-native",
+                "type": "FEEDBACK",
+                "source": "native",
+                "responses": [
+                    {
+                        "userId": "u3",
+                        "submittedAt": "2026-09-02T12:05:00Z",
+                        "answers": {"q1": "yes"},
+                    }
+                ],
+            }
+        ],
+    }
+    packet = rewrite_packet_hub_campaign_id(normalize_export_payload(raw), 77)
+    await ingest_packet(db_session, packet, trigger="manual")
+    await db_session.commit()
+
+    rows = (
+        await db_session.execute(select(ExportSurveyResponse))
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].source == "native"
+    assert rows[0].dedupe_key != "submission:survey-native:u3:0"
+    assert rows[0].answers["q1"] == "yes"
+
+
+@pytest.mark.asyncio
 async def test_double_ingest_is_idempotent(db_session: AsyncSession):
     packet = _load_packet()
     await _seed_campaign(db_session, packet.campaign_id)
