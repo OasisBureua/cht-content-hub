@@ -79,6 +79,8 @@ sync_jobs_enabled = {
 
 # Same bucket platform-tool notifies on (prefix zoom-recordings/, suffix .vtt).
 platform_export_transcript_bucket = "cht-dev-session-assets"
+# Used only when platform_export_ingest is enabled. The job stays off above.
+platform_export_base_url = "https://devapp.communityhealth.media"
 
 # Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-dev / cht-dev-cognito-m2m-export.
