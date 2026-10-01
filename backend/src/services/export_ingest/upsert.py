@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.export_warehouse import (
@@ -120,6 +120,22 @@ async def _upsert_attendance(db: AsyncSession, fields: dict) -> ExportAttendance
     return existing
 
 
+async def _drop_legacy_platform_surveys(
+    db: AsyncSession, campaign_id: int
+) -> None:
+    """Drop pre-CPR-14 rows keyed as submission:{surveyId}:{userId}:{index}.
+
+    Those used source ``platform``. The same response now has a different
+    dedupe key, so leaving them would double the report-packet count.
+    """
+    await db.execute(
+        delete(ExportSurveyResponse).where(
+            ExportSurveyResponse.campaign_id == campaign_id,
+            ExportSurveyResponse.source == "platform",
+        )
+    )
+
+
 async def _upsert_survey(db: AsyncSession, fields: dict) -> ExportSurveyResponse:
     existing = (
         await db.execute(
@@ -169,6 +185,7 @@ async def upsert_packet(
             db, map_attendance(event, default_campaign_id=campaign_id)
         )
 
+    await _drop_legacy_platform_surveys(db, campaign_id)
     for survey in packet.survey_responses:
         await _upsert_survey(
             db, map_survey(survey, default_campaign_id=campaign_id)

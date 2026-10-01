@@ -108,9 +108,11 @@ class ExportSurveyResponse(ApiModel):
     campaign_id: str | int | None = None
     respondent_id: str | None = None
     source: str = "unknown"
+    survey_id: str | None = None
     survey_type: str | None = None
     submitted_at: datetime | None = None
     submission_id: str | None = None
+    jotform_form_id: str | None = None
     answers: dict[str, Any] = Field(default_factory=dict)
 
 

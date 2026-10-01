@@ -167,6 +167,7 @@ class ExportSurveyResponse(Base):
         DateTime(timezone=True), nullable=True
     )
     submission_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    jotform_form_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     answers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

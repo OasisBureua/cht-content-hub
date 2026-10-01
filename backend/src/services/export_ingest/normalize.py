@@ -45,6 +45,13 @@ def normalize_export_payload(raw: dict[str, Any]) -> PlatformExportPacket:
     return PlatformExportPacket.model_validate(data)
 
 
+def _blank_to_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -89,23 +96,23 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
             program_id = item.get("platformToolProgramId")
             campaign_id = item.get("campaignId")
             survey_type = item.get("type") or item.get("surveyType")
-            survey_id = item.get("surveyId")
-            source = item.get("source") or "platform"
-            for idx, resp in enumerate(nested):
+            survey_id = _blank_to_none(item.get("surveyId"))
+            source = _blank_to_none(item.get("source")) or "unknown"
+            jotform_form_id = _blank_to_none(item.get("jotformFormId"))
+            for resp in nested:
                 if not isinstance(resp, dict):
                     continue
-                submission = resp.get("submissionId")
-                if not submission and survey_id:
-                    submission = f"{survey_id}:{resp.get('userId', '')}:{idx}"
                 flat.append(
                     {
                         "platformToolProgramId": program_id,
                         "campaignId": campaign_id,
                         "respondentId": resp.get("userId") or resp.get("respondentId"),
                         "source": source,
+                        "surveyId": survey_id,
                         "surveyType": survey_type,
                         "submittedAt": resp.get("submittedAt"),
-                        "submissionId": submission,
+                        "submissionId": _blank_to_none(resp.get("submissionId")),
+                        "jotformFormId": jotform_form_id,
                         "answers": resp.get("answers") or {},
                     }
                 )
