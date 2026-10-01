@@ -10,7 +10,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import api_headers
-from models.export_warehouse import ExportSession, ExportSurveyResponse
+from models.client import Client
+from models.export_warehouse import (
+    ExportAttendanceEvent,
+    ExportSession,
+    ExportSurveyResponse,
+)
+from models.kol import KOL, KOLGroup, KOLGroupMember
+from models.project import Project
 from models.shoot import Shoot
 from services.export_ingest.transcript_s3 import MemoryTranscriptStore
 
@@ -54,9 +61,11 @@ async def test_report_packet_marks_missing_sources(client: AsyncClient):
     assert body["campaignName"] == "Empty Campaign"
     assert body["platformSlices"] == []
     assert body["sessions"] == []
+    assert body["attendance"] == []
     assert body["surveyResponses"] == []
     assert body["inputCompleteness"]["hubspot"]["status"] == "missing"
     assert body["inputCompleteness"]["sessions"]["status"] == "missing"
+    assert body["inputCompleteness"]["attendance"]["status"] == "missing"
     assert body["inputCompleteness"]["surveyResponses"]["status"] == "missing"
 
 
@@ -505,6 +514,296 @@ async def test_report_packet_ignores_warehouse_rows_for_other_campaigns(
     body = response.json()
 
     assert body["sessions"] == []
+    assert body["attendance"] == []
     assert body["surveyResponses"] == []
     assert body["inputCompleteness"]["sessions"]["status"] == "missing"
+    assert body["inputCompleteness"]["attendance"]["status"] == "missing"
     assert body["inputCompleteness"]["surveyResponses"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_report_packet_includes_attendance_and_filters_window(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Windowed Warehouse"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-in-window",
+            campaign_id=campaign_id,
+            title="In window",
+            session_date=datetime(2026, 8, 15, 17, 0, tzinfo=timezone.utc),
+            transcript_text="Inside.",
+        )
+    )
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-out-window",
+            campaign_id=campaign_id,
+            title="Out of window",
+            session_date=datetime(2026, 9, 2, 17, 0, tzinfo=timezone.utc),
+            transcript_text="Outside.",
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="att-in",
+            platform_tool_program_id="prog-in-window",
+            campaign_id=campaign_id,
+            source="WEBHOOK",
+            event="JOINED",
+            occurred_at=datetime(2026, 8, 15, 17, 5, tzinfo=timezone.utc),
+            participant_email="a@example.com",
+            participant_name="Ada",
+            duration_seconds=60,
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="att-out",
+            platform_tool_program_id="prog-out-window",
+            campaign_id=campaign_id,
+            source="WEBHOOK",
+            event="JOINED",
+            occurred_at=datetime(2026, 9, 2, 17, 5, tzinfo=timezone.utc),
+            participant_email="b@example.com",
+        )
+    )
+    db_session.add(
+        ExportSurveyResponse(
+            dedupe_key="survey-in",
+            campaign_id=campaign_id,
+            source="jotform",
+            submitted_at=datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc),
+            answers={"q": "yes"},
+        )
+    )
+    db_session.add(
+        ExportSurveyResponse(
+            dedupe_key="survey-out",
+            campaign_id=campaign_id,
+            source="jotform",
+            submitted_at=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            answers={"q": "no"},
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"windowStart": "2026-08-01", "windowEnd": "2026-08-31"},
+    )
+    body = response.json()
+
+    assert [row["title"] for row in body["sessions"]] == ["In window"]
+    assert len(body["attendance"]) == 1
+    assert body["attendance"][0]["participantEmail"] == "a@example.com"
+    assert body["attendance"][0]["event"] == "JOINED"
+    assert body["inputCompleteness"]["attendance"]["status"] == "ok"
+    assert [row["answers"] for row in body["surveyResponses"]] == [{"q": "yes"}]
+
+
+@pytest.mark.asyncio
+async def test_report_packet_sources_limit_sections(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Sources Campaign", "hubspotRawData": {"opens": 1}},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-sources",
+            campaign_id=campaign_id,
+            title="Zoom",
+            transcript_text="Zoom text.",
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="att-sources",
+            platform_tool_program_id="prog-sources",
+            campaign_id=campaign_id,
+            source="WEBHOOK",
+            event="JOINED",
+            occurred_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+        )
+    )
+    db_session.add(
+        ExportSurveyResponse(
+            dedupe_key="survey-sources",
+            campaign_id=campaign_id,
+            source="native",
+            answers={"q": "yes"},
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["surveys"]},
+    )
+    body = response.json()
+
+    assert body["sessions"] == []
+    assert body["attendance"] == []
+    assert len(body["surveyResponses"]) == 1
+    assert body["hubspotRawData"] is None
+    assert body["inputCompleteness"]["sessions"]["status"] == "missing"
+    assert body["inputCompleteness"]["attendance"]["status"] == "missing"
+    assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
+    assert body["inputCompleteness"]["hubspot"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_report_packet_shoot_includes_hub_kol(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "KOL Shoot Campaign"},
+    )
+    campaign_id = create.json()["id"]
+    owner = Client(name="KOL Client", slug="kol-client-packet")
+    project = Project(client=owner, name="KOL Project", code="KOL1")
+    group = KOLGroup(project=project, name="Smith")
+    kol = KOL(
+        slug="dr-smith-packet",
+        name="Dr. Smith",
+        title="MD",
+        institution="UCSF",
+    )
+    db_session.add_all([owner, project, group, kol])
+    await db_session.flush()
+    db_session.add(KOLGroupMember(kol_id=kol.id, kol_group_id=group.id))
+    db_session.add(
+        Shoot(
+            id="shoot-kol-packet",
+            name="Dr. Smith interview",
+            campaign_id=campaign_id,
+            kol_group_id=group.id,
+            shoot_date=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            diarized_transcript="Hello from the shoot.",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    body = response.json()
+
+    assert len(body["sessions"]) == 1
+    assert body["sessions"][0]["kols"] == [
+        {"name": "Dr. Smith", "title": "MD", "institution": "UCSF"}
+    ]
+    assert body["kols"] == [
+        {"name": "Dr. Smith", "title": "MD", "institution": "UCSF"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_report_packet_zoom_keeps_hub_kol_without_shoot_transcript(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Zoom Plus KOL"},
+    )
+    campaign_id = create.json()["id"]
+    owner = Client(name="Zoom KOL Client", slug="zoom-kol-client")
+    project = Project(client=owner, name="Zoom KOL Project", code="ZK1")
+    group = KOLGroup(project=project, name="Lee")
+    kol = KOL(
+        slug="dr-lee-packet",
+        name="Dr. Lee",
+        title="PhD",
+        institution="Mayo",
+    )
+    db_session.add_all([owner, project, group, kol])
+    await db_session.flush()
+    db_session.add(KOLGroupMember(kol_id=kol.id, kol_group_id=group.id))
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-zoom-kol",
+            campaign_id=campaign_id,
+            title="Zoom Session",
+            transcript_text="Zoom transcript body.",
+        )
+    )
+    db_session.add(
+        Shoot(
+            id="shoot-kol-behind-zoom",
+            name="Shoot transcript must stay out",
+            campaign_id=campaign_id,
+            kol_group_id=group.id,
+            diarized_transcript="Shoot transcript should not appear.",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    body = response.json()
+
+    assert len(body["sessions"]) == 1
+    assert body["sessions"][0]["title"] == "Zoom Session"
+    assert body["sessions"][0]["transcriptText"] == "Zoom transcript body."
+    assert body["sessions"][0]["kols"] == []
+    assert body["kols"] == [
+        {"name": "Dr. Lee", "title": "PhD", "institution": "Mayo"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_report_packet_zoom_session_has_no_kol_and_blocks_shoot(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Zoom Blocks Shoot"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-zoom-only",
+            campaign_id=campaign_id,
+            title="Zoom only",
+            session_date=datetime(2026, 9, 15, tzinfo=timezone.utc),
+            transcript_text="Zoom transcript.",
+        )
+    )
+    db_session.add(
+        Shoot(
+            id="shoot-blocked-by-zoom-window",
+            name="Shoot in August",
+            campaign_id=campaign_id,
+            shoot_date=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            diarized_transcript="Shoot should stay out.",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"windowStart": "2026-08-01", "windowEnd": "2026-08-31"},
+    )
+    body = response.json()
+
+    assert body["sessions"] == []
+    assert body["inputCompleteness"]["sessions"]["status"] == "missing"
