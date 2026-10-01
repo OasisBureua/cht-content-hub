@@ -1,4 +1,4 @@
-"""One-time bio backfill script: applies BIO_TEXT, respects curated locks."""
+"""One-time KOL backfill: bios, title/institution corrections, publications."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hcp_intel.kol_bio_backfill import BIO_TEXT, run
+from hcp_intel.kol_bio_backfill import BIO_TEXT, PROFILES, run
 from models.kol import KOL
 
 
@@ -18,12 +18,32 @@ async def test_backfill_writes_bio_for_matching_slug(db_session: AsyncSession):
 
     results = await run(session=db_session)
 
-    assert results["bardia"] == ["bio"]
+    assert results["bardia"] == ["bio", "publications"]
     row = (
         await db_session.execute(select(KOL).where(KOL.slug == "bardia"))
     ).scalar_one()
     assert row.bio == BIO_TEXT["bardia"]
-    assert "bio" in row.curated_fields
+    assert row.publications == PROFILES["bardia"]["publications"]
+    assert {"bio", "publications"} <= set(row.curated_fields)
+
+
+@pytest.mark.asyncio
+async def test_backfill_applies_title_and_institution_corrections(db_session: AsyncSession):
+    kol = KOL(
+        slug="krie",
+        name="Dr. Amy Krie",
+        title="Clinical Director, Avera Breast Center",
+        institution="Avera Cancer Institute / Avera Breast Center",
+    )
+    db_session.add(kol)
+    await db_session.flush()
+
+    results = await run(session=db_session)
+
+    assert {"title", "institution"} <= set(results["krie"])
+    assert kol.title == PROFILES["krie"]["title"]
+    assert kol.institution == PROFILES["krie"]["institution"]
+    assert {"title", "institution"} <= set(kol.curated_fields)
 
 
 @pytest.mark.asyncio
@@ -53,3 +73,13 @@ async def test_backfill_covers_all_39_live_slugs():
     for slug, bio in BIO_TEXT.items():
         assert bio.strip(), f"{slug} has an empty bio"
         assert bio.startswith("Dr. "), f"{slug} bio doesn't start with 'Dr. '"
+
+
+def test_profiles_fit_the_kol_columns():
+    for slug, profile in PROFILES.items():
+        assert len(profile.get("title", "")) <= 100, f"{slug} title exceeds kols.title"
+        for pub in profile["publications"]:
+            assert pub["title"].strip(), f"{slug} has a publication with no title"
+            assert pub["url"].startswith("https://pubmed.ncbi.nlm.nih.gov/"), slug
+        years = [p["year"] or 0 for p in profile["publications"]]
+        assert years == sorted(years, reverse=True), f"{slug} publications not newest first"

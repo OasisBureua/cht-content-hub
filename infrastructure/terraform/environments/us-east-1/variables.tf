@@ -381,6 +381,60 @@ variable "sync_jobs_enabled" {
   description = "Override per-job enablement; unset jobs use defaults in sync_jobs.tf"
 }
 
+variable "platform_export_base_url" {
+  type        = string
+  default     = ""
+  description = "cht-platform-tool base URL for CPR-13 export ingest (e.g. https://devapp.communityhealth.media)"
+}
+
+variable "platform_export_m2m_secret_arn" {
+  type        = string
+  default     = ""
+  description = "Secrets Manager ARN for Cognito M2M export credentials (client_id/client_secret/token_url/scope)"
+}
+
+variable "platform_export_transcript_bucket" {
+  type        = string
+  default     = ""
+  description = "Session-assets bucket that holds Zoom VTTs (cht-dev-session-assets / cht-platform-session-assets)"
+}
+
+variable "cognito_user_pool_id" {
+  type        = string
+  default     = ""
+  description = "Shared CHT Cognito user pool. When set, apply creates the hub resource server (and the reports caller client if enable_reports_m2m_client)."
+}
+
+variable "cognito_auth_domain" {
+  type        = string
+  default     = ""
+  description = "Cognito domain host (no https), e.g. cht-dev.auth.us-east-1.amazoncognito.com"
+}
+
+variable "hub_m2m_issuer" {
+  type        = string
+  default     = ""
+  description = "Override issuer. Empty + cognito_user_pool_id derives https://cognito-idp.us-east-1.amazonaws.com/<poolId>."
+}
+
+variable "hub_m2m_audience" {
+  type        = string
+  default     = ""
+  description = "Optional expected aud/client_id on inbound Hub access tokens"
+}
+
+variable "hub_m2m_outbound_scopes" {
+  type        = list(string)
+  default     = ["platform/export.read"]
+  description = "Scopes Hub's M2M client may request on other resource servers (not hub/*)."
+}
+
+variable "enable_reports_m2m_client" {
+  type        = bool
+  default     = false
+  description = "Create cht-reports-m2m-{env} + SM cht-{env}-cognito-m2m-reports (hub/reports.read). Requires hub RS. Dev on; prod off. Does not create cht-platform-m2m."
+}
+
 variable "enable_ecr_replication" {
   description = "Replicate contenthub-* ECR repos to ecr_replication_destination_region (prod primary only)."
   type        = bool

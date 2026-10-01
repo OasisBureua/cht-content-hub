@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 os.environ.setdefault("PUBLIC_API_KEY", "test-public-key")
+os.environ.setdefault("HUB_M2M_TEST_SECRET", "test-m2m-hs256")
+os.environ.setdefault("HUB_M2M_ISSUER", "https://hub.test")
 # In-memory SQLite — no Docker/Postgres required for tests.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -42,6 +45,29 @@ from schema import create_test_schema  # noqa: E402
 from utils.kol_public import kol_slug  # noqa: E402
 
 API_KEY = os.environ["PUBLIC_API_KEY"]
+TEST_M2M_SECRET = os.environ["HUB_M2M_TEST_SECRET"]
+TEST_M2M_ISSUER = os.environ["HUB_M2M_ISSUER"]
+TEST_M2M_SCOPES = "hub/catalog.* hub/admin.* hub/reports.*"
+
+
+def mint_test_token(scopes: str = TEST_M2M_SCOPES) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode(
+        {
+            "iss": TEST_M2M_ISSUER,
+            "sub": "test-m2m",
+            "client_id": "cht-test-m2m",
+            "token_use": "access",
+            "scope": scopes,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(hours=2)).timestamp()),
+        },
+        TEST_M2M_SECRET,
+        algorithm="HS256",
+    )
+
+
+TEST_BEARER_TOKEN = mint_test_token()
 
 
 @asynccontextmanager
@@ -54,7 +80,7 @@ app.router.lifespan_context = _noop_lifespan
 
 
 def api_headers(**extra: str) -> dict[str, str]:
-    headers = {"X-API-Key": API_KEY}
+    headers = {"Authorization": f"Bearer {TEST_BEARER_TOKEN}"}
     headers.update(extra)
     return headers
 

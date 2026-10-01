@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from schemas.public import KOLPublication
+
 
 class KOLAdminOut(BaseModel):
     """Admin-facing KOL row.
@@ -27,6 +29,7 @@ class KOLAdminOut(BaseModel):
     region_label: str | None = None
     display_order: int | None = None
     featured: bool = False
+    publications: list[KOLPublication] = Field(default_factory=list)
     curated_fields: list[str] = Field(default_factory=list)
     hcp_npi: str | None = None
     hcp_match_status: str = "unresolved"
@@ -55,6 +58,7 @@ class KOLAdminUpdate(BaseModel):
     region: str | None = None
     display_order: int | None = None
     featured: bool | None = None
+    publications: list[KOLPublication] | None = None
 
 
 class KOLRefreshOut(BaseModel):

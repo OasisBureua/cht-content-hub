@@ -4,7 +4,7 @@
 
 **Base URL (prod):** `https://contenthub.communityhealth.media/api/public`  
 **Base URL (dev):** `https://devhub.communityhealth.media/api/public`  
-**Auth:** Header `X-API-Key: <PUBLIC_API_KEY>` on all routes below (except where noted).
+**Auth:** Header `Authorization: Bearer <access_token>` with `hub/catalog.{read|create|update|delete}` matching the HTTP method. `hub/catalog.*` is also accepted.
 
 **Implementation:** `backend/src/public/router.py` with schemas in `backend/src/schemas/public.py`, helpers in `backend/src/utils/public.py`. Domain models in `backend/src/models/`. Legacy shims at `legacy/routers/public_api.py` for EC2 monolith.
 
@@ -55,7 +55,7 @@ GET  https://contenthub.communityhealth.media/api/public/kols/{slug}/publication
 ```http
 POST https://contenthub.communityhealth.media/api/public/hcp/upsert
 Content-Type: application/json
-X-API-Key: <PUBLIC_API_KEY>
+Authorization: Bearer <access_token>
 ```
 
 CHT callers: `backend/src/modules/outbound-sync/mediahub-sync.service.ts`, `backfill-outbound-sync.ts`.
@@ -100,9 +100,9 @@ Do **not** drop these until callers are confirmed retired; they are simply **out
 After deploy, CHT dev should validate at minimum:
 
 ```bash
-curl -s -H "X-API-Key: $KEY" "$BASE/tags" | head
-curl -s -H "X-API-Key: $KEY" "$BASE/clips?limit=1"
-curl -s -H "X-API-Key: $KEY" "$BASE/kols?limit=1"
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/tags" | head
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/clips?limit=1"
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/kols?limit=1"
 curl -s -o /dev/null -w "%{http_code}" "$BASE/../status"   # optional
 ```
 

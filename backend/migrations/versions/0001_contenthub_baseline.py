@@ -33,11 +33,17 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _baseline_tables() -> list:
+    # reports.* is created by 0025_reports_schema. The schema does not exist
+    # yet, and that revision's DDL (indexes, GIN) is not fully on the ORM.
+    return [t for t in Base.metadata.sorted_tables if t.schema != "reports"]
+
+
 def upgrade() -> None:
     bind = op.get_bind()
-    Base.metadata.create_all(bind)
+    Base.metadata.create_all(bind, tables=_baseline_tables())
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    Base.metadata.drop_all(bind)
+    Base.metadata.drop_all(bind, tables=_baseline_tables())

@@ -35,6 +35,7 @@ EDITABLE_FIELDS: frozenset[str] = frozenset(
         "region",
         "display_order",
         "featured",
+        "publications",
     }
 )
 

@@ -74,19 +74,33 @@ sync_jobs_enabled = {
   # (1ffdd81 chore(prod): enable wordpress_ingest + this release). Handler
   # is idempotent (skips if clips already has ≥100 rows) but flip to false
   # post-seed to keep intent clear. Re-enable temporarily for one-off restore.
-  clips_seed              = false
+  clips_seed = false
   # Consolidated WP mirror ops Lambda (6 ops dispatched by event.op:
   # seed_events, backfill_events, backfill_projection, match_series_playlists,
   # seed_tag_namespace, reconcile_drift). Kept OFF on prod until dev burn-in
   # completes for WPR-2. Flip to true after atomic release so daily
   # reconcile_drift cron protects prod.
   wordpress_projection_ops = false
+  # CPR-13 Zoom export ingest — off until CPR-12 M2M + export API are live.
+  platform_export_ingest = false
+  # CPR-9 S3 VTT → warehouse. Enable after dev smoke; then wire platform notify.
+  vtt_object_ingest = false
 }
+
+# cht-platform-session-assets once vtt_object_ingest is enabled in prod.
+platform_export_transcript_bucket = "cht-platform-session-assets"
+
+# Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub` only.
+# Outbound stays cht-contenthub-m2m-prod / cht-prod-cognito-m2m-export.
+# Reports caller client stays off until a later prod enablement.
+cognito_user_pool_id      = "us-east-1_whXKKxAdX"
+cognito_auth_domain       = "chm-platform.auth.us-east-1.amazoncognito.com"
+enable_reports_m2m_client = false
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
 wordpress_ingress_cidr_blocks = []
 
-cht_cache_clear_url = "https://testapp.communityhealth.media/api/internal/cache/clear/all"
+cht_cache_clear_url = "https://app.communityhealth.media/api/internal/cache/clear/all"
 
 # ── DR (us-east-2) — applied by deploy-prod.yml after use1 ───────────────────
 dr_vpc_id = "vpc-0fbc2514f4e3467f2"

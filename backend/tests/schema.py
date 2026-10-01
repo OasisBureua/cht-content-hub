@@ -14,6 +14,12 @@ from models.campaign import (
     PlatformSyncRun,
     ReportTemplate,
 )
+from models.export_warehouse import (
+    ExportAttendanceEvent,
+    ExportIngestRun,
+    ExportSession,
+    ExportSurveyResponse,
+)
 from models.client import Client
 from models.clip import Clip
 from models.kol import KOL, KOLGroup, KOLGroupMember
@@ -41,6 +47,10 @@ ORM_TABLES = [
     CampaignPlatformData.__table__,
     PlatformSyncRun.__table__,
     IntegrationSetting.__table__,
+    ExportSession.__table__,
+    ExportAttendanceEvent.__table__,
+    ExportSurveyResponse.__table__,
+    ExportIngestRun.__table__,
     Client.__table__,
     Project.__table__,
     HCP.__table__,

@@ -32,6 +32,7 @@ def kol_to_public(
     first_appeared_at: datetime | None,
     new_window_days: int = 60,
     intel: PublicKOLIntel | None = None,
+    include_publications: bool = False,
 ) -> PublicKOL:
     is_new = False
     first_appeared_at = ensure_utc(first_appeared_at)
@@ -53,6 +54,8 @@ def kol_to_public(
         is_new=is_new,
         display_order=kol.display_order,
         featured=bool(kol.featured),
+        # Full list only on the profile; the directory list stays light.
+        publications=list(kol.publications or []) if include_publications else [],
         intel=intel,
     )
 

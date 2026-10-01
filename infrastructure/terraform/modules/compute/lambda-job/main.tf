@@ -55,7 +55,10 @@ resource "aws_iam_role_policy" "lambda_secrets" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [var.database_secret_arn, var.app_secrets_arn]
+      Resource = concat(
+        [var.database_secret_arn, var.app_secrets_arn],
+        var.extra_secret_arns
+      )
     }]
   })
 }
@@ -74,7 +77,7 @@ resource "aws_lambda_function" "this" {
   memory_size   = var.memory_size
 
   filename         = var.deployment_package_path
-  source_code_hash = filebase64sha256(var.deployment_package_path)
+  source_code_hash = var.source_code_hash != "" ? var.source_code_hash : filebase64sha256(var.deployment_package_path)
 
   reserved_concurrent_executions = var.reserved_concurrent_executions >= 0 ? var.reserved_concurrent_executions : null
 

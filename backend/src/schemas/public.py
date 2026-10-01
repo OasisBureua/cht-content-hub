@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PublicKOLAIBrief(BaseModel):
@@ -33,6 +33,15 @@ class PublicKOLIntel(BaseModel):
     ai_brief: PublicKOLAIBrief | None = None
 
 
+class KOLPublication(BaseModel):
+    """One curated publication listed under a KOL's bio (UUC-15)."""
+
+    title: str
+    journal: str | None = None
+    year: int | None = None
+    url: str | None = None
+
+
 class PublicKOL(BaseModel):
     id: str
     slug: str
@@ -49,6 +58,7 @@ class PublicKOL(BaseModel):
     is_new: bool
     display_order: int | None = None
     featured: bool = False
+    publications: list[KOLPublication] = Field(default_factory=list)
     intel: PublicKOLIntel | None = None
 
 

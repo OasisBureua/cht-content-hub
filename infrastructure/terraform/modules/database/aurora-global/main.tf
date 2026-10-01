@@ -198,4 +198,10 @@ resource "aws_rds_cluster_instance" "this" {
     Name        = "${local.name}-${count.index + 1}"
     Environment = var.environment
   }
+
+  # auto_minor_version_upgrade mutates engine_version in AWS. Do not "correct"
+  # it on every apply — that reboots/updates the instance with no code change.
+  lifecycle {
+    ignore_changes = [engine_version]
+  }
 }

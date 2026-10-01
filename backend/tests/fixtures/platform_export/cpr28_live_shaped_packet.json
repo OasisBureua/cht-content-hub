@@ -1,0 +1,49 @@
+{
+  "campaignId": "AZ-25-01_LIV001",
+  "generatedAt": "2026-09-23T20:00:00.000Z",
+  "requestId": "req-test-001",
+  "sessions": [
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "campaignId": "AZ-25-01_LIV001",
+      "kind": "WEBINAR",
+      "title": "HER2+ MBC Live Session",
+      "sessionDate": "2026-08-15T17:00:00Z",
+      "zoomMeetingId": "81234567890",
+      "zoomMeetingUuid": "AbCdEf==",
+      "transcriptS3Key": "zoom-recordings/clxyz001programcuid0001/81234567890/file1.vtt",
+      "transcriptStatus": "ok",
+      "chmProgramId": null
+    }
+  ],
+  "attendance": [
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "participantEmail": "learner@example.com",
+      "participantName": "Alex Learner",
+      "userId": "user_1",
+      "joinTime": "2026-08-15T17:02:11Z",
+      "leaveTime": "2026-08-15T18:01:00Z",
+      "durationSeconds": 3529,
+      "source": "WEBHOOK"
+    }
+  ],
+  "surveys": [
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "surveyId": "survey_1",
+      "type": "POST_TEST",
+      "title": "Post event",
+      "responseCount": 1,
+      "responses": [
+        {
+          "userId": "user_1",
+          "submittedAt": "2026-08-15T19:00:00Z",
+          "score": 9,
+          "schemaVersion": 1,
+          "answers": { "q1": "excellent", "nps": 9 }
+        }
+      ]
+    }
+  ]
+}

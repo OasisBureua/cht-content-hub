@@ -1,11 +1,16 @@
 name: Deploy to Development
 
 # Manual dispatch or push to develop / feature branches.
+# Scope detection deploys only changed lanes (api / sync / infra).
 on:
   workflow_dispatch:
     inputs:
       plan_only:
         description: 'Plan only — skip apply approval and deploy steps'
+        type: boolean
+        default: false
+      deploy_all:
+        description: 'Deploy all lanes (ignore change detection)'
         type: boolean
         default: false
   push:
@@ -14,6 +19,7 @@ on:
       - 'feature/**'
     paths:
       - 'backend/**'
+      - 'sync/**'
       - 'infrastructure/**'
       - 'scripts/**'
       - '.github/workflows/**'
@@ -39,17 +45,89 @@ permissions:
   id-token: write
   contents: read
   issues: write
+  actions: read
 
 jobs:
+  changes:
+    name: Detect deploy scope
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_api: ${{ steps.scope.outputs.deploy_api }}
+      deploy_sync: ${{ steps.scope.outputs.deploy_sync }}
+      deploy_infra: ${{ steps.scope.outputs.deploy_infra }}
+      base_sha: ${{ steps.base.outputs.base_sha }}
+      base_source: ${{ steps.base.outputs.base_source }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve change base
+        if: github.event.inputs.deploy_all != 'true'
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x scripts/ci-resolve-deploy-base.sh
+          ./scripts/ci-resolve-deploy-base.sh \
+            "${{ github.event_name }}" \
+            "${{ github.event.before || '' }}" \
+            "deploy-dev.yml" \
+            "${{ github.ref_name }}" \
+            "origin/develop"
+
+      - name: Detect changed paths
+        if: github.event.inputs.deploy_all != 'true' && steps.base.outputs.base_resolved == 'true'
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          ref: ${{ github.sha }}
+          base: ${{ steps.base.outputs.base_sha }}
+          list-files: shell
+          filters: |
+            api:
+              - 'backend/**'
+            sync:
+              - 'sync/**'
+            infra:
+              - 'infrastructure/**'
+
+      - name: Set deploy scope
+        id: scope
+        run: |
+          chmod +x scripts/ci-detect-deploy-scope.sh
+          FORCE_ALL=false
+          if [ "${{ github.event.inputs.deploy_all }}" = "true" ]; then
+            FORCE_ALL=true
+          elif [ "${{ steps.base.outputs.base_resolved || 'false' }}" != "true" ]; then
+            echo "No change base SHA; deploying all lanes."
+            FORCE_ALL=true
+          fi
+          ./scripts/ci-detect-deploy-scope.sh \
+            "$FORCE_ALL" \
+            "${{ steps.filter.outputs.api || 'false' }}" \
+            "${{ steps.filter.outputs.sync || 'false' }}" \
+            "${{ steps.filter.outputs.infra || 'false' }}"
+          echo "Changed api files: ${{ steps.filter.outputs.api_files || 'n/a' }}"
+          echo "Changed sync files: ${{ steps.filter.outputs.sync_files || 'n/a' }}"
+          echo "Changed infra files: ${{ steps.filter.outputs.infra_files || 'n/a' }}"
+
   test:
     name: Run tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.deploy_api == 'true' ||
+      needs.changes.outputs.deploy_sync == 'true' ||
+      needs.changes.outputs.deploy_infra == 'true'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
       - name: Setup Python
+        if: needs.changes.outputs.deploy_api == 'true' || needs.changes.outputs.deploy_sync == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -57,19 +135,23 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Backend - Install dependencies
+        if: needs.changes.outputs.deploy_api == 'true' || needs.changes.outputs.deploy_sync == 'true'
         working-directory: backend
         run: pip install -r requirements.txt
 
       - name: Backend - Run tests
+        if: needs.changes.outputs.deploy_api == 'true' || needs.changes.outputs.deploy_sync == 'true'
         working-directory: backend
         run: pytest -q
 
       - name: Setup Terraform
+        if: needs.changes.outputs.deploy_infra == 'true'
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform validate
+        if: needs.changes.outputs.deploy_infra == 'true'
         working-directory: ${{ env.TF_ENV_DIR }}
         run: |
           terraform init -backend=false
@@ -78,12 +160,28 @@ jobs:
   deploy:
     name: Deploy to dev
     runs-on: ubuntu-latest
-    needs: test
+    needs: [changes, test]
+    if: |
+      needs.changes.outputs.deploy_api == 'true' ||
+      needs.changes.outputs.deploy_sync == 'true' ||
+      needs.changes.outputs.deploy_infra == 'true'
     environment: development
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      - name: Deploy scope summary
+        run: |
+          echo "## Deploy scope" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Lane | Run |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API (image + ECS image roll) | ${{ needs.changes.outputs.deploy_api }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Sync (Lambda zip) | ${{ needs.changes.outputs.deploy_sync }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Infra (Terraform plan/apply) | ${{ needs.changes.outputs.deploy_infra }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Change base: \`${{ needs.changes.outputs.base_sha || 'n/a' }}\` (${{ needs.changes.outputs.base_source || 'n/a' }})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
@@ -92,9 +190,11 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: needs.changes.outputs.deploy_api == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Ensure ECR repository exists
+        if: needs.changes.outputs.deploy_api == 'true'
         run: |
           if ! aws ecr describe-repositories --repository-names "${{ env.ECR_REPO }}" --region "$AWS_REGION" >/dev/null 2>&1; then
             echo "Creating ECR repository: ${{ env.ECR_REPO }}"
@@ -102,6 +202,7 @@ jobs:
           fi
 
       - name: Generate image tag
+        if: needs.changes.outputs.deploy_api == 'true'
         id: meta
         run: |
           chmod +x scripts/next-ecr-image-tag.sh
@@ -110,9 +211,11 @@ jobs:
           echo "Deploying image tag: ${IMAGE_TAG}"
 
       - name: Set up Docker Buildx
+        if: needs.changes.outputs.deploy_api == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Build and push API image
+        if: needs.changes.outputs.deploy_api == 'true'
         uses: docker/build-push-action@v7
         with:
           context: ./backend
@@ -125,6 +228,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build sync-lambda deployment package
+        if: needs.changes.outputs.deploy_sync == 'true' || needs.changes.outputs.deploy_infra == 'true' || needs.changes.outputs.deploy_api == 'true'
         run: |
           chmod +x scripts/build-sync-lambda.sh
           PYTHON=python3.12 ./scripts/build-sync-lambda.sh
@@ -173,9 +277,21 @@ jobs:
       - name: Terraform Plan
         working-directory: ${{ env.TF_ENV_DIR }}
         run: |
+          EXTRA_VARS=()
+          if [ "${{ needs.changes.outputs.deploy_api }}" = "true" ]; then
+            EXTRA_VARS+=(
+              -var="api_image=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.image_tag }}"
+            )
+          else
+            chmod +x "${{ github.workspace }}/scripts/ci-resolve-api-image-from-state.sh"
+            eval "$("${{ github.workspace }}/scripts/ci-resolve-api-image-from-state.sh")"
+            EXTRA_VARS+=(
+              -var="api_image=${API_IMAGE}"
+            )
+          fi
           terraform plan \
             -var-file="${{ env.TF_VAR_FILE }}" \
-            -var="api_image=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.image_tag }}" \
+            "${EXTRA_VARS[@]}" \
             -out=tfplan
         env:
           TF_VAR_public_api_key: ${{ secrets.PUBLIC_API_KEY }}
@@ -251,7 +367,7 @@ jobs:
         run: terraform apply tfplan
 
       - name: Wait for ECS API service stable
-        if: github.event.inputs.plan_only != 'true'
+        if: needs.changes.outputs.deploy_api == 'true' && github.event.inputs.plan_only != 'true'
         run: |
           aws ecs wait services-stable \
             --cluster "${{ env.ECS_CLUSTER }}" \
@@ -266,7 +382,10 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image tag | \`${{ steps.meta.outputs.image_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API lane | ${{ needs.changes.outputs.deploy_api }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Sync lane | ${{ needs.changes.outputs.deploy_sync }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Infra lane | ${{ needs.changes.outputs.deploy_infra }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image tag | \`${{ needs.changes.outputs.deploy_api == 'true' && steps.meta.outputs.image_tag || 'n/a' }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| API | ${{ env.API_URL }} (SG-restricted — no CI health curl) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

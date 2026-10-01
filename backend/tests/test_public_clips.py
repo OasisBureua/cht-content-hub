@@ -151,7 +151,7 @@ async def test_clips_requires_api_key(http_client: AsyncClient):
 async def test_clips_rejects_invalid_api_key(http_client: AsyncClient):
     response = await http_client.get(
         "/api/public/clips",
-        headers={"X-API-Key": "wrong"},
+        headers={"Authorization": "Bearer not-a-jwt"},
     )
     assert response.status_code == 401
 

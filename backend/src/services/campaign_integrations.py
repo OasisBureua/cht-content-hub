@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
@@ -53,13 +54,24 @@ async def list_templates(db: AsyncSession) -> list[TemplateOut]:
 
 
 async def create_template(db: AsyncSession, payload: TemplateCreate) -> TemplateOut:
+    if payload.s3_key and not payload.semver:
+        raise HTTPException(status_code=422, detail="semver is required when s3_key is set")
     row = ReportTemplate(
         name=payload.name,
         type=payload.type,
         description=payload.description,
+        semver=payload.semver,
+        s3_key=payload.s3_key,
     )
     db.add(row)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # get_db rolls the session back when the exception propagates.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Template {payload.type} {payload.semver} already exists",
+        ) from exc
     await db.refresh(row)
     return TemplateOut.model_validate(row)
 

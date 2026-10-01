@@ -112,7 +112,9 @@ async def get_public_kol_detail(
         stats = await kol_queries.shoot_stats_for_kol(db, kol.id)
         intel = None
 
-    return kol_queries.to_public_kol(kol, resolved_slug, stats, intel=intel)
+    return kol_queries.to_public_kol(
+        kol, resolved_slug, stats, intel=intel, include_publications=True
+    )
 
 
 @router.get("/kols/{slug}/publications", response_model=PublicKOLPublicationList)

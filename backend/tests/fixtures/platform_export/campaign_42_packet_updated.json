@@ -1,0 +1,78 @@
+{
+  "campaignId": 42,
+  "sessions": [
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "campaignId": 42,
+      "kind": "WEBINAR",
+      "title": "HER2+ MBC Live Session (updated)",
+      "sessionDate": "2026-08-15T17:00:00Z",
+      "zoomMeetingId": "81234567890",
+      "zoomUuid": "AbCdEf==",
+      "transcriptS3Key": "zoom-recordings/clxyz001programcuid0001/81234567890/file1.vtt",
+      "transcriptText": "Speaker: welcome.",
+      "zoomSessionEndedAt": "2026-08-15T18:05:00Z"
+    }
+  ],
+  "attendance": [
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "source": "WEBHOOK",
+      "event": "JOINED",
+      "occurredAt": "2026-08-15T17:02:11Z",
+      "participantEmail": "learner@example.com",
+      "participantName": "Alex Learner Updated",
+      "durationSeconds": null,
+      "platformEventId": "evt_webhook_001",
+      "zoomParticipantId": "zp_111",
+      "zoomMeetingId": "81234567890",
+      "joinTime": "2026-08-15T17:02:11Z",
+      "leaveTime": null
+    },
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "source": "WEBHOOK",
+      "event": "LEFT",
+      "occurredAt": "2026-08-15T18:01:00Z",
+      "participantEmail": "learner@example.com",
+      "participantName": "Alex Learner",
+      "durationSeconds": null,
+      "platformEventId": "evt_webhook_002",
+      "zoomParticipantId": "zp_111",
+      "zoomMeetingId": "81234567890",
+      "joinTime": null,
+      "leaveTime": "2026-08-15T18:01:00Z"
+    },
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "source": "REPORT_IMPORT",
+      "event": "JOINED",
+      "occurredAt": "2026-08-15T17:05:00Z",
+      "participantEmail": "host@example.com",
+      "participantName": "Session Host",
+      "durationSeconds": 3600,
+      "platformEventId": "evt_import_001",
+      "zoomParticipantId": "zp_host",
+      "zoomMeetingId": "81234567890",
+      "joinTime": "2026-08-15T17:05:00Z",
+      "leaveTime": "2026-08-15T18:05:00Z"
+    }
+  ],
+  "surveyResponses": [
+    {
+      "platformToolProgramId": "clxyz001programcuid0001",
+      "campaignId": 42,
+      "respondentId": "resp-1",
+      "source": "jotform",
+      "surveyType": "post_event",
+      "submittedAt": "2026-08-15T19:00:00Z",
+      "submissionId": "sub_001",
+      "answers": { "q1": "yes" }
+    }
+  ],
+  "inputCompleteness": {
+    "sessions": { "rowCount": 1, "status": "ok" },
+    "attendance": { "rowCount": 3, "status": "ok" },
+    "surveyResponses": { "rowCount": 1, "status": "ok" }
+  }
+}

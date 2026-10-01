@@ -13,6 +13,29 @@ from models.shoot import Shoot
 from models.user import User
 from models.wordpress_event import WordPressEvent
 from models.campaign import Campaign, CampaignPlatformData, ReportTemplate
+from models.export_warehouse import (
+    ExportAttendanceEvent,
+    ExportIngestRun,
+    ExportSession,
+    ExportSurveyResponse,
+)
+from models.reports_warehouse import (  # noqa: F401
+    ReportsAttendance,
+    ReportsCampaignAnalytic,
+    ReportsCampaignGroup,
+    ReportsCampaignMarketEvent,
+    ReportsClip,
+    ReportsClipAnalytic,
+    ReportsIngestJob,
+    ReportsMarketEvent,
+    ReportsProgram,
+    ReportsQaEntry,
+    ReportsReport,
+    ReportsReportTemplate,
+    ReportsSession,
+    ReportsSponsorSov,
+    ReportsSurveyResponse,
+)
 
 # HCP Intel — full package for migrations + Step 4+ ingestion
 from hcp_intel.models import (  # noqa: F401
@@ -58,6 +81,10 @@ __all__ = [
     "TaggerRun",
     "User",
     "WordPressEvent",
+    "ExportAttendanceEvent",
+    "ExportIngestRun",
+    "ExportSession",
+    "ExportSurveyResponse",
     "HCP",
     "HCPSignal",
 ]

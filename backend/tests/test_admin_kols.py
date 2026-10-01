@@ -128,6 +128,31 @@ async def test_patch_admin_kol_marks_curated(client: AsyncClient, seeded_admin_k
 
 
 @pytest.mark.asyncio
+async def test_patch_publications_marks_curated_and_list_omits_them(
+    client: AsyncClient, seeded_admin_kols
+):
+    slug = kol_slug("Dr. Alpha")
+    pubs = [
+        {
+            "title": "A trial.",
+            "journal": "J Clin Oncol",
+            "year": 2025,
+            "url": "https://pubmed.ncbi.nlm.nih.gov/1/",
+        }
+    ]
+    r = await client.patch(
+        f"/api/admin/kols/{slug}", headers=api_headers(), json={"publications": pubs}
+    )
+    assert r.status_code == 200
+    assert r.json()["publications"] == pubs
+    assert r.json()["curated_fields"] == ["publications"]
+
+    listed = await client.get("/api/admin/kols", headers=api_headers())
+    item = next(i for i in listed.json()["items"] if i["slug"] == slug)
+    assert item["publications"] == []
+
+
+@pytest.mark.asyncio
 async def test_patch_ignores_uneditable_field(
     client: AsyncClient, seeded_admin_kols
 ):

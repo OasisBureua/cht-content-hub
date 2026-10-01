@@ -81,6 +81,7 @@ resource "aws_ecs_task_definition" "api" {
         var.wordpress_events_queue_url != "" ? [{ name = "WORDPRESS_EVENTS_QUEUE_URL", value = var.wordpress_events_queue_url }] : [],
         var.hcp_intel_poll_queue_url != "" ? [{ name = "HCP_INTEL_POLL_QUEUE_URL", value = var.hcp_intel_poll_queue_url }] : [],
         var.assets_bucket != "" ? [{ name = "ASSETS_BUCKET", value = var.assets_bucket }] : [],
+        [for k, v in var.extra_environment : { name = k, value = v } if v != ""],
       )
       secrets = concat(
         [

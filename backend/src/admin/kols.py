@@ -5,9 +5,9 @@
 - SCRUM-63: Presigned KOL headshot PUT (direct browser → S3)
 - SCRUM-64: Cache-clear notification on every write / refresh completion
 
-Auth: existing X-API-Key server-to-server (`verify_admin_api_key`). CHT holds
-the API key and does its own Studio Cognito JWT + chm-* group check before
-proxying user requests here.
+Auth: Bearer M2M (`verify_admin_api_key`) with `hub/admin.{crud}`. Platform
+holds the client and does its own Studio Cognito JWT + chm-* group check
+before proxying user requests here.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ logger = logging.getLogger("contenthub.admin.kols")
 _REFRESH_COOLDOWN: dict[str, float] = {}
 
 
-def _to_admin_out(kol: KOL) -> KOLAdminOut:
+def _to_admin_out(kol: KOL, include_publications: bool = True) -> KOLAdminOut:
     return KOLAdminOut(
         id=kol.id,
         slug=kol.slug,
@@ -64,6 +64,7 @@ def _to_admin_out(kol: KOL) -> KOLAdminOut:
         region_label=kol.region_label,
         display_order=kol.display_order,
         featured=kol.featured,
+        publications=list(kol.publications or []) if include_publications else [],
         curated_fields=list(kol.curated_fields or []),
         hcp_npi=kol.hcp_npi,
         hcp_match_status=kol.hcp_match_status,
@@ -101,7 +102,7 @@ async def list_admin_kols(
     ).limit(limit).offset(offset)
 
     rows = list((await db.execute(query)).scalars())
-    return KOLAdminListOut(items=[_to_admin_out(k) for k in rows], total=total)
+    return KOLAdminListOut(items=[_to_admin_out(k, include_publications=False) for k in rows], total=total)
 
 
 @router.get("/kols/{slug}", response_model=KOLAdminOut)

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -149,12 +150,24 @@ class IntegrationSetting(Base):
 
 
 class ReportTemplate(Base):
+    """Report template catalog row.
+
+    ``semver`` + ``s3_key`` point at the template body (system prompt +
+    HTML skeleton) in the cht-reports bucket (CPR-25). Older admin rows
+    have neither.
+    """
+
     __tablename__ = "report_templates"
+    __table_args__ = (
+        Index("uix_report_templates_type_semver", "type", "semver", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False, default="analytics")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    semver: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

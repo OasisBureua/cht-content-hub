@@ -6,10 +6,32 @@
 |----------|---------|---------|
 | `pr-validation.yml` | Pull requests | Terraform validate |
 | `branch-policy.yml` | PRs → `main`, push `release/**` | Require `release/*` head; release must branch from `develop` |
-| `deploy-dev.yml` | Push to `develop` / `feature/**`, manual | Build API → `contenthub-dev-api`, Terraform apply dev |
-| `deploy-prod.yml` | Merged `release/*` → `main`, manual | Build API → Terraform apply prod (use1 + use2 DR) |
+| `deploy-dev.yml` | Push to `develop` / `feature/**`, manual | Scoped lanes: API image, sync zip, Terraform apply dev |
+| `deploy-prod.yml` | Merged `release/*` → `main`, manual | Scoped lanes: API image, sync zip, Terraform apply prod (use1 + use2 DR) |
 
 Docs-only changes under `docs/**` do not trigger deploys.
+
+## Deploy scope
+
+`deploy-dev.yml` and `deploy-prod.yml` deploy **only the lanes whose trees changed** since the last relevant SHA:
+
+| Lane | Paths | What runs |
+|------|--------|-----------|
+| API | `backend/**` | API image + ECS image roll (Terraform plan/apply for the task def). Tests: backend `pytest` |
+| Sync | `sync/**` | Shared Lambda zip + Terraform plan/apply. Tests: backend `pytest` |
+| Infra | `infrastructure/**` | Terraform plan/apply (keeps the currently applied API image from state) |
+
+Change base:
+
+- **Push (dev):** previous tip (`github.event.before`)
+- **Merged release PR (prod):** PR base SHA
+- **Manual run:** last successful run of that workflow on the same branch
+- **Fallback:** merge-base with `develop` (dev) or `main` (prod)
+- If no base can be resolved, all lanes run (safe first deploy)
+
+Manual **Run workflow** has `deploy_all` (default off) to force every lane. Changing `scripts/**` or workflow YAML no longer deploys infra by itself.
+
+A `backend/**` change still rebuilds the shared Lambda zip because `sync_lambda_source_hash` includes `backend/src`. Use `deploy_all` when you want an explicit full stack.
 
 ## ECR repositories
 
@@ -233,7 +255,9 @@ Semver works the same as dev but against **`contenthub-api`**:
 ### Manual trigger
 
 - Dev: Actions → **Deploy to Development**
-- Prod: Actions → **Deploy to Production** (optional **Plan only** checkbox)
+- Prod: Actions → **Deploy to Production**
+- Optional **Plan only** (no apply)
+- Optional **Deploy all lanes** to ignore path detection and apply the full stack
 
 ### Local parity (infra-only; ECS via CI)
 

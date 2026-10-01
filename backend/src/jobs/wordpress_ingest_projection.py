@@ -394,6 +394,7 @@ async def project_term_event(
             db,
             term_model=term_model,
             taxonomy=taxonomy,
+            old_row=existing_by_term_id,
             old_slug=old_slug,
             new_slug=slug,
             payload=payload,
@@ -430,6 +431,7 @@ async def _rename_term(
     *,
     term_model,
     taxonomy: str,
+    old_row,
     old_slug: str,
     new_slug: str,
     payload: dict[str, Any],
@@ -437,17 +439,11 @@ async def _rename_term(
 ) -> None:
     """Move a term row + its M:M memberships from old_slug to new_slug.
 
-    Order matters — Postgres FK checks are per-statement, and we need to
-    respect the FK from association tables → term.slug. Approach:
-
-      1. UPDATE the master term row to have the new slug + refreshed metadata.
-         Association tables have ON UPDATE CASCADE via app-layer intent, but
-         Postgres FK enforcement means we have to update the child rows
-         either before or in the same statement. Sqlite tests don't enforce
-         FKs on UPDATE, so the two paths behave differently — we do the
-         child updates explicitly to keep behavior identical.
-      2. UPDATE the M:M association rows: replace old_slug with new_slug.
-      3. INSERT an alias row (series only) so external links resolve.
+    Association FKs are ON DELETE CASCADE only — there is no ON UPDATE
+    CASCADE. That means we cannot UPDATE children to a slug the parent
+    table does not yet have, and we cannot UPDATE the parent PK while
+    children still reference the old slug. Insert the new parent first,
+    retarget children / aliases, then delete the old parent.
     """
     from models.wordpress_projection import (
         WordPressPostCategory,
@@ -457,11 +453,20 @@ async def _rename_term(
     )
     from sqlalchemy import update
 
-    # Slug FK enforcement is done at the term_model + assoc_model level via
-    # ON DELETE CASCADE, not ON UPDATE CASCADE. So we must manually update
-    # the child rows first (or in the same tx before commit). Postgres
-    # will error if we UPDATE the parent first while children still
-    # reference the old slug — so children first.
+    new_row = term_model(
+        slug=new_slug,
+        name=payload.get("name") or new_slug,
+        description=payload.get("description"),
+        parent_slug=payload.get("parent_slug"),
+        wp_term_id=payload.get("term_id"),
+        deleted_at=None,
+        last_updated=now,
+    )
+    if old_row.first_seen is not None:
+        new_row.first_seen = old_row.first_seen
+    db.add(new_row)
+    await db.flush()
+
     assoc_model = None
     slug_column: str | None = None
     if taxonomy == "series":
@@ -472,26 +477,10 @@ async def _rename_term(
         assoc_model, slug_column = WordPressPostTag, "tag_slug"
 
     if assoc_model is not None:
-        # Bulk UPDATE the M:M rows.
         col = getattr(assoc_model, slug_column)
         await db.execute(
             update(assoc_model).where(col == old_slug).values({slug_column: new_slug})
         )
-
-    # UPDATE the master term row.
-    await db.execute(
-        update(term_model)
-        .where(term_model.slug == old_slug)
-        .values(
-            slug=new_slug,
-            name=payload.get("name") or new_slug,
-            description=payload.get("description"),
-            parent_slug=payload.get("parent_slug"),
-            wp_term_id=payload.get("term_id"),
-            deleted_at=None,
-            last_updated=now,
-        )
-    )
 
     # Record the rename in the alias table (series only for now — WPR-8 scope).
     if taxonomy == "series":
@@ -518,12 +507,17 @@ async def _rename_term(
             existing_alias.renamed_at = now
 
         # Also update ANY existing aliases whose current_slug == old_slug —
-        # they need to point at new_slug now (transitive fix).
+        # they need to point at new_slug now (transitive fix). Do this
+        # before deleting the old parent so ON DELETE CASCADE does not
+        # drop those alias rows.
         await db.execute(
             update(WordPressSeriesSlugAlias)
             .where(WordPressSeriesSlugAlias.current_slug == old_slug)
             .values(current_slug=new_slug, renamed_at=now)
         )
+
+    await db.delete(old_row)
+    await db.flush()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

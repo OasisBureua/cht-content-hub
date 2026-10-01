@@ -25,6 +25,12 @@ variable "deployment_package_path" {
   description = "Path to shared sync-lambda.zip"
 }
 
+variable "source_code_hash" {
+  type        = string
+  default     = ""
+  description = "When set, used instead of hashing the zip. Pass a hash of repo sources so pip/zip timestamp churn does not update the function."
+}
+
 variable "timeout" {
   type    = number
   default = 300
@@ -83,6 +89,12 @@ variable "extra_env" {
   type        = map(string)
   default     = {}
   description = "Additional environment variables merged into the Lambda's env. Job-specific; module-level defaults still win on key collision."
+}
+
+variable "extra_secret_arns" {
+  type        = list(string)
+  default     = []
+  description = "Additional Secrets Manager ARNs the Lambda may GetSecretValue (e.g. Cognito M2M export)."
 }
 
 variable "enabled" {

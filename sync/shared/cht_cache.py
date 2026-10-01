@@ -1,11 +1,10 @@
 """CHT upstream cache invalidation helper.
 
-Modern endpoint: POST /api/internal/cache/clear/all
-See dev.github.tfvars / prod.github.tfvars for the `cht_cache_clear_url` value.
+Prefers Cognito M2M Bearer ``platform/cache.clear``. Falls back to
+``?cacheKey=<INTERNAL_CACHE_SECRET>`` until that secret is dropped.
 
-Auth uses the query-parameter form `?cacheKey=<secret>` (preferred per the
-CHT internal cache API spec). The legacy `x-internal-secret` header is also
-accepted server-side but query param is the recommended path for new sync jobs.
+Modern endpoint: POST /api/internal/cache/clear?scope=<scope>
+See dev.github.tfvars / prod.github.tfvars for the `cht_cache_clear_url` value.
 """
 
 from __future__ import annotations
@@ -17,6 +16,8 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import httpx
 
 log = logging.getLogger(__name__)
+
+CACHE_CLEAR_SCOPE = "platform/cache.clear"
 
 
 def _url_with_cache_key(url: str, secret: str) -> str:
@@ -35,23 +36,75 @@ def _url_with_cache_key(url: str, secret: str) -> str:
     return urlunparse(parts._replace(query=urlencode(existing)))
 
 
-def clear_cht_catalog_cache(*, job: str | None = None) -> bool:
+def _scoped_clear_url(base_url: str, scope: str) -> str:
+    parts = urlparse(base_url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/clear/all") or path.endswith("/clear/catalog") or path.endswith("/clear/contenthub"):
+        path = path[: path.rfind("/clear/") + len("/clear")]
+    elif path.endswith("/catalog/clear") or path.endswith("/all/clear") or path.endswith("/contenthub/clear"):
+        path = path.rsplit("/", 2)[0] + "/clear"
+    return urlunparse(parts._replace(path=path, query=urlencode([("scope", scope)])))
+
+
+def _m2m_cache_clear_token() -> str:
+    try:
+        from auth.outbound import fetch_access_token_sync, resolve_outbound_m2m
+    except Exception as exc:  # noqa: BLE001
+        log.info("CHT cache clear M2M import skipped", extra={"error": str(exc)})
+        return ""
+    try:
+        token_url, client_id, client_secret, scope = resolve_outbound_m2m(
+            scope=CACHE_CLEAR_SCOPE
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.info("CHT cache clear M2M resolve skipped", extra={"error": str(exc)})
+        return ""
+    if not (token_url and client_id and client_secret):
+        return ""
+    try:
+        return fetch_access_token_sync(
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            scope=scope or CACHE_CLEAR_SCOPE,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("CHT cache clear M2M token failed", extra={"error": str(exc)})
+        return ""
+
+
+def clear_cht_catalog_cache(*, job: str | None = None, scope: str = "contenthub") -> bool:
     """POST to the configured CHT cache-clear endpoint. Returns True on 2xx."""
     url = os.environ.get("CHT_CACHE_CLEAR_URL", "")
     secret = os.environ.get("INTERNAL_CACHE_SECRET", "")
-    if not url or not secret:
+    if not url:
         log.info(
             "CHT cache clear skipped",
-            extra={"reason": "CHT_CACHE_CLEAR_URL or INTERNAL_CACHE_SECRET not set"},
+            extra={"reason": "CHT_CACHE_CLEAR_URL not set"},
         )
         return False
 
-    signed_url = _url_with_cache_key(url, secret)
+    token = _m2m_cache_clear_token()
+    headers: dict[str, str] = {}
+    if token:
+        target = _scoped_clear_url(url, scope)
+        headers["Authorization"] = f"Bearer {token}"
+        auth_mode = "m2m"
+    elif secret:
+        target = _url_with_cache_key(url, secret)
+        auth_mode = "cache_key"
+    else:
+        log.info(
+            "CHT cache clear skipped",
+            extra={"reason": "no platform/cache.clear token and INTERNAL_CACHE_SECRET unset"},
+        )
+        return False
+
     payload = {"source": "contenthub-sync", "job": job or "cache_clear"}
 
     try:
         with httpx.Client(timeout=15.0) as client:
-            resp = client.post(signed_url, json=payload)
+            resp = client.post(target, json=payload, headers=headers)
             resp.raise_for_status()
         body = (
             resp.json()
@@ -62,6 +115,7 @@ def clear_cht_catalog_cache(*, job: str | None = None) -> bool:
             "CHT cache cleared",
             extra={
                 "job": job,
+                "auth": auth_mode,
                 "scope": body.get("scope"),
                 "total_keys_deleted": body.get("total"),
                 "duration_ms": body.get("durationMs"),

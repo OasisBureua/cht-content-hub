@@ -2,6 +2,15 @@
 
 locals {
   sync_lambda_package = var.sync_lambda_package_path != "" ? var.sync_lambda_package_path : abspath("${path.module}/../../../../dist/sync-lambda.zip")
+  # Hash our sources + lockfile, not the zip. pip/zip timestamps must not
+  # UpdateFunctionCode on every deploy.
+  _sync_root        = abspath("${path.module}/../../../../sync")
+  _backend_src_root = abspath("${path.module}/../../../../backend/src")
+  sync_lambda_source_hash = base64sha256(join("", concat(
+    [filesha256("${local._sync_root}/requirements.txt")],
+    [for f in sort(fileset(local._sync_root, "**/*.py")) : filesha256("${local._sync_root}/${f}")],
+    [for f in sort(fileset(local._backend_src_root, "**/*.py")) : filesha256("${local._backend_src_root}/${f}")],
+  )))
 
   sync_jobs = {
     cache_clear = {
@@ -122,6 +131,33 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    # CPR-13 — pull Zoom export packets from cht-platform-tool into Hub Aurora.
+    # Default OFF until CPR-12 M2M (Cognito) + export HTTP API + optional
+    # transcript S3 GetObject IAM are provisioned. Flip
+    # sync_jobs_enabled.platform_export_ingest = true after PLATFORM_EXPORT_*
+    # secrets are in app-secrets. Daily 05:00 UTC (after kol_hcp_matcher).
+    platform_export_ingest = {
+      enabled                        = lookup(var.sync_jobs_enabled, "platform_export_ingest", false)
+      handler                        = "jobs.platform_export_ingest.handler.handler"
+      timeout                        = 900
+      memory_size                    = 1024
+      schedule_expression            = "cron(0 5 * * ? *)"
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
+    # CPR-9 — S3 ObjectCreated on zoom-recordings/*.vtt → warehouse text.
+    # Direct S3 notify (not SQS). Hub owns lambda:AddPermission; platform-tool
+    # owns the bucket notification. This job owns GetObject + row update.
+    # Does not replace platform_export_ingest (backfill / late campaignId).
+    vtt_object_ingest = {
+      enabled                        = lookup(var.sync_jobs_enabled, "vtt_object_ingest", false)
+      handler                        = "jobs.vtt_object_ingest.handler.handler"
+      timeout                        = 60
+      memory_size                    = 256
+      schedule_expression            = null
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
   }
 }
 
@@ -136,6 +172,20 @@ locals {
       var.wordpress_webhook_self_url != "" ? { SELF_WEBHOOK_URL = var.wordpress_webhook_self_url } : {},
       { WP_BASE_URL = var.wordpress_base_url }
     )
+    platform_export_ingest = merge(
+      var.platform_export_base_url != "" ? { PLATFORM_EXPORT_BASE_URL = var.platform_export_base_url } : {},
+      var.platform_export_m2m_secret_arn != "" ? {
+        PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
+      } : {},
+      { PLATFORM_EXPORT_HTTP_MODE = "input_packet" }
+    )
+    vtt_object_ingest = {
+      PLATFORM_EXPORT_TRANSCRIPT_BUCKET = var.platform_export_transcript_bucket
+    }
+  }
+
+  sync_job_extra_secret_arns = {
+    platform_export_ingest = compact([var.platform_export_m2m_secret_arn])
   }
 }
 
@@ -150,6 +200,7 @@ module "sync_lambda" {
   job_name                       = each.key
   handler                        = each.value.handler
   deployment_package_path        = local.sync_lambda_package
+  source_code_hash               = local.sync_lambda_source_hash
   timeout                        = each.value.timeout
   memory_size                    = each.value.memory_size
   schedule_expression            = each.value.schedule_expression
@@ -166,7 +217,16 @@ module "sync_lambda" {
   # Per-job env vars. Merged with the module's default env; module defaults
   # win on collision. wordpress_reconcile needs its own ingress URL so it
   # can fire synthetic HMAC-signed webhooks at the ECS route.
-  extra_env = lookup(local.sync_job_extra_env, each.key, {})
+  extra_env = merge(
+    var.platform_export_m2m_secret_arn != "" ? {
+      PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
+    } : {},
+    lookup(local.sync_job_extra_env, each.key, {}),
+  )
+  extra_secret_arns = compact(concat(
+    [local.outbound_m2m_secret_iam_arn],
+    lookup(local.sync_job_extra_secret_arns, each.key, []),
+  ))
 
   depends_on = [module.app_secrets]
 }
