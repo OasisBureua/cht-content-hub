@@ -56,6 +56,7 @@ class BatchIngestResult:
     processed: int = 0
     succeeded: int = 0
     failed: int = 0
+    skipped: int = 0
     results: list[CampaignIngestResult] = field(default_factory=list)
 
 
@@ -192,6 +193,57 @@ async def list_campaign_ids_for_ingest(
     return list((await db.execute(stmt)).scalars().all())
 
 
+def _platform_code(value: str | None) -> str:
+    return (value or "").strip()
+
+
+async def resolve_http_export_targets(
+    db: AsyncSession,
+    *,
+    campaign_ids: list[int] | None = None,
+    export_campaign_ids: dict[int, str] | None = None,
+    limit: int | None = None,
+) -> tuple[list[int], dict[int, str], int]:
+    """Hub campaigns the live export can call.
+
+    The packet URL needs Program.campaignId (for example AZ-25-01_LIV001).
+    That string is ``campaigns.platform_campaign_id``, unless the caller
+    passed an explicit map. Campaigns with neither are skipped, not called
+    with the Hub integer id.
+
+    Returns ``(hub_ids, export_map, skipped)``.
+    """
+    explicit = export_campaign_ids or {}
+    stmt = select(Campaign.id, Campaign.platform_campaign_id)
+    if campaign_ids:
+        wanted = list(dict.fromkeys(int(x) for x in campaign_ids))
+        stmt = stmt.where(Campaign.id.in_(wanted))
+    stmt = stmt.order_by(Campaign.id.desc())
+    rows = list((await db.execute(stmt)).all())
+
+    found = {int(row[0]): _platform_code(row[1]) for row in rows}
+    order = [int(row[0]) for row in rows]
+    if campaign_ids:
+        # Keep the caller's order. Ids with no row count as skipped.
+        order = list(dict.fromkeys(int(x) for x in campaign_ids))
+
+    ids: list[int] = []
+    export_map: dict[int, str] = {}
+    skipped = 0
+    for hub_id in order:
+        code = _platform_code(explicit.get(hub_id)) or found.get(hub_id, "")
+        if not code:
+            skipped += 1
+            continue
+        ids.append(hub_id)
+        export_map[hub_id] = code
+
+    if limit is not None:
+        ids = ids[: int(limit)]
+        export_map = {hub_id: export_map[hub_id] for hub_id in ids}
+    return ids, export_map, skipped
+
+
 async def ingest_campaigns_batch(
     db: AsyncSession,
     *,
@@ -201,17 +253,30 @@ async def ingest_campaigns_batch(
     export_campaign_ids: dict[int, str] | None = None,
     limit: int | None = None,
     trigger: str = "schedule",
+    use_stored_platform_campaign_id: bool = False,
 ) -> BatchIngestResult:
     """Ingest one or many campaigns; continue on per-campaign failures.
 
     ``export_campaign_ids`` maps Hub ``campaigns.id`` → platform
     ``Program.campaignId`` string for live HTTP fetch.
+
+    When ``use_stored_platform_campaign_id`` is set (the daily HTTP job),
+    campaigns with no platform campaign id are skipped instead of calling
+    the export API with the Hub integer id.
     """
-    ids = await list_campaign_ids_for_ingest(
-        db, campaign_ids=campaign_ids, limit=limit
-    )
-    export_map = export_campaign_ids or {}
     batch = BatchIngestResult()
+    if use_stored_platform_campaign_id:
+        ids, export_map, batch.skipped = await resolve_http_export_targets(
+            db,
+            campaign_ids=campaign_ids,
+            export_campaign_ids=export_campaign_ids,
+            limit=limit,
+        )
+    else:
+        ids = await list_campaign_ids_for_ingest(
+            db, campaign_ids=campaign_ids, limit=limit
+        )
+        export_map = export_campaign_ids or {}
 
     for campaign_id in ids:
         batch.processed += 1

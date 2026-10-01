@@ -159,7 +159,8 @@ async def trigger_export_ingest(
         alias="exportCampaignId",
         description=(
             "Platform Program.campaignId string for live export "
-            "(e.g. AZ-25-01_LIV001). Required when source=http."
+            "(e.g. AZ-25-01_LIV001). Falls back to the campaign's "
+            "platformCampaignId. One of the two is required when source=http."
         ),
     ),
 ) -> ExportIngestRunOut:
@@ -169,12 +170,17 @@ async def trigger_export_ingest(
     string ``exportCampaignId`` linked on platform Programs.
     """
     normalized = (source or "http").strip().lower()
-    if normalized == "http" and not (export_campaign_id and export_campaign_id.strip()):
+    resolved_export_id = (export_campaign_id or "").strip() or None
+    if normalized == "http" and resolved_export_id is None:
+        campaign = await campaigns._get_campaign_row(db, campaign_id)
+        resolved_export_id = (campaign.platform_campaign_id or "").strip() or None
+    if normalized == "http" and not resolved_export_id:
         raise HTTPException(
             status_code=400,
             detail=(
                 "exportCampaignId is required when source=http "
-                "(platform Program.campaignId, e.g. AZ-25-01_LIV001)"
+                "(platform Program.campaignId, e.g. AZ-25-01_LIV001), "
+                "or set platformCampaignId on the campaign"
             ),
         )
     runtime = resolve_export_ingest_runtime_http(settings, source=source)
@@ -184,7 +190,7 @@ async def trigger_export_ingest(
         client=runtime.client,
         transcript_store=runtime.transcript_store,
         trigger="manual",
-        export_campaign_id=export_campaign_id,
+        export_campaign_id=resolved_export_id,
     )
     return ExportIngestRunOut.model_validate(run)
 

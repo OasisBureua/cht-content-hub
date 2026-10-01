@@ -65,6 +65,7 @@ class CampaignOut(ApiModel):
     physician_speakers: str = ""
     landing_page_url: str = ""
     hubspot_campaign_id: str = ""
+    platform_campaign_id: str | None = None
     event_date: date | None = None
     livestream_url: str = ""
     hubspot_synced_at: datetime | None = None
@@ -100,6 +101,7 @@ class CampaignCreate(ApiModel):
     physician_speakers: str | None = None
     landing_page_url: str | None = None
     hubspot_campaign_id: str | None = None
+    platform_campaign_id: str | None = None
     event_date: date | None = None
     livestream_url: str | None = None
     report_type: ReportType | None = None

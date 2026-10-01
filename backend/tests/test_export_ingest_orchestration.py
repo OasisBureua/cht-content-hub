@@ -15,12 +15,14 @@ from config import Settings
 from conftest import api_headers
 from models.export_warehouse import ExportIngestRun, ExportSession
 from services.export_ingest.client_fixture import FixtureExportClient
+from schemas.platform_export import PlatformExportPacket
 from services.export_ingest.ingest import (
     ExportIngestConfigError,
     ingest_campaign,
     ingest_campaigns_batch,
     memory_runtime_for_tests,
     resolve_export_ingest_runtime,
+    resolve_http_export_targets,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "platform_export"
@@ -192,6 +194,77 @@ async def test_admin_http_requires_export_campaign_id(
 
 
 @pytest.mark.asyncio
+async def test_admin_http_uses_stored_platform_campaign_id(
+    client: AsyncClient,
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={
+            "name": "Linked Platform Campaign",
+            "platformCampaignId": "  AZ-25-01_LIV001  ",
+        },
+    )
+    assert create.status_code in (200, 201)
+    body = create.json()
+    campaign_id = body["id"]
+    assert body["platformCampaignId"] == "AZ-25-01_LIV001"
+
+    packet = PlatformExportPacket(
+        campaign_id="AZ-25-01_LIV001",
+        sessions=[],
+        attendance=[],
+        survey_responses=[],
+    )
+    runtime_client = FixtureExportClient()
+    runtime_client.put(packet)
+    runtime = memory_runtime_for_tests(client=runtime_client)
+
+    with patch(
+        "admin.router.resolve_export_ingest_runtime_http",
+        return_value=runtime,
+    ):
+        response = await client.post(
+            f"/api/admin/campaigns/{campaign_id}/export-ingest",
+            headers=admin_headers(),
+            params={"source": "http"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "success"
+    assert response.json()["campaignId"] == campaign_id
+
+
+@pytest.mark.asyncio
+async def test_http_batch_skips_campaigns_without_platform_id(
+    db_session: AsyncSession,
+):
+    await _create_campaign_via_orm(
+        db_session, campaign_id=7, platform_campaign_id="AZ-25-01_LIV001"
+    )
+    await _create_campaign_via_orm(db_session, campaign_id=8)
+
+    ids, export_map, skipped = await resolve_http_export_targets(db_session)
+    assert ids == [7]
+    assert export_map == {7: "AZ-25-01_LIV001"}
+    assert skipped == 1
+
+    packet = PlatformExportPacket(campaign_id="AZ-25-01_LIV001")
+    client = FixtureExportClient()
+    client.put(packet)
+    batch = await ingest_campaigns_batch(
+        db_session,
+        client=client,
+        trigger="schedule",
+        use_stored_platform_campaign_id=True,
+    )
+    assert batch.processed == 1
+    assert batch.succeeded == 1
+    assert batch.skipped == 1
+    assert batch.results[0].campaign_id == 7
+
+
+@pytest.mark.asyncio
 async def test_ingest_rewrites_string_export_campaign_id(
     db_session: AsyncSession,
 ):
@@ -222,9 +295,20 @@ async def test_ingest_rewrites_string_export_campaign_id(
     assert session.zoom_uuid == "AbCdEf=="
 
 
-async def _create_campaign_via_orm(db_session: AsyncSession, *, campaign_id: int) -> int:
+async def _create_campaign_via_orm(
+    db_session: AsyncSession,
+    *,
+    campaign_id: int,
+    platform_campaign_id: str | None = None,
+) -> int:
     from models.campaign import Campaign
 
-    db_session.add(Campaign(id=campaign_id, name=f"Campaign {campaign_id}"))
+    db_session.add(
+        Campaign(
+            id=campaign_id,
+            name=f"Campaign {campaign_id}",
+            platform_campaign_id=platform_campaign_id,
+        )
+    )
     await db_session.flush()
     return campaign_id
