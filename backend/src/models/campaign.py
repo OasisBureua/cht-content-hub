@@ -43,8 +43,8 @@ class Campaign(Base):
     physician_speakers: Mapped[str] = mapped_column(Text, nullable=False, default="")
     landing_page_url: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
     hubspot_campaign_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
-    # Platform Program.campaignId (e.g. AZ-25-01_LIV001). The daily export
-    # job calls the input-packet URL with this string. Blank rows are skipped.
+    # Optional override for Program.campaignId (e.g. AZ-25-01_LIV001).
+    # Blank rows use Hub campaigns.id, which the Programs tab writes.
     platform_campaign_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     livestream_url: Mapped[str] = mapped_column(String(1000), nullable=False, default="")

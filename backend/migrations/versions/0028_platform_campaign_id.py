@@ -2,7 +2,7 @@
 
 The daily job calls
 GET /api/export/reports/campaigns/{Program.campaignId}/input-packet.
-That string is not the Hub integer campaigns.id. Rows without it are skipped.
+This column is an optional AZ-style override. Blank rows use Hub campaigns.id.
 
 Revision ID: 0028_platform_campaign_id
 Revises: 0027_survey_jotform_form_id

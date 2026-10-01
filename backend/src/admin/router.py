@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.cache import notify_cht_cache_clear
@@ -158,16 +158,17 @@ async def trigger_export_ingest(
         default=None,
         alias="exportCampaignId",
         description=(
-            "Platform Program.campaignId string for live export "
+            "Optional Program.campaignId override for live export "
             "(e.g. AZ-25-01_LIV001). Falls back to the campaign's "
-            "platformCampaignId. One of the two is required when source=http."
+            "platformCampaignId, then to the Hub campaign id."
         ),
     ),
 ) -> ExportIngestRunOut:
     """Pull platform Zoom export for this Hub campaign into the warehouse.
 
-    Hub ``campaign_id`` is the integer PK. Live CPR-28 export keys off the
-    string ``exportCampaignId`` linked on platform Programs.
+    Hub ``campaign_id`` is the integer PK. Live export uses
+    ``exportCampaignId`` or ``platformCampaignId`` when set, otherwise
+    the Hub id.
     """
     normalized = (source or "http").strip().lower()
     resolved_export_id = (export_campaign_id or "").strip() or None
@@ -175,14 +176,7 @@ async def trigger_export_ingest(
         campaign = await campaigns._get_campaign_row(db, campaign_id)
         resolved_export_id = (campaign.platform_campaign_id or "").strip() or None
     if normalized == "http" and not resolved_export_id:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "exportCampaignId is required when source=http "
-                "(platform Program.campaignId, e.g. AZ-25-01_LIV001), "
-                "or set platformCampaignId on the campaign"
-            ),
-        )
+        resolved_export_id = str(campaign_id)
     runtime = resolve_export_ingest_runtime_http(settings, source=source)
     run = await ingest_campaign(
         db,

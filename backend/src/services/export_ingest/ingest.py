@@ -206,10 +206,11 @@ async def resolve_http_export_targets(
 ) -> tuple[list[int], dict[int, str], int]:
     """Hub campaigns the live export can call.
 
-    The packet URL needs Program.campaignId (for example AZ-25-01_LIV001).
-    That string is ``campaigns.platform_campaign_id``, unless the caller
-    passed an explicit map. Campaigns with neither are skipped, not called
-    with the Hub integer id.
+    The packet URL needs Program.campaignId. A stored
+    ``campaigns.platform_campaign_id`` or an explicit map overrides the
+    call. When both are blank, the Hub integer id is used, because the
+    Programs tab writes that id into Program.campaignId. A Hub id with
+    no campaign row is skipped.
 
     Returns ``(hub_ids, export_map, skipped)``.
     """
@@ -231,12 +232,12 @@ async def resolve_http_export_targets(
     export_map: dict[int, str] = {}
     skipped = 0
     for hub_id in order:
-        code = _platform_code(explicit.get(hub_id)) or found.get(hub_id, "")
-        if not code:
+        if campaign_ids and hub_id not in found and hub_id not in explicit:
             skipped += 1
             continue
+        code = _platform_code(explicit.get(hub_id)) or found.get(hub_id, "")
         ids.append(hub_id)
-        export_map[hub_id] = code
+        export_map[hub_id] = code or str(hub_id)
 
     if limit is not None:
         ids = ids[: int(limit)]
@@ -261,8 +262,8 @@ async def ingest_campaigns_batch(
     ``Program.campaignId`` string for live HTTP fetch.
 
     When ``use_stored_platform_campaign_id`` is set (the daily HTTP job),
-    campaigns with no platform campaign id are skipped instead of calling
-    the export API with the Hub integer id.
+    a blank platform campaign id falls back to the Hub integer id. A
+    stored or explicit platform campaign id overrides that.
     """
     batch = BatchIngestResult()
     if use_stored_platform_campaign_id:
