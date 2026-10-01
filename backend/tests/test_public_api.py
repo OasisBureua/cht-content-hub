@@ -149,6 +149,29 @@ async def test_kol_detail(client: AsyncClient, kol_with_shoot):
 
 
 @pytest.mark.asyncio
+async def test_kol_publications_on_detail_not_list(
+    client: AsyncClient, db_session, kol_with_shoot
+):
+    pubs = [
+        {
+            "title": "A trial.",
+            "journal": "N Engl J Med",
+            "year": 2024,
+            "url": "https://pubmed.ncbi.nlm.nih.gov/2/",
+        }
+    ]
+    kol_with_shoot.publications = pubs
+    await db_session.flush()
+
+    detail = await client.get(f"/api/public/kols/{kol_with_shoot.slug}", headers=api_headers())
+    assert detail.json()["publications"] == pubs
+
+    listed = await client.get("/api/public/kols", headers=api_headers())
+    item = next(i for i in listed.json()["items"] if i["slug"] == kol_with_shoot.slug)
+    assert item["publications"] == []
+
+
+@pytest.mark.asyncio
 async def test_kol_detail_not_found(client: AsyncClient):
     response = await client.get(
         "/api/public/kols/unknown-slug",
