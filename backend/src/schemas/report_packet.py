@@ -12,6 +12,8 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
+from pydantic import Field
+
 from schemas.campaigns import ApiModel
 
 
@@ -27,6 +29,14 @@ class SourceCompletenessOut(ApiModel):
     status: SourceStatus
 
 
+class ReportPacketKolOut(ApiModel):
+    """Hub kols row. Not parsed from the transcript."""
+
+    name: str
+    title: str | None = None
+    institution: str | None = None
+
+
 class ReportPacketSessionOut(ApiModel):
     platform_tool_program_id: str | None = None
     kind: str | None = None
@@ -34,6 +44,19 @@ class ReportPacketSessionOut(ApiModel):
     session_date: datetime | None = None
     zoom_meeting_uuid: str | None = None
     transcript_text: str
+    kols: list[ReportPacketKolOut] = Field(default_factory=list)
+
+
+class ReportPacketAttendanceOut(ApiModel):
+    platform_tool_program_id: str
+    participant_email: str | None = None
+    participant_name: str | None = None
+    source: str
+    event: str
+    occurred_at: datetime
+    duration_seconds: int | None = None
+    join_time: datetime | None = None
+    leave_time: datetime | None = None
 
 
 class ReportPacketSurveyOut(ApiModel):
@@ -71,6 +94,8 @@ class ReportInputPacketOut(ApiModel):
     hubspot_raw_data: Any | None = None
     platform_slices: list[ReportPacketPlatformSliceOut]
     sessions: list[ReportPacketSessionOut]
+    attendance: list[ReportPacketAttendanceOut]
     survey_responses: list[ReportPacketSurveyOut]
+    kols: list[ReportPacketKolOut] = Field(default_factory=list)
     template: ReportPacketTemplateOut | None = None
     input_completeness: dict[str, SourceCompletenessOut]

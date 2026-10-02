@@ -10,8 +10,18 @@ Data sources:
 * ``hubspotRawData`` — ``Campaign.hubspot_raw_data`` (unchanged)
 * ``sessions`` — CPR-13 ``export_sessions`` (Zoom) when present for the
   campaign; otherwise shoot ``diarized_transcript`` fallback (Uche:
-  Zoom first, shoot fallback only — no union for the same event)
+  Zoom first, shoot fallback only — no union for the same event).
+  Shoot sessions include Hub ``kols`` name/title/institution via the
+  shoot's KOL group. Zoom rows have no KOL column, so those session
+  ``kols`` stay empty. Campaign ``kols`` still lists Hub KOL rows from
+  shoots linked to the campaign, without using the shoot transcript.
+* ``attendance`` — CPR-13 ``export_attendance_events`` for this campaign.
+  Included with sessions. Not the empty ``reports.attendance`` table.
 * ``surveyResponses`` — CPR-13 ``export_survey_responses``
+
+``windowStart`` / ``windowEnd`` filter sessions, attendance, and surveys
+by date. A blank window leaves those lists unfiltered. ``sources`` limits
+which sections are returned; a blank list returns every section.
 * ``template`` — CPR-25 pointer (``type``/``semver``/``s3Key``) to the
   template body in the cht-reports bucket: the campaign's linked template,
   else the latest ``executive_summary`` version
@@ -34,10 +44,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.campaign import ReportTemplate
-from models.export_warehouse import ExportSession, ExportSurveyResponse
+from models.export_warehouse import (
+    ExportAttendanceEvent,
+    ExportSession,
+    ExportSurveyResponse,
+)
+from models.kol import KOL, KOLGroupMember
 from models.shoot import Shoot
 from schemas.report_packet import (
     ReportInputPacketOut,
+    ReportPacketAttendanceOut,
+    ReportPacketKolOut,
     ReportPacketPlatformSliceOut,
     ReportPacketSessionOut,
     ReportPacketSurveyOut,
@@ -70,6 +87,8 @@ async def build_report_packet(
 ) -> ReportInputPacketOut:
     campaign = await campaign_service._get_campaign_row(db, campaign_id)
 
+    requested = _requested_sources(sources)
+
     latest_platforms = await platform_data.latest_by_platform(db, campaign_id)
     platform_slices = [
         ReportPacketPlatformSliceOut(
@@ -81,27 +100,58 @@ async def build_report_packet(
             synced_at=row.synced_at,
         )
         for row in latest_platforms.values()
-        if row.status == "available"
+        if row.status == "available" and _wants(requested, row.platform)
     ]
 
     store = transcript_store if transcript_store is not None else _resolve_transcript_store()
     sessions, sessions_fetched_at = await _load_sessions(
-        db, campaign_id, transcript_store=store
+        db,
+        campaign_id,
+        transcript_store=store,
+        window_start=window_start,
+        window_end=window_end,
     )
-    survey_responses, surveys_fetched_at = await _load_surveys(db, campaign_id)
+    attendance, attendance_fetched_at = await _load_attendance(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    survey_responses, surveys_fetched_at = await _load_surveys(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    kols = await _load_campaign_kols(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    if not _wants(requested, "sessions"):
+        sessions, sessions_fetched_at = [], None
+        attendance, attendance_fetched_at = [], None
+        kols = []
+    if not _wants(requested, "surveys"):
+        survey_responses, surveys_fetched_at = [], None
 
     # Dict keys, unlike model fields, aren't touched by ApiModel's
     # camelCase alias generator, so multi-word keys must be written
     # camelCase by hand to match the rest of the wire contract.
     input_completeness: dict[str, SourceCompletenessOut] = {}
 
+    include_hubspot = _wants(requested, "hubspot")
+    hubspot_raw = campaign.hubspot_raw_data if include_hubspot else None
     input_completeness["hubspot"] = SourceCompletenessOut(
-        fetched_at=campaign.hubspot_synced_at,
-        row_count=1 if campaign.hubspot_raw_data else 0,
-        status=SourceStatus.OK if campaign.hubspot_raw_data else SourceStatus.MISSING,
+        fetched_at=campaign.hubspot_synced_at if include_hubspot else None,
+        row_count=1 if hubspot_raw else 0,
+        status=SourceStatus.OK if hubspot_raw else SourceStatus.MISSING,
     )
 
     for row in latest_platforms.values():
+        if not _wants(requested, row.platform):
+            continue
         input_completeness[row.platform] = SourceCompletenessOut(
             fetched_at=row.synced_at,
             row_count=row.row_count or 0,
@@ -112,6 +162,12 @@ async def build_report_packet(
         fetched_at=sessions_fetched_at,
         row_count=len(sessions),
         status=SourceStatus.OK if sessions else SourceStatus.MISSING,
+    )
+
+    input_completeness["attendance"] = SourceCompletenessOut(
+        fetched_at=attendance_fetched_at,
+        row_count=len(attendance),
+        status=SourceStatus.OK if attendance else SourceStatus.MISSING,
     )
 
     input_completeness["surveyResponses"] = SourceCompletenessOut(
@@ -133,10 +189,12 @@ async def build_report_packet(
         window_start=window_start,
         window_end=window_end,
         sources=sources or [],
-        hubspot_raw_data=campaign.hubspot_raw_data,
+        hubspot_raw_data=hubspot_raw,
         platform_slices=platform_slices,
         sessions=sessions,
+        attendance=attendance,
         survey_responses=survey_responses,
+        kols=kols,
         template=(
             ReportPacketTemplateOut(
                 id=template.id,
@@ -196,14 +254,54 @@ def _resolve_transcript_store() -> TranscriptStore | None:
     return S3TranscriptStore(bucket, region_name=settings.aws_region)
 
 
+def _requested_sources(sources: list[str] | None) -> set[str] | None:
+    """None means every section. A non-empty list limits the packet."""
+    if not sources:
+        return None
+    return {item.strip() for item in sources if item and item.strip()}
+
+
+def _wants(requested: set[str] | None, name: str) -> bool:
+    return requested is None or name in requested
+
+
+def _on_day(value: datetime | date | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
+        return value.date()
+    return value
+
+
+def _in_window(
+    value: datetime | date | None,
+    window_start: date | None,
+    window_end: date | None,
+) -> bool:
+    if window_start is None and window_end is None:
+        return True
+    day = _on_day(value)
+    if day is None:
+        return False
+    if window_start is not None and day < window_start:
+        return False
+    if window_end is not None and day > window_end:
+        return False
+    return True
+
+
 async def _load_sessions(
     db: AsyncSession,
     campaign_id: int,
     *,
     transcript_store: TranscriptStore | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
 ) -> tuple[list[ReportPacketSessionOut], datetime | None]:
     """Zoom warehouse first; shoot transcripts only if no Zoom rows."""
-    export_rows = list(
+    stored_rows = list(
         (
             await db.execute(
                 select(ExportSession)
@@ -215,7 +313,14 @@ async def _load_sessions(
             )
         ).scalars()
     )
-    if export_rows:
+    export_rows = [
+        row
+        for row in stored_rows
+        if _in_window(row.session_date, window_start, window_end)
+    ]
+    if stored_rows:
+        if not export_rows:
+            return [], None
         sessions = [
             _session_from_export(row, transcript_store=transcript_store)
             for row in export_rows
@@ -226,12 +331,18 @@ async def _load_sessions(
         )
         return sessions, fetched_at
 
-    shoots = list(
-        (
+    shoots = [
+        shoot
+        for shoot in (
             await db.execute(
                 select(Shoot).where(Shoot.campaign_id == campaign_id)
             )
         ).scalars()
+        if shoot.diarized_transcript
+        and _in_window(shoot.shoot_date, window_start, window_end)
+    ]
+    kols_by_group = await _kols_by_group(
+        db, [shoot.kol_group_id for shoot in shoots if shoot.kol_group_id]
     )
     sessions = [
         ReportPacketSessionOut(
@@ -241,9 +352,9 @@ async def _load_sessions(
             session_date=shoot.shoot_date,
             zoom_meeting_uuid=None,
             transcript_text=shoot.diarized_transcript or "",
+            kols=kols_by_group.get(shoot.kol_group_id or "", []),
         )
         for shoot in shoots
-        if shoot.diarized_transcript
     ]
     fetched_at = datetime.now(timezone.utc) if sessions else None
     return sessions, fetched_at
@@ -275,12 +386,123 @@ def _transcript_text_from_store(store: TranscriptStore, key: str) -> str:
         return ""
 
 
+async def _kols_by_group(
+    db: AsyncSession, group_ids: list[str]
+) -> dict[str, list[ReportPacketKolOut]]:
+    ids = list(dict.fromkeys(group_ids))
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                KOLGroupMember.kol_group_id,
+                KOL.name,
+                KOL.title,
+                KOL.institution,
+            )
+            .join(KOL, KOL.id == KOLGroupMember.kol_id)
+            .where(KOLGroupMember.kol_group_id.in_(ids))
+            .order_by(KOL.name.asc())
+        )
+    ).all()
+    grouped: dict[str, list[ReportPacketKolOut]] = {}
+    for group_id, name, title, institution in rows:
+        grouped.setdefault(group_id, []).append(
+            ReportPacketKolOut(name=name, title=title, institution=institution)
+        )
+    return grouped
+
+
+async def _load_campaign_kols(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
+) -> list[ReportPacketKolOut]:
+    """Hub kols for this campaign. Does not read the transcript."""
+    shoots = [
+        shoot
+        for shoot in (
+            await db.execute(
+                select(Shoot).where(
+                    Shoot.campaign_id == campaign_id,
+                    Shoot.kol_group_id.is_not(None),
+                )
+            )
+        ).scalars()
+        if _in_window(shoot.shoot_date, window_start, window_end)
+    ]
+    grouped = await _kols_by_group(
+        db, [shoot.kol_group_id for shoot in shoots if shoot.kol_group_id]
+    )
+    seen: set[tuple[str, str | None, str | None]] = set()
+    kols: list[ReportPacketKolOut] = []
+    for group_kols in grouped.values():
+        for kol in group_kols:
+            key = (kol.name, kol.title, kol.institution)
+            if key in seen:
+                continue
+            seen.add(key)
+            kols.append(kol)
+    kols.sort(key=lambda kol: kol.name)
+    return kols
+
+
+async def _load_attendance(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
+) -> tuple[list[ReportPacketAttendanceOut], datetime | None]:
+    rows = [
+        row
+        for row in (
+            await db.execute(
+                select(ExportAttendanceEvent)
+                .where(ExportAttendanceEvent.campaign_id == campaign_id)
+                .order_by(
+                    ExportAttendanceEvent.occurred_at.asc(),
+                    ExportAttendanceEvent.id.asc(),
+                )
+            )
+        ).scalars()
+        if _in_window(row.occurred_at, window_start, window_end)
+    ]
+    if not rows:
+        return [], None
+    attendance = [
+        ReportPacketAttendanceOut(
+            platform_tool_program_id=row.platform_tool_program_id,
+            participant_email=row.participant_email,
+            participant_name=row.participant_name,
+            source=row.source,
+            event=row.event,
+            occurred_at=row.occurred_at,
+            duration_seconds=row.duration_seconds,
+            join_time=row.join_time,
+            leave_time=row.leave_time,
+        )
+        for row in rows
+    ]
+    fetched_at = max(
+        (row.updated_at for row in rows if row.updated_at),
+        default=datetime.now(timezone.utc),
+    )
+    return attendance, fetched_at
+
+
 async def _load_surveys(
     db: AsyncSession,
     campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
 ) -> tuple[list[ReportPacketSurveyOut], datetime | None]:
-    rows = list(
-        (
+    rows = [
+        row
+        for row in (
             await db.execute(
                 select(ExportSurveyResponse)
                 .where(ExportSurveyResponse.campaign_id == campaign_id)
@@ -290,7 +512,8 @@ async def _load_surveys(
                 )
             )
         ).scalars()
-    )
+        if _in_window(row.submitted_at, window_start, window_end)
+    ]
     if not rows:
         return [], None
 
