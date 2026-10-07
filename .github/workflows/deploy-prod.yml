@@ -467,6 +467,13 @@ jobs:
             Comment **approve** to run `terraform apply` on us-east-1 and us-east-2 DR.
             Comment **deny** to cancel.
 
+      - name: Re-assume AWS role after approval
+        if: github.event.inputs.plan_only != 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Terraform Apply (us-east-1)
         if: github.event.inputs.plan_only != 'true'
         working-directory: ${{ env.TF_ENV_DIR }}
