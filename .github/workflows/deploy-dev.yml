@@ -361,6 +361,13 @@ jobs:
             Comment **approve** on this issue to run `terraform apply tfplan` and continue the dev deploy.
             Comment **deny** to cancel the apply (the workflow will fail).
 
+      - name: Re-assume AWS role after approval
+        if: github.event.inputs.plan_only != 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Terraform Apply
         if: github.event.inputs.plan_only != 'true'
         working-directory: ${{ env.TF_ENV_DIR }}
