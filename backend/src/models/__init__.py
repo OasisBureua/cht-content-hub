@@ -12,7 +12,7 @@ from models.project import Project
 from models.shoot import Shoot
 from models.user import User
 from models.wordpress_event import WordPressEvent
-from models.campaign import Campaign, CampaignPlatformData, ReportTemplate
+from models.campaign import Campaign, CampaignKOL, CampaignPlatformData, ReportTemplate
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,

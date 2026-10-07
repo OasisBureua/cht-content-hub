@@ -16,7 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -79,6 +79,29 @@ class Campaign(Base):
         "CampaignPlatformData",
         back_populates="campaign",
         cascade="all, delete-orphan",
+    )
+
+
+class CampaignKOL(Base):
+    """KOLs an admin attached to a campaign (CPR-45).
+
+    Zoom-based campaigns have no shoots, so their KOLs come from here. The
+    report packet merges these with the KOLs of the campaign's shoots.
+    """
+
+    __tablename__ = "campaign_kols"
+
+    campaign_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("campaigns.id", ondelete="CASCADE"), primary_key=True
+    )
+    kol_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("kols.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

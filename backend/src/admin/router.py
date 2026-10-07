@@ -19,6 +19,8 @@ from database import get_db
 from schemas.campaigns import (
     AnalyticsReportOut,
     CampaignCreate,
+    CampaignKolListOut,
+    CampaignKolsUpdate,
     CampaignListOut,
     CampaignOut,
     CampaignUpdate,
@@ -39,7 +41,13 @@ from schemas.campaigns import (
     TemplateOut,
 )
 from schemas.platform_export import ExportIngestRunOut
-from services import campaign_integrations, campaign_reports, campaigns, platform_data
+from services import (
+    campaign_integrations,
+    campaign_kols,
+    campaign_reports,
+    campaigns,
+    platform_data,
+)
 from services.export_ingest.ingest import (
     ingest_campaign,
     resolve_export_ingest_runtime_http,
@@ -65,6 +73,27 @@ async def get_campaign(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CampaignOut:
     return await campaigns.get_campaign(db, campaign_id)
+
+
+@router.get("/campaigns/{campaign_id}/kols", response_model=CampaignKolListOut)
+async def list_campaign_kols(
+    campaign_id: int,
+    _key: Annotated[str, Depends(verify_admin_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CampaignKolListOut:
+    """KOLs attached to the campaign (CPR-45). Shoot KOLs are not listed here."""
+    return await campaign_kols.list_campaign_kols(db, campaign_id)
+
+
+@router.put("/campaigns/{campaign_id}/kols", response_model=CampaignKolListOut)
+async def set_campaign_kols(
+    campaign_id: int,
+    payload: CampaignKolsUpdate,
+    _key: Annotated[str, Depends(verify_admin_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CampaignKolListOut:
+    """Replace the campaign's attached KOLs. They feed the report packet's kols."""
+    return await campaign_kols.set_campaign_kols(db, campaign_id, payload.kol_ids)
 
 
 @router.post("/campaigns", response_model=CampaignOut, status_code=status.HTTP_201_CREATED)

@@ -43,7 +43,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.campaign import ReportTemplate
+from models.campaign import CampaignKOL, ReportTemplate
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportSession,
@@ -436,9 +436,20 @@ async def _load_campaign_kols(
     grouped = await _kols_by_group(
         db, [shoot.kol_group_id for shoot in shoots if shoot.kol_group_id]
     )
+    # CPR-45: KOLs an admin attached to the campaign (Zoom campaigns have no shoots).
+    attached = [
+        ReportPacketKolOut(name=name, title=title, institution=institution)
+        for name, title, institution in (
+            await db.execute(
+                select(KOL.name, KOL.title, KOL.institution)
+                .join(CampaignKOL, CampaignKOL.kol_id == KOL.id)
+                .where(CampaignKOL.campaign_id == campaign_id)
+            )
+        ).all()
+    ]
     seen: set[tuple[str, str | None, str | None]] = set()
     kols: list[ReportPacketKolOut] = []
-    for group_kols in grouped.values():
+    for group_kols in [*grouped.values(), attached]:
         for kol in group_kols:
             key = (kol.name, kol.title, kol.institution)
             if key in seen:

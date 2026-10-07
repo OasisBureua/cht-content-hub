@@ -70,6 +70,7 @@ After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.
 
 ### Campaigns
 - `GET/POST /campaigns`, `GET/PATCH/DELETE /campaigns/{id}`
+- `GET/PUT /campaigns/{id}/kols` — KOLs attached to the campaign. PUT body `{"kolIds": [...]}` replaces the set; unknown ids return 422. Attached KOLs are added to the report packet's `kols`.
 
 ### Platform data
 - `GET /campaigns/{id}/platform-data` — sync status per platform
@@ -114,6 +115,7 @@ Hub does not serve `POST /api/reports`. The generate-time warehouse packet is a 
 | `platform_sync_runs` | Audit log per sync attempt |
 | `integration_settings` | Non-HubSpot connector config |
 | `report_templates` | Template metadata |
+| `campaign_kols` | `(campaign_id, kol_id)` KOLs attached by an admin (`0029_campaign_kols`) |
 
 Migration: `0006_campaign_platform_data` (consolidates csv_uploads + snapshots)
 
