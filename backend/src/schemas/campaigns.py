@@ -313,3 +313,23 @@ class TemplateCreate(ApiModel):
     # CPR-25: pointer to the template body in the cht-reports bucket.
     semver: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
     s3_key: str | None = Field(default=None, max_length=500)
+
+
+class CampaignKolOut(ApiModel):
+    """A KOL attached to a campaign (CPR-45)."""
+
+    id: str
+    slug: str
+    name: str
+    title: str | None = None
+    institution: str | None = None
+
+
+class CampaignKolListOut(ApiModel):
+    items: list[CampaignKolOut]
+
+
+class CampaignKolsUpdate(ApiModel):
+    """Replaces the campaign's attached KOLs."""
+
+    kol_ids: list[str] = Field(default_factory=list, max_length=200)

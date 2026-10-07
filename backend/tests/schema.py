@@ -9,6 +9,7 @@ from database import Base
 from hcp_intel.models import HCP
 from models.campaign import (
     Campaign,
+    CampaignKOL,
     CampaignPlatformData,
     IntegrationSetting,
     PlatformSyncRun,
@@ -57,6 +58,7 @@ ORM_TABLES = [
     KOL.__table__,
     KOLGroup.__table__,
     KOLGroupMember.__table__,
+    CampaignKOL.__table__,
     PlaylistTag.__table__,
     PlaylistSeriesMatchReview.__table__,
     Shoot.__table__,
