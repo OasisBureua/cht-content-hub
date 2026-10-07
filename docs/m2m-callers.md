@@ -87,7 +87,7 @@ scopes it needs:
 | Client | Owner | Allowed Hub scopes |
 |---|---|---|
 | `cht-platform-m2m-{env}` | Platform TF | `hub/catalog.read`, `hub/admin.read\|create\|update\|delete` |
-| `cht-reports-m2m-{env}` | Hub TF (parked until reports has TF) | `hub/reports.read` |
+| `cht-reports-m2m-{env}` | Hub TF (parked until reports has TF) | `hub/reports.read`, `platform/reports.notify` |
 | Companion / DaaS | that product | only the Hub scopes they use |
 
 Hub terraform does **not** create `cht-platform-m2m-*`.
@@ -98,6 +98,9 @@ Reports has no Cognito stack, so Hub parks `cht-reports-m2m-{env}` next to the
 today. Do not import; do not `removed { destroy = false }` on platform.
 
 JSON in SM: `{ "client_id", "client_secret", "token_url", "scope": "hub/reports.read" }`.
+The client is also allowed `platform/reports.notify` (CPR-35: report-ready
+email); cht-reports requests that scope by name, so the SM `scope` is unchanged.
+Platform defines the scope and looks the client up by name.
 
 ---
 
@@ -108,6 +111,7 @@ JSON in SM: `{ "client_id", "client_secret", "token_url", "scope": "hub/reports.
 | Platform catalog | `hub` | `hub/catalog.read` |
 | Platform admin | `hub` | `hub/admin.create` / `.update` / `.delete` |
 | cht-reports | `hub` | `hub/reports.read` |
+| cht-reports report-ready | `platform` | `platform/reports.notify` |
 | Hub export ingest | `platform` | `platform/export.read` |
 | Hub cache-clear | `platform` | `platform/cache.clear` (target) |
 
@@ -177,8 +181,9 @@ Platform **does**:
 5. Keep `platform` resource server + scopes for **inbound** Hub calls
    (`platform/export.read`). Hub’s client requests those, not `hub/…`.
 
-cht-reports: Hub parks `cht-reports-m2m-{env}` with `hub/reports.read` only
-(`enable_reports_m2m_client`). Platform does not create that client.
+cht-reports: Hub parks `cht-reports-m2m-{env}` with `hub/reports.read` and
+`platform/reports.notify` (`enable_reports_m2m_client`). Platform does not
+create that client.
 
 ## 8. Cutover
 

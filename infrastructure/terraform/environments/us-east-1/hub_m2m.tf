@@ -35,6 +35,9 @@ locals {
   reports_m2m_client_name = "cht-reports-m2m-${local.reports_m2m_env_label}"
   reports_m2m_secret_name = "cht-${local.reports_m2m_env_label}-cognito-m2m-reports"
   reports_m2m_scope       = "hub/reports.read"
+  # CPR-35: same client tells platform a report version is ready (email).
+  # Platform's TF defines this scope on its "platform" resource server.
+  reports_m2m_platform_notify_scope = "platform/reports.notify"
 
   outbound_m2m_secret_iam_arn = (
     var.platform_export_m2m_secret_arn == "" ? "" :
@@ -61,7 +64,10 @@ module "hub_cognito" {
 }
 
 # Reports → Hub. Create (nothing to import: client + secret are not in AWS).
-# Allowed scope is hub/reports.read only; RS already defines reports.read.
+# Allowed scopes: hub/reports.read (RS already defines reports.read) and
+# platform/reports.notify for cht-reports → platform report-ready (CPR-35).
+# The secret's `scope` stays hub/reports.read (the worker's default token);
+# the worker requests the platform scope by name.
 resource "aws_cognito_user_pool_client" "reports_m2m" {
   count = local.reports_m2m_enabled ? 1 : 0
 
@@ -71,7 +77,7 @@ resource "aws_cognito_user_pool_client" "reports_m2m" {
   generate_secret                      = true
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["client_credentials"]
-  allowed_oauth_scopes                 = [local.reports_m2m_scope]
+  allowed_oauth_scopes                 = [local.reports_m2m_scope, local.reports_m2m_platform_notify_scope]
   supported_identity_providers         = ["COGNITO"]
   prevent_user_existence_errors        = "ENABLED"
 
