@@ -216,6 +216,10 @@ class ExportSurveyResponse(Base):
     submission_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     jotform_form_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     answers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # CPR-43 — Platform Survey.id when present (native / typed Survey row).
+    survey_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # CPR-43 — flat native question schema [{id, prompt, type, options?}]; jotform null.
+    questions: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

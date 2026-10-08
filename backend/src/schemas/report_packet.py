@@ -77,6 +77,16 @@ class ReportPacketSurveyOut(ApiModel):
     answers: dict[str, Any]
 
 
+class ReportPacketSurveyQuestionOut(ApiModel):
+    """CPR-43 — native question schema for report chart labels / option order."""
+
+    id: str
+    prompt: str
+    type: str
+    options: list[str] | None = None
+    survey_type: str | None = None
+
+
 class ReportPacketTemplateOut(ApiModel):
     """CPR-25: where the worker loads the prompt + HTML skeleton from."""
 
@@ -106,6 +116,8 @@ class ReportInputPacketOut(ApiModel):
     sessions: list[ReportPacketSessionOut]
     attendance: list[ReportPacketAttendanceOut]
     survey_responses: list[ReportPacketSurveyOut]
+    # CPR-43 — native question schema alongside responses (prompt + option order).
+    survey_questions: list[ReportPacketSurveyQuestionOut] = Field(default_factory=list)
     kols: list[ReportPacketKolOut] = Field(default_factory=list)
     template: ReportPacketTemplateOut | None = None
     # CPR-42 — Attendees section aggregates (nameless).

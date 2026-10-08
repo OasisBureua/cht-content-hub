@@ -83,6 +83,7 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
                 "type": "POST_TEST",
                 "jotformFormId": "jf-99",
                 "source": "jotform",
+                "questions": None,
                 "responses": [
                     {
                         "userId": "u2",
@@ -94,15 +95,40 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
             },
             {
                 "platformToolProgramId": "prog-1",
+                "surveyId": "survey-native-fb",
                 "type": "FEEDBACK",
                 "source": "native",
+                "questions": [
+                    {
+                        "id": "q2_setting",
+                        "prompt": "What is your practice setting?",
+                        "type": "single_choice",
+                        "options": ["Academic", "Community", "Other"],
+                    }
+                ],
                 "responses": [
                     {
                         "userId": "u3",
                         "submittedAt": "2026-09-02T12:05:00Z",
-                        "answers": {"q1": "yes"},
+                        "answers": {"q2_setting": "Academic"},
                     }
                 ],
+            },
+            {
+                # CPR-43: schema with zero responses is not warehoused (no answer rows).
+                "platformToolProgramId": "prog-1",
+                "surveyId": "survey-empty",
+                "type": "FEEDBACK",
+                "source": "native",
+                "questions": [
+                    {
+                        "id": "q1_role",
+                        "prompt": "Role?",
+                        "type": "single_choice",
+                        "options": ["A", "B"],
+                    }
+                ],
+                "responses": [],
             },
         ],
     }
@@ -121,9 +147,21 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
     assert by_respondent["u2"].submission_id == "jf-sub-1"
     assert by_respondent["u2"].jotform_form_id == "jf-99"
     assert by_respondent["u2"].survey_type == "POST_TEST"
+    assert by_respondent["u2"].questions is None
     assert by_respondent["u3"].source == "native"
     assert by_respondent["u3"].submission_id is None
     assert by_respondent["u3"].jotform_form_id is None
+    assert by_respondent["u3"].survey_id == "survey-native-fb"
+    assert by_respondent["u3"].questions == [
+        {
+            "id": "q2_setting",
+            "prompt": "What is your practice setting?",
+            "type": "single_choice",
+            "options": ["Academic", "Community", "Other"],
+        }
+    ]
+    assert len(rows) == 2  # empty-responses survey not stored
+    assert "survey-empty" not in {r.survey_id for r in rows}
 
 
 @pytest.mark.asyncio

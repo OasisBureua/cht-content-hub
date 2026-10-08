@@ -141,17 +141,24 @@ def map_survey(
         row.campaign_id if row.campaign_id is not None else default_campaign_id
     )
     campaign_id = _as_hub_campaign_id(raw_campaign, default_campaign_id)
+    questions: list[dict[str, Any]] | None = None
+    if row.questions:
+        questions = [
+            q.model_dump(by_alias=False, exclude_none=True) for q in row.questions
+        ]
     return {
         "dedupe_key": survey_dedupe_key(row),
         "campaign_id": campaign_id,
         "platform_tool_program_id": row.platform_tool_program_id,
         "respondent_id": row.respondent_id,
         "source": row.source,
+        "survey_id": row.survey_id,
         "survey_type": row.survey_type,
         "submitted_at": row.submitted_at,
         "submission_id": row.submission_id,
         "jotform_form_id": row.jotform_form_id,
         "answers": dict(row.answers or {}),
+        "questions": questions,
     }
 
 

@@ -18,6 +18,7 @@ Data sources:
 * ``attendance`` — CPR-13 ``export_attendance_events`` for this campaign.
   Included with sessions. Not the empty ``reports.attendance`` table.
 * ``surveyResponses`` — CPR-13 ``export_survey_responses``
+* ``surveyQuestions`` — CPR-43 native question schema (prompt + option order)
 * CPR-42 ``registeredCount`` / ``attendedCount`` / ``avgMinutesWatched`` /
   nameless ``attendees[]`` — from ``export_registrations`` + rolled
   attendance watch time.
@@ -63,6 +64,7 @@ from schemas.report_packet import (
     ReportPacketPlatformSliceOut,
     ReportPacketSessionOut,
     ReportPacketSurveyOut,
+    ReportPacketSurveyQuestionOut,
     ReportPacketTemplateOut,
     SourceCompletenessOut,
     SourceStatus,
@@ -128,7 +130,7 @@ async def build_report_packet(
         window_start=window_start,
         window_end=window_end,
     )
-    survey_responses, surveys_fetched_at = await _load_surveys(
+    survey_responses, survey_questions, surveys_fetched_at = await _load_surveys(
         db,
         campaign_id,
         window_start=window_start,
@@ -146,7 +148,7 @@ async def build_report_packet(
         registrations, registrations_fetched_at = [], None
         kols = []
     if not _wants(requested, "surveys"):
-        survey_responses, surveys_fetched_at = [], None
+        survey_responses, survey_questions, surveys_fetched_at = [], [], None
 
     attendees, registered_count, attended_count, avg_minutes = _attendee_summary(
         registrations=registrations,
@@ -217,6 +219,7 @@ async def build_report_packet(
         sessions=sessions,
         attendance=attendance,
         survey_responses=survey_responses,
+        survey_questions=survey_questions,
         kols=kols,
         registered_count=registered_count,
         attended_count=attended_count,
@@ -605,7 +608,11 @@ async def _load_surveys(
     *,
     window_start: date | None = None,
     window_end: date | None = None,
-) -> tuple[list[ReportPacketSurveyOut], datetime | None]:
+) -> tuple[
+    list[ReportPacketSurveyOut],
+    list[ReportPacketSurveyQuestionOut],
+    datetime | None,
+]:
     rows = [
         row
         for row in (
@@ -621,7 +628,7 @@ async def _load_surveys(
         if _in_window(row.submitted_at, window_start, window_end)
     ]
     if not rows:
-        return [], None
+        return [], [], None
 
     surveys = [
         ReportPacketSurveyOut(
@@ -633,8 +640,47 @@ async def _load_surveys(
         )
         for row in rows
     ]
+    questions = _collect_survey_questions(rows)
     fetched_at = max(
         (row.updated_at for row in rows if row.updated_at),
         default=datetime.now(timezone.utc),
     )
-    return surveys, fetched_at
+    return surveys, questions, fetched_at
+
+
+def _collect_survey_questions(
+    rows: list[ExportSurveyResponse],
+) -> list[ReportPacketSurveyQuestionOut]:
+    """Dedupe native question schema across response rows (CPR-43)."""
+    seen: set[tuple[str | None, str]] = set()
+    out: list[ReportPacketSurveyQuestionOut] = []
+    for row in rows:
+        raw_list = row.questions
+        if not isinstance(raw_list, list):
+            continue
+        for raw in raw_list:
+            if not isinstance(raw, dict):
+                continue
+            qid = str(raw.get("id") or "").strip()
+            prompt = str(raw.get("prompt") or "").strip()
+            qtype = str(raw.get("type") or "").strip()
+            if not qid or not prompt or not qtype:
+                continue
+            key = (row.survey_type, qid)
+            if key in seen:
+                continue
+            seen.add(key)
+            options = raw.get("options")
+            opts: list[str] | None = None
+            if isinstance(options, list) and options:
+                opts = [str(o) for o in options]
+            out.append(
+                ReportPacketSurveyQuestionOut(
+                    id=qid,
+                    prompt=prompt,
+                    type=qtype,
+                    options=opts,
+                    survey_type=row.survey_type,
+                )
+            )
+    return out

@@ -17,6 +17,11 @@ from models.export_warehouse import (
     ExportSession,
     ExportSurveyResponse,
 )
+from services.export_ingest.normalize import (
+    normalize_export_payload,
+    rewrite_packet_hub_campaign_id,
+)
+from services.export_ingest.upsert import ingest_packet
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.project import Project
 from models.shoot import Shoot
@@ -282,11 +287,25 @@ async def test_report_packet_includes_export_survey_responses(
             campaign_id=campaign_id,
             platform_tool_program_id="clxyz_program_cpr32",
             respondent_id="user_1",
-            source="platform",
+            source="native",
+            survey_id="survey-native-1",
             survey_type="POST_TEST",
             submitted_at=datetime(2026, 8, 15, 19, 0, tzinfo=timezone.utc),
             submission_id="survey_cpr32_1",
-            answers={"nps": 9, "q1": "excellent"},
+            answers={"q2_setting": "Academic", "nps": 9},
+            questions=[
+                {
+                    "id": "q2_setting",
+                    "prompt": "What is your practice setting?",
+                    "type": "single_choice",
+                    "options": ["Academic", "Community", "Other"],
+                },
+                {
+                    "id": "nps",
+                    "prompt": "How likely are you to recommend?",
+                    "type": "rating",
+                },
+            ],
         )
     )
     await db_session.commit()
@@ -300,11 +319,123 @@ async def test_report_packet_includes_export_survey_responses(
     assert len(body["surveyResponses"]) == 1
     survey = body["surveyResponses"][0]
     assert survey["respondentId"] == "user_1"
-    assert survey["source"] == "platform"
+    assert survey["source"] == "native"
     assert survey["surveyType"] == "POST_TEST"
-    assert survey["answers"] == {"nps": 9, "q1": "excellent"}
+    assert survey["answers"] == {"q2_setting": "Academic", "nps": 9}
+    assert body["surveyQuestions"] == [
+        {
+            "id": "q2_setting",
+            "prompt": "What is your practice setting?",
+            "type": "single_choice",
+            "options": ["Academic", "Community", "Other"],
+            "surveyType": "POST_TEST",
+        },
+        {
+            "id": "nps",
+            "prompt": "How likely are you to recommend?",
+            "type": "rating",
+            "options": None,
+            "surveyType": "POST_TEST",
+        },
+    ]
     assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
     assert body["inputCompleteness"]["surveyResponses"]["rowCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_report_packet_survey_questions_survive_ingest(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-43 e2e: Platform nested surveys → warehouse → report-packet."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "CPR-43 Ingest Survey Campaign"},
+    )
+    campaign_id = create.json()["id"]
+
+    raw = {
+        "campaignId": "AZ-25-01_LIV001",
+        "sessions": [],
+        "attendance": [],
+        "surveys": [
+            {
+                "platformToolProgramId": "prog-cpr43",
+                "surveyId": "survey-fb",
+                "type": "FEEDBACK",
+                "source": "native",
+                "questions": [
+                    {
+                        "id": "q2_setting",
+                        "prompt": "What is your practice setting?",
+                        "type": "single_choice",
+                        "options": ["Academic", "Community", "Other"],
+                    },
+                    {
+                        "id": "q6_other",
+                        "prompt": "Briefly describe:",
+                        "type": "text",
+                    },
+                ],
+                "responses": [
+                    {
+                        "userId": "u1",
+                        "submittedAt": "2026-09-02T12:00:00Z",
+                        "submissionId": "fb-1",
+                        "answers": {"q2_setting": "Community"},
+                    }
+                ],
+            },
+            {
+                "platformToolProgramId": "prog-cpr43",
+                "surveyId": "survey-intake",
+                "type": "INTAKE",
+                "source": "native",
+                "questions": [
+                    {
+                        "id": "organization",
+                        "prompt": "Organization",
+                        "type": "text",
+                    }
+                ],
+                "responses": [
+                    {
+                        "userId": "u1",
+                        "submittedAt": "2026-09-01T12:00:00Z",
+                        "submissionId": "in-1",
+                        "answers": {"organization": "CHM"},
+                    }
+                ],
+            },
+        ],
+    }
+    packet = rewrite_packet_hub_campaign_id(
+        normalize_export_payload(raw), campaign_id
+    )
+    await ingest_packet(db_session, packet, trigger="manual")
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    body = response.json()
+    assert len(body["surveyResponses"]) == 2
+    feedback_qs = [
+        q for q in body["surveyQuestions"] if q["surveyType"] == "FEEDBACK"
+    ]
+    assert feedback_qs[0] == {
+        "id": "q2_setting",
+        "prompt": "What is your practice setting?",
+        "type": "single_choice",
+        "options": ["Academic", "Community", "Other"],
+        "surveyType": "FEEDBACK",
+    }
+    assert feedback_qs[1]["id"] == "q6_other"
+    assert any(
+        q["id"] == "organization" and q["surveyType"] == "INTAKE"
+        for q in body["surveyQuestions"]
+    )
 
 
 @pytest.mark.asyncio

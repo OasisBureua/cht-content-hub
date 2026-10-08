@@ -114,6 +114,10 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
             survey_id = _blank_to_none(item.get("surveyId"))
             source = _blank_to_none(item.get("source")) or "unknown"
             jotform_form_id = _blank_to_none(item.get("jotformFormId"))
+            # CPR-43 — parent-level native schema; jotform leaves this null/absent.
+            questions = item.get("questions")
+            if not isinstance(questions, list):
+                questions = None
             for resp in nested:
                 if not isinstance(resp, dict):
                     continue
@@ -129,6 +133,7 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
                         "submissionId": _blank_to_none(resp.get("submissionId")),
                         "jotformFormId": jotform_form_id,
                         "answers": resp.get("answers") or {},
+                        "questions": questions,
                     }
                 )
         else:

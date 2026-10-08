@@ -112,12 +112,20 @@ def test_normalize_persists_packet_survey_fields_without_inventing_ids():
                     "type": "INTAKE",
                     "jotformFormId": "   ",
                     "source": "native",
+                    "questions": [
+                        {
+                            "id": "q2_setting",
+                            "prompt": "What is your practice setting?",
+                            "type": "single_choice",
+                            "options": ["Academic", "Community", "Other"],
+                        }
+                    ],
                     "responses": [
                         {
                             "userId": "u3",
                             "submittedAt": "2026-09-02T12:05:00Z",
                             "submissionId": "  ",
-                            "answers": {},
+                            "answers": {"q2_setting": "Academic"},
                         }
                     ],
                 },
@@ -130,9 +138,14 @@ def test_normalize_persists_packet_survey_fields_without_inventing_ids():
     assert jotform.jotform_form_id == "jf-99"
     assert jotform.submission_id == "jf-sub-1"
     assert jotform.survey_type == "POST_TEST"
+    assert jotform.questions is None
     assert native.source == "native"
     assert native.jotform_form_id is None
     assert native.submission_id is None
+    assert native.survey_id == "survey-native"
+    assert native.questions is not None
+    assert native.questions[0].id == "q2_setting"
+    assert native.questions[0].options == ["Academic", "Community", "Other"]
 
 
 @pytest.mark.asyncio

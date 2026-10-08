@@ -114,6 +114,15 @@ class ExportRegistration(ApiModel):
     institution: str | None = None
 
 
+class ExportSurveyQuestion(ApiModel):
+    """CPR-43 — flat native question schema row from Platform export."""
+
+    id: str
+    prompt: str
+    type: str
+    options: list[str] | None = None
+
+
 class ExportSurveyResponse(ApiModel):
     """Flattened survey response row (fixture or CPR-28 nested surveys)."""
 
@@ -127,6 +136,8 @@ class ExportSurveyResponse(ApiModel):
     submission_id: str | None = None
     jotform_form_id: str | None = None
     answers: dict[str, Any] = Field(default_factory=dict)
+    # CPR-43 — copied from parent surveys[] envelope during flatten.
+    questions: list[ExportSurveyQuestion] | None = None
 
 
 class PlatformExportPacket(ApiModel):

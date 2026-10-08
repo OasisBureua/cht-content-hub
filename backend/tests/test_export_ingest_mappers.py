@@ -158,6 +158,39 @@ def test_map_survey_keeps_packet_source_submission_and_form_id():
     assert fields["submission_id"] == "jf-sub-1"
     assert fields["jotform_form_id"] == "jf-99"
     assert fields["dedupe_key"] == "submission:jf-sub-1"
+    assert fields["questions"] is None
+    assert fields["survey_id"] is None
+
+
+def test_map_survey_stores_native_questions_schema():
+    from schemas.platform_export import ExportSurveyQuestion
+
+    row = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        source="native",
+        survey_id="survey-1",
+        survey_type="FEEDBACK",
+        submission_id="native-1",
+        answers={"q2_setting": "Academic"},
+        questions=[
+            ExportSurveyQuestion(
+                id="q2_setting",
+                prompt="What is your practice setting?",
+                type="single_choice",
+                options=["Academic", "Community", "Other"],
+            )
+        ],
+    )
+    fields = map_survey(row, default_campaign_id=42)
+    assert fields["survey_id"] == "survey-1"
+    assert fields["questions"] == [
+        {
+            "id": "q2_setting",
+            "prompt": "What is your practice setting?",
+            "type": "single_choice",
+            "options": ["Academic", "Community", "Other"],
+        }
+    ]
 
 
 def test_map_registration_and_attendance_profile_fields():
