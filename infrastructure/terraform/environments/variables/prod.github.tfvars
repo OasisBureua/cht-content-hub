@@ -81,7 +81,7 @@ sync_jobs_enabled = {
   # completes for WPR-2. Flip to true after atomic release so daily
   # reconcile_drift cron protects prod.
   wordpress_projection_ops = false
-  # CPR-13 Zoom export ingest — off until CPR-12 M2M + export API are live.
+  # CPR-41 — enable after platform_export_base_url is set for prod.
   platform_export_ingest = false
   # CPR-9 S3 VTT → warehouse. Enable after dev smoke; then wire platform notify.
   vtt_object_ingest = false

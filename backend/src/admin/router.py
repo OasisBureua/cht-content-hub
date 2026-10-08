@@ -7,9 +7,9 @@ POST .../report/generate. HubSpot sync stays on CHT → PATCH campaign.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.cache import notify_cht_cache_clear
@@ -54,6 +54,17 @@ from services.export_ingest.ingest import (
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin-campaigns"])
+
+# CPR-41 — recorded on export_ingest_runs.trigger for event-driven syncs.
+EXPORT_INGEST_TRIGGERS: Final[frozenset[str]] = frozenset(
+    {
+        "manual",
+        "platform_link",
+        "platform_zoom",
+        "platform_generate",
+        "platform_refresh",
+    }
+)
 
 
 @router.get("/campaigns", response_model=CampaignListOut)
@@ -192,6 +203,14 @@ async def trigger_export_ingest(
             "platformCampaignId, then to the Hub campaign id."
         ),
     ),
+    trigger: str = Query(
+        default="manual",
+        description=(
+            "Audit label for export_ingest_runs.trigger. "
+            "Allowed: manual, platform_link, platform_zoom, "
+            "platform_generate, platform_refresh."
+        ),
+    ),
 ) -> ExportIngestRunOut:
     """Pull platform Zoom export for this Hub campaign into the warehouse.
 
@@ -200,6 +219,15 @@ async def trigger_export_ingest(
     the Hub id.
     """
     normalized = (source or "http").strip().lower()
+    resolved_trigger = (trigger or "manual").strip().lower() or "manual"
+    if resolved_trigger not in EXPORT_INGEST_TRIGGERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "trigger must be one of: "
+                + ", ".join(sorted(EXPORT_INGEST_TRIGGERS))
+            ),
+        )
     resolved_export_id = (export_campaign_id or "").strip() or None
     if normalized == "http" and resolved_export_id is None:
         campaign = await campaigns._get_campaign_row(db, campaign_id)
@@ -212,7 +240,7 @@ async def trigger_export_ingest(
         campaign_id,
         client=runtime.client,
         transcript_store=runtime.transcript_store,
-        trigger="manual",
+        trigger=resolved_trigger,
         export_campaign_id=resolved_export_id,
     )
     return ExportIngestRunOut.model_validate(run)
