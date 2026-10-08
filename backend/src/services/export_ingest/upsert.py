@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -27,7 +28,12 @@ from schemas.platform_export import (
     ExportSession as ExportSessionDTO,
     PlatformExportPacket,
 )
-from services.export_ingest.mappers import map_attendance, map_session, map_survey
+from services.export_ingest.mappers import (
+    map_attendance,
+    map_registration,
+    map_session,
+    map_survey,
+)
 from services.export_ingest.transcript_s3 import TranscriptStore, TranscriptStoreError
 from services.export_ingest.vtt import strip_vtt
 
@@ -39,6 +45,7 @@ class IngestCounts:
     sessions_upserted: int
     attendance_upserted: int
     surveys_upserted: int
+    registrations_upserted: int = 0
 
 
 def _apply_fields(row: object, fields: dict) -> None:
@@ -139,6 +146,24 @@ async def _upsert_attendance(db: AsyncSession, fields: dict) -> ExportAttendance
     return existing
 
 
+async def _upsert_registration(db: AsyncSession, fields: dict) -> ExportRegistration:
+    existing = (
+        await db.execute(
+            select(ExportRegistration).where(
+                ExportRegistration.dedupe_key == fields["dedupe_key"]
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        row = ExportRegistration(**fields)
+        db.add(row)
+        await db.flush()
+        return row
+    _apply_fields(existing, fields)
+    await db.flush()
+    return existing
+
+
 async def _drop_legacy_platform_surveys(
     db: AsyncSession, campaign_id: int
 ) -> None:
@@ -213,6 +238,16 @@ async def upsert_packet(
             db, map_attendance(event, default_campaign_id=campaign_id)
         )
 
+    for reg in packet.registrations:
+        await _ensure_session_stub(
+            db,
+            platform_tool_program_id=reg.platform_tool_program_id,
+            campaign_id=campaign_id,
+        )
+        await _upsert_registration(
+            db, map_registration(reg, default_campaign_id=campaign_id)
+        )
+
     await _drop_legacy_platform_surveys(db, campaign_id)
     for survey in packet.survey_responses:
         await _upsert_survey(
@@ -223,6 +258,7 @@ async def upsert_packet(
         sessions_upserted=len(packet.sessions),
         attendance_upserted=len(packet.attendance),
         surveys_upserted=len(packet.survey_responses),
+        registrations_upserted=len(packet.registrations),
     )
 
 

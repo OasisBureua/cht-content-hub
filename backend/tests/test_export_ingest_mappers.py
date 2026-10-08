@@ -10,6 +10,7 @@ from schemas.platform_export import (
     AttendanceEventType,
     AttendanceSource,
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
     PlatformExportPacket,
@@ -17,8 +18,10 @@ from schemas.platform_export import (
 from services.export_ingest.mappers import (
     attendance_dedupe_key,
     map_attendance,
+    map_registration,
     map_session,
     map_survey,
+    registration_dedupe_key,
     survey_dedupe_key,
 )
 
@@ -155,3 +158,38 @@ def test_map_survey_keeps_packet_source_submission_and_form_id():
     assert fields["submission_id"] == "jf-sub-1"
     assert fields["jotform_form_id"] == "jf-99"
     assert fields["dedupe_key"] == "submission:jf-sub-1"
+
+
+def test_map_registration_and_attendance_profile_fields():
+    registered = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    reg = ExportRegistration(
+        platform_tool_program_id="prog-1",
+        user_id="u1",
+        registered_at=registered,
+        status="APPROVED",
+        specialty="Cardiology",
+        institution="CHM",
+    )
+    assert registration_dedupe_key(reg) == "prog-1|u1"
+    fields = map_registration(reg, default_campaign_id=42)
+    assert fields["user_id"] == "u1"
+    assert fields["specialty"] == "Cardiology"
+    assert fields["campaign_id"] == 42
+
+    event = ExportAttendanceEvent(
+        platform_tool_program_id="prog-1",
+        source=AttendanceSource.REPORT_IMPORT,
+        event=AttendanceEventType.JOINED,
+        occurred_at=registered,
+        participant_email="a@example.com",
+        duration_seconds=90,
+        user_id="u1",
+        specialty="Cardiology",
+        institution="CHM",
+        platform_event_id="rollup:prog-1:e:a@example.com",
+    )
+    att = map_attendance(event, default_campaign_id=42)
+    assert att["dedupe_key"] == "platform_event:rollup:prog-1:e:a@example.com"
+    assert att["user_id"] == "u1"
+    assert att["specialty"] == "Cardiology"
+    assert att["institution"] == "CHM"

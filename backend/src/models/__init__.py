@@ -16,6 +16,7 @@ from models.campaign import Campaign, CampaignKOL, CampaignPlatformData, ReportT
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "WordPressEvent",
     "ExportAttendanceEvent",
     "ExportIngestRun",
+    "ExportRegistration",
     "ExportSession",
     "ExportSurveyResponse",
     "HCP",

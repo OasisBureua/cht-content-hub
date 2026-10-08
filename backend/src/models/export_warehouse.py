@@ -122,6 +122,9 @@ class ExportAttendanceEvent(Base):
     leave_time: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    specialty: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    institution: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -136,6 +139,50 @@ class ExportAttendanceEvent(Base):
         "ExportSession",
         back_populates="attendance_events",
         foreign_keys=[platform_tool_program_id],
+    )
+
+
+class ExportRegistration(Base):
+    """CPR-42 — program registration snapshot from platform export."""
+
+    __tablename__ = "export_registrations"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uix_export_registrations_dedupe_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dedupe_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    platform_tool_program_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey(
+            "export_sessions.platform_tool_program_id",
+            ondelete="CASCADE",
+            name="fk_export_registrations_program",
+        ),
+        nullable=False,
+        index=True,
+    )
+    campaign_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("campaigns.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    specialty: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    institution: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 

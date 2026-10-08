@@ -10,6 +10,7 @@ from typing import Any
 
 from schemas.platform_export import (
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -84,6 +85,10 @@ def map_session(
     }
 
 
+def registration_dedupe_key(row: ExportRegistration) -> str:
+    return f"{row.platform_tool_program_id}|{row.user_id.strip()}"
+
+
 def map_attendance(
     event: ExportAttendanceEvent,
     *,
@@ -104,6 +109,26 @@ def map_attendance(
         "zoom_meeting_id": event.zoom_meeting_id,
         "join_time": event.join_time,
         "leave_time": event.leave_time,
+        "user_id": event.user_id,
+        "specialty": event.specialty,
+        "institution": event.institution,
+    }
+
+
+def map_registration(
+    row: ExportRegistration,
+    *,
+    default_campaign_id: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "dedupe_key": registration_dedupe_key(row),
+        "platform_tool_program_id": row.platform_tool_program_id,
+        "campaign_id": default_campaign_id,
+        "user_id": row.user_id,
+        "registered_at": row.registered_at,
+        "status": row.status,
+        "specialty": row.specialty,
+        "institution": row.institution,
     }
 
 

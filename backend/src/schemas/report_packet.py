@@ -57,6 +57,16 @@ class ReportPacketAttendanceOut(ApiModel):
     duration_seconds: int | None = None
     join_time: datetime | None = None
     leave_time: datetime | None = None
+    specialty: str | None = None
+    institution: str | None = None
+
+
+class ReportPacketAttendeeOut(ApiModel):
+    """CPR-42 — nameless attendee rollup for the Attendees report section."""
+
+    specialty: str | None = None
+    institution: str | None = None
+    minutes_watched: int = 0
 
 
 class ReportPacketSurveyOut(ApiModel):
@@ -98,4 +108,9 @@ class ReportInputPacketOut(ApiModel):
     survey_responses: list[ReportPacketSurveyOut]
     kols: list[ReportPacketKolOut] = Field(default_factory=list)
     template: ReportPacketTemplateOut | None = None
+    # CPR-42 — Attendees section aggregates (nameless).
+    registered_count: int = 0
+    attended_count: int = 0
+    avg_minutes_watched: float | None = None
+    attendees: list[ReportPacketAttendeeOut] = Field(default_factory=list)
     input_completeness: dict[str, SourceCompletenessOut]

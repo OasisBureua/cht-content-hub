@@ -18,6 +18,9 @@ Data sources:
 * ``attendance`` — CPR-13 ``export_attendance_events`` for this campaign.
   Included with sessions. Not the empty ``reports.attendance`` table.
 * ``surveyResponses`` — CPR-13 ``export_survey_responses``
+* CPR-42 ``registeredCount`` / ``attendedCount`` / ``avgMinutesWatched`` /
+  nameless ``attendees[]`` — from ``export_registrations`` + rolled
+  attendance watch time.
 
 ``windowStart`` / ``windowEnd`` filter sessions, attendance, and surveys
 by date. A blank window leaves those lists unfiltered. ``sources`` limits
@@ -46,6 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.campaign import CampaignKOL, ReportTemplate
 from models.export_warehouse import (
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -54,6 +58,7 @@ from models.shoot import Shoot
 from schemas.report_packet import (
     ReportInputPacketOut,
     ReportPacketAttendanceOut,
+    ReportPacketAttendeeOut,
     ReportPacketKolOut,
     ReportPacketPlatformSliceOut,
     ReportPacketSessionOut,
@@ -117,6 +122,12 @@ async def build_report_packet(
         window_start=window_start,
         window_end=window_end,
     )
+    registrations, registrations_fetched_at = await _load_registrations(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
     survey_responses, surveys_fetched_at = await _load_surveys(
         db,
         campaign_id,
@@ -132,9 +143,15 @@ async def build_report_packet(
     if not _wants(requested, "sessions"):
         sessions, sessions_fetched_at = [], None
         attendance, attendance_fetched_at = [], None
+        registrations, registrations_fetched_at = [], None
         kols = []
     if not _wants(requested, "surveys"):
         survey_responses, surveys_fetched_at = [], None
+
+    attendees, registered_count, attended_count, avg_minutes = _attendee_summary(
+        registrations=registrations,
+        attendance=attendance,
+    )
 
     # Dict keys, unlike model fields, aren't touched by ApiModel's
     # camelCase alias generator, so multi-word keys must be written
@@ -170,6 +187,12 @@ async def build_report_packet(
         status=SourceStatus.OK if attendance else SourceStatus.MISSING,
     )
 
+    input_completeness["registrations"] = SourceCompletenessOut(
+        fetched_at=registrations_fetched_at,
+        row_count=len(registrations),
+        status=SourceStatus.OK if registrations else SourceStatus.MISSING,
+    )
+
     input_completeness["surveyResponses"] = SourceCompletenessOut(
         fetched_at=surveys_fetched_at,
         row_count=len(survey_responses),
@@ -195,6 +218,10 @@ async def build_report_packet(
         attendance=attendance,
         survey_responses=survey_responses,
         kols=kols,
+        registered_count=registered_count,
+        attended_count=attended_count,
+        avg_minutes_watched=avg_minutes,
+        attendees=attendees,
         template=(
             ReportPacketTemplateOut(
                 id=template.id,
@@ -494,6 +521,8 @@ async def _load_attendance(
             duration_seconds=row.duration_seconds,
             join_time=row.join_time,
             leave_time=row.leave_time,
+            specialty=row.specialty,
+            institution=row.institution,
         )
         for row in rows
     ]
@@ -502,6 +531,66 @@ async def _load_attendance(
         default=datetime.now(timezone.utc),
     )
     return attendance, fetched_at
+
+
+async def _load_registrations(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
+) -> tuple[list[ExportRegistration], datetime | None]:
+    rows = [
+        row
+        for row in (
+            await db.execute(
+                select(ExportRegistration)
+                .where(ExportRegistration.campaign_id == campaign_id)
+                .order_by(
+                    ExportRegistration.registered_at.asc(),
+                    ExportRegistration.id.asc(),
+                )
+            )
+        ).scalars()
+        if _in_window(row.registered_at, window_start, window_end)
+    ]
+    if not rows:
+        return [], None
+    fetched_at = max(
+        (row.updated_at for row in rows if row.updated_at),
+        default=datetime.now(timezone.utc),
+    )
+    return list(rows), fetched_at
+
+
+def _minutes_watched(duration_seconds: int | None) -> int:
+    if duration_seconds is None or duration_seconds <= 0:
+        return 0
+    return int(duration_seconds) // 60
+
+
+def _attendee_summary(
+    *,
+    registrations: list[ExportRegistration],
+    attendance: list[ReportPacketAttendanceOut],
+) -> tuple[list[ReportPacketAttendeeOut], int, int, float | None]:
+    """Nameless attendee list + counts for the report Attendees section."""
+    attendees = [
+        ReportPacketAttendeeOut(
+            specialty=row.specialty,
+            institution=row.institution,
+            minutes_watched=_minutes_watched(row.duration_seconds),
+        )
+        for row in attendance
+        if (row.event or "").upper() == "JOINED"
+    ]
+    registered_count = len(registrations)
+    attended_count = len(attendees)
+    if attended_count == 0:
+        return attendees, registered_count, 0, None
+    total_minutes = sum(a.minutes_watched for a in attendees)
+    avg = round(total_minutes / attended_count, 1)
+    return attendees, registered_count, attended_count, avg
 
 
 async def _load_surveys(

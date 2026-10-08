@@ -11,9 +11,7 @@ from typing import Any
 from schemas.platform_export import (
     AttendanceEventType,
     AttendanceSource,
-    ExportAttendanceEvent,
     ExportSession,
-    ExportSurveyResponse,
     PlatformExportPacket,
 )
 
@@ -33,6 +31,10 @@ def normalize_export_payload(raw: dict[str, Any]) -> PlatformExportPacket:
     ]
     data["attendance"] = [
         _normalize_attendance(item) for item in _as_list(data.get("attendance"))
+    ]
+    data["registrations"] = [
+        _normalize_registration(item)
+        for item in _as_list(data.get("registrations"))
     ]
 
     surveys = data.get("surveyResponses")
@@ -82,6 +84,15 @@ def _normalize_attendance(item: Any) -> dict[str, Any]:
     if row.get("source") is None:
         row["source"] = AttendanceSource.WEBHOOK.value
     # Validate source against enum; REPORT_IMPORT etc. already match.
+    return row
+
+
+def _normalize_registration(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("registration row must be an object")
+    row = dict(item)
+    if row.get("registeredAt") is None and row.get("createdAt") is not None:
+        row["registeredAt"] = row["createdAt"]
     return row
 
 
