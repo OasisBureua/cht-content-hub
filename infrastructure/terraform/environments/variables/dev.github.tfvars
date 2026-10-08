@@ -38,7 +38,7 @@ enable_waf               = true
 # Overridden per deploy by workflow (-var api_image)
 api_image = "233636046512.dkr.ecr.us-east-1.amazonaws.com/contenthub-dev-api:1.0.0"
 
-rds_instance_class    = "db.t4g.small"
+rds_instance_class    = "db.t3.small"
 rds_engine_version    = "15.17"
 rds_allocated_storage = 20
 rds_multi_az          = false
