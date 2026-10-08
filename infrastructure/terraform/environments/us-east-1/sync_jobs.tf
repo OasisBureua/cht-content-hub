@@ -131,17 +131,16 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
-    # CPR-13 — pull Zoom export packets from cht-platform-tool into Hub Aurora.
-    # Default OFF until CPR-12 M2M (Cognito) + export HTTP API + optional
-    # transcript S3 GetObject IAM are provisioned. Flip
-    # sync_jobs_enabled.platform_export_ingest = true after PLATFORM_EXPORT_*
-    # secrets are in app-secrets. Daily 05:00 UTC (after kol_hcp_matcher).
+    # CPR-13 / CPR-41 — pull Zoom export packets from cht-platform-tool into
+    # Hub Aurora. Enable via sync_jobs_enabled.platform_export_ingest.
+    # Weekday 14:00 UTC (~9–10am ET) stays inside the 08:00–20:00 ET
+    # window so the job runs while the dev lightswitch is on.
     platform_export_ingest = {
       enabled                        = lookup(var.sync_jobs_enabled, "platform_export_ingest", false)
       handler                        = "jobs.platform_export_ingest.handler.handler"
       timeout                        = 900
       memory_size                    = 1024
-      schedule_expression            = "cron(0 5 * * ? *)"
+      schedule_expression            = "cron(0 14 ? * MON-FRI *)"
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }

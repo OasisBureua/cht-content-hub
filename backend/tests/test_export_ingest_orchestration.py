@@ -71,7 +71,10 @@ async def test_ingest_campaign_404_for_missing_campaign(db_session: AsyncSession
 
 def test_resolve_runtime_http_requires_base_url():
     with pytest.raises(ExportIngestConfigError, match="PLATFORM_EXPORT_BASE_URL"):
-        resolve_export_ingest_runtime(Settings(), source="http")
+        resolve_export_ingest_runtime(
+            Settings(platform_export_base_url=""),
+            source="http",
+        )
 
 
 def test_resolve_runtime_fixture_requires_dir():
@@ -168,6 +171,65 @@ async def test_admin_export_ingest_endpoint(client: AsyncClient, db_session: Asy
 async def test_admin_export_ingest_requires_api_key(http_client: AsyncClient):
     response = await http_client.post("/api/admin/campaigns/1/export-ingest")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_export_ingest_accepts_platform_trigger(
+    client: AsyncClient,
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Trigger Label Campaign"},
+    )
+    assert create.status_code in (200, 201)
+    campaign_id = create.json()["id"]
+
+    packet = PlatformExportPacket(campaign_id=str(campaign_id))
+    runtime_client = FixtureExportClient()
+    runtime_client.put(packet)
+    runtime = memory_runtime_for_tests(client=runtime_client)
+
+    with patch(
+        "admin.router.resolve_export_ingest_runtime_http",
+        return_value=runtime,
+    ):
+        response = await client.post(
+            f"/api/admin/campaigns/{campaign_id}/export-ingest",
+            headers=admin_headers(),
+            params={
+                "source": "http",
+                "exportCampaignId": str(campaign_id),
+                "trigger": "platform_link",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "success"
+    assert response.json()["trigger"] == "platform_link"
+
+
+@pytest.mark.asyncio
+async def test_admin_export_ingest_rejects_unknown_trigger(
+    client: AsyncClient,
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Bad Trigger Campaign"},
+    )
+    assert create.status_code in (200, 201)
+    campaign_id = create.json()["id"]
+
+    response = await client.post(
+        f"/api/admin/campaigns/{campaign_id}/export-ingest",
+        headers=admin_headers(),
+        params={"source": "fixture", "trigger": "not_a_real_trigger"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    detail = body.get("message") or body.get("detail") or ""
+    assert "trigger" in str(detail)
 
 
 @pytest.mark.asyncio
