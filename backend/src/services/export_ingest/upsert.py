@@ -164,6 +164,31 @@ async def _upsert_registration(db: AsyncSession, fields: dict) -> ExportRegistra
     return existing
 
 
+async def _replace_program_attendance_and_registrations(
+    db: AsyncSession,
+    program_ids: set[str],
+) -> None:
+    """Drop prior rows for programs in this packet before CPR-42 re-ingest.
+
+    Old first-JOINED-wins attendance used different dedupe keys than rolled
+    ``platform_event:rollup:…`` rows; leaving them would double-count the
+    report packet. Registrations similarly need replace semantics so
+    REJECTED/removed rows disappear.
+    """
+    if not program_ids:
+        return
+    await db.execute(
+        delete(ExportAttendanceEvent).where(
+            ExportAttendanceEvent.platform_tool_program_id.in_(program_ids)
+        )
+    )
+    await db.execute(
+        delete(ExportRegistration).where(
+            ExportRegistration.platform_tool_program_id.in_(program_ids)
+        )
+    )
+
+
 async def _drop_legacy_platform_surveys(
     db: AsyncSession, campaign_id: int
 ) -> None:
@@ -227,6 +252,13 @@ async def upsert_packet(
         await _upsert_session(
             db, map_session(session, default_campaign_id=campaign_id)
         )
+
+    program_ids = {
+        *(s.platform_tool_program_id for s in packet.sessions),
+        *(e.platform_tool_program_id for e in packet.attendance),
+        *(r.platform_tool_program_id for r in packet.registrations),
+    }
+    await _replace_program_attendance_and_registrations(db, program_ids)
 
     for event in packet.attendance:
         await _ensure_session_stub(

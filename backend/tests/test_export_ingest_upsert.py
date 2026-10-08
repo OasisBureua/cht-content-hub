@@ -13,6 +13,7 @@ from models.campaign import Campaign
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -267,3 +268,90 @@ async def test_empty_packet_ingest(db_session: AsyncSession):
     assert (
         await db_session.execute(select(func.count()).select_from(ExportSession))
     ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_cpr42_reingest_replaces_stale_attendance_and_registrations(
+    db_session: AsyncSession,
+):
+    """Rolled rows must replace first-wins leftovers so counts don't double."""
+    await _seed_campaign(db_session, 7)
+    old = PlatformExportPacket.model_validate(
+        {
+            "campaignId": 7,
+            "sessions": [
+                {"platformToolProgramId": "prog-1", "title": "Live"},
+            ],
+            "attendance": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "source": "WEBHOOK",
+                    "event": "JOINED",
+                    "occurredAt": "2026-08-15T17:00:00Z",
+                    "participantEmail": "a@example.com",
+                    "durationSeconds": 30,
+                }
+            ],
+            "registrations": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "userId": "u-gone",
+                    "registeredAt": "2026-08-01T00:00:00Z",
+                    "status": "PENDING",
+                }
+            ],
+        }
+    )
+    await upsert_packet(db_session, old)
+    await db_session.commit()
+
+    rolled = PlatformExportPacket.model_validate(
+        {
+            "campaignId": 7,
+            "sessions": [
+                {"platformToolProgramId": "prog-1", "title": "Live"},
+            ],
+            "attendance": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "source": "REPORT_IMPORT",
+                    "event": "JOINED",
+                    "joinTime": "2026-08-15T17:00:00Z",
+                    "participantEmail": "a@example.com",
+                    "durationSeconds": 90,
+                    "specialty": "Cardio",
+                    "institution": "CHM",
+                    "platformEventId": "rollup:prog-1:e:a@example.com",
+                    "userId": "u1",
+                }
+            ],
+            "registrations": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "userId": "u1",
+                    "registeredAt": "2026-08-01T00:00:00Z",
+                    "status": "APPROVED",
+                    "specialty": "Cardio",
+                    "institution": "CHM",
+                }
+            ],
+        }
+    )
+    await upsert_packet(db_session, rolled)
+    await db_session.commit()
+
+    attendance = (
+        await db_session.execute(select(ExportAttendanceEvent))
+    ).scalars().all()
+    regs = (
+        await db_session.execute(select(ExportRegistration))
+    ).scalars().all()
+    assert len(attendance) == 1
+    assert attendance[0].dedupe_key == (
+        "platform_event:rollup:prog-1:e:a@example.com"
+    )
+    assert attendance[0].duration_seconds == 90
+    assert attendance[0].specialty == "Cardio"
+    assert len(regs) == 1
+    assert regs[0].user_id == "u1"
+    assert regs[0].status == "APPROVED"
