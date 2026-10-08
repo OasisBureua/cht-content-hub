@@ -12,11 +12,12 @@ Event payload (optional)::
       "source": "http"
     }
 
-The schedule target sends ``{"job": "...", "source": "eventbridge"}``.
-A raw EventBridge envelope uses ``source: aws.events``. Both are the
-live HTTP pull. Live pulls use ``campaigns.platform_campaign_id`` and
-skip rows where it is blank. ``source=fixture`` still addresses
-campaigns by the Hub integer id.
+The schedule target sends
+``{"job": "...", "source": "eventbridge", "limit": 25}`` (limit from
+Terraform ``sync_job_schedule_input``). A raw EventBridge envelope uses
+``source: aws.events``. Both are the live HTTP pull. Live pulls use
+``campaigns.platform_campaign_id`` (Hub id fallback when blank).
+``source=fixture`` still addresses campaigns by the Hub integer id.
 
 Enable via Terraform ``sync_jobs_enabled.platform_export_ingest = true`` once
 M2M + export are provisioned. Keep disabled until live smoke succeeds.

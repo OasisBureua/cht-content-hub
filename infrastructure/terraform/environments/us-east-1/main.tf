@@ -213,7 +213,7 @@ module "ecs_api" {
   hcp_intel_poll_queue_url   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_url, "")
   hcp_intel_poll_queue_arn   = try(module.sync_lambda["hcp_intel_poll"].sqs_queue_arn, "")
   assets_bucket              = module.s3_assets.bucket_name
-  # CPR-41: API export-ingest needs PLATFORM_EXPORT_BASE_URL (Lambda already has it).
+  # CPR-41: API export-ingest needs Platform export + transcript S3 (same as Lambda).
   extra_environment = merge(
     {
       HUB_M2M_ISSUER                 = local.hub_m2m_issuer
@@ -225,6 +225,9 @@ module "ecs_api" {
     },
     var.platform_export_base_url != "" ? {
       PLATFORM_EXPORT_BASE_URL = var.platform_export_base_url
+    } : {},
+    var.platform_export_transcript_bucket != "" ? {
+      PLATFORM_EXPORT_TRANSCRIPT_BUCKET = var.platform_export_transcript_bucket
     } : {},
   )
 

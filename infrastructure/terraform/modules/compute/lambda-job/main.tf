@@ -252,7 +252,10 @@ resource "aws_cloudwatch_event_target" "lambda" {
   arn       = aws_lambda_function.this.arn
   role_arn  = aws_iam_role.eventbridge[0].arn
 
-  input = jsonencode({ job = var.job_name, source = "eventbridge" })
+  input = jsonencode(merge(
+    { job = var.job_name, source = "eventbridge" },
+    var.schedule_input,
+  ))
 }
 
 resource "aws_lambda_permission" "eventbridge" {
@@ -273,7 +276,10 @@ resource "aws_cloudwatch_event_target" "sqs" {
   arn       = aws_sqs_queue.job[0].arn
   role_arn  = aws_iam_role.eventbridge[0].arn
 
-  input = jsonencode({ job = var.job_name, source = "eventbridge" })
+  input = jsonencode(merge(
+    { job = var.job_name, source = "eventbridge" },
+    var.schedule_input,
+  ))
 }
 
 data "aws_iam_policy_document" "sqs_eventbridge" {

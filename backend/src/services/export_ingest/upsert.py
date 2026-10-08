@@ -56,6 +56,22 @@ def enrich_session_transcript(
     return session.model_copy(update={"transcript_text": strip_vtt(raw)})
 
 
+def _preserve_warehouse_transcript(fields: dict, existing: ExportSession) -> dict:
+    """Keep VTT-filled text when Platform export sends null transcript fields.
+
+    Platform packets omit transcript_text; the VTT Lambda may already have
+    filled the warehouse row. Blind setattr would wipe it.
+    """
+    out = dict(fields)
+    incoming_text = out.get("transcript_text")
+    if not (incoming_text or "").strip() and (existing.transcript_text or "").strip():
+        out["transcript_text"] = existing.transcript_text
+    incoming_key = out.get("transcript_s3_key")
+    if not (incoming_key or "").strip() and (existing.transcript_s3_key or "").strip():
+        out["transcript_s3_key"] = existing.transcript_s3_key
+    return out
+
+
 async def _upsert_session(
     db: AsyncSession,
     fields: dict,
@@ -73,7 +89,7 @@ async def _upsert_session(
         db.add(row)
         await db.flush()
         return row
-    _apply_fields(existing, fields)
+    _apply_fields(existing, _preserve_warehouse_transcript(fields, existing))
     await db.flush()
     return existing
 

@@ -134,7 +134,7 @@ locals {
     # CPR-13 / CPR-41 — pull Zoom export packets from cht-platform-tool into
     # Hub Aurora. Enable via sync_jobs_enabled.platform_export_ingest.
     # Weekday 14:00 UTC (~9–10am ET) stays inside the 08:00–20:00 ET
-    # window so the job runs while the dev lightswitch is on.
+    # lightswitch window (see sync_job_schedule_input.limit below).
     platform_export_ingest = {
       enabled                        = lookup(var.sync_jobs_enabled, "platform_export_ingest", false)
       handler                        = "jobs.platform_export_ingest.handler.handler"
@@ -176,6 +176,9 @@ locals {
       var.platform_export_m2m_secret_arn != "" ? {
         PLATFORM_EXPORT_M2M_SECRET_ARN = var.platform_export_m2m_secret_arn
       } : {},
+      var.platform_export_transcript_bucket != "" ? {
+        PLATFORM_EXPORT_TRANSCRIPT_BUCKET = var.platform_export_transcript_bucket
+      } : {},
       { PLATFORM_EXPORT_HTTP_MODE = "input_packet" }
     )
     vtt_object_ingest = {
@@ -183,8 +186,10 @@ locals {
     }
   }
 
-  sync_job_extra_secret_arns = {
-    platform_export_ingest = compact([var.platform_export_m2m_secret_arn])
+  # Cap the weekday backstop so a no-input schedule does not fan out across
+  # every Hub campaign (many lack a Platform Program → partial failures).
+  sync_job_schedule_input = {
+    platform_export_ingest = { limit = 25 }
   }
 }
 
@@ -203,6 +208,7 @@ module "sync_lambda" {
   timeout                        = each.value.timeout
   memory_size                    = each.value.memory_size
   schedule_expression            = each.value.schedule_expression
+  schedule_input                 = lookup(local.sync_job_schedule_input, each.key, {})
   sqs_trigger                    = each.value.sqs_trigger
   reserved_concurrent_executions = each.value.reserved_concurrent_executions
   vpc_id                         = var.vpc_id
@@ -222,10 +228,8 @@ module "sync_lambda" {
     } : {},
     lookup(local.sync_job_extra_env, each.key, {}),
   )
-  extra_secret_arns = compact(concat(
-    [local.outbound_m2m_secret_iam_arn],
-    lookup(local.sync_job_extra_secret_arns, each.key, []),
-  ))
+  # outbound_m2m_secret_iam_arn already covers the Cognito M2M export secret.
+  extra_secret_arns = compact([local.outbound_m2m_secret_iam_arn])
 
   depends_on = [module.app_secrets]
 }

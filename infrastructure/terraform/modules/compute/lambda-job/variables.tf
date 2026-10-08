@@ -53,6 +53,12 @@ variable "schedule_expression" {
   description = "EventBridge schedule, e.g. rate(30 minutes) or cron(30 3 ? * SUN *)"
 }
 
+variable "schedule_input" {
+  type        = map(any)
+  default     = {}
+  description = "Extra fields merged into the EventBridge target input (alongside job + source)."
+}
+
 variable "sqs_trigger" {
   type        = bool
   default     = false
