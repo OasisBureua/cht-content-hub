@@ -540,9 +540,16 @@ async def _load_registrations(
     window_start: date | None = None,
     window_end: date | None = None,
 ) -> tuple[list[ExportRegistration], datetime | None]:
-    rows = [
-        row
-        for row in (
+    """Load campaign registrations for CPR-42 counts.
+
+    Do **not** filter by ``registered_at`` against the report window —
+    people often register weeks before the session; Generate's default
+    30-day window would undercount ``registeredCount``. Optional window
+    args are accepted for call-site symmetry only.
+    """
+    del window_start, window_end
+    rows = list(
+        (
             await db.execute(
                 select(ExportRegistration)
                 .where(ExportRegistration.campaign_id == campaign_id)
@@ -552,15 +559,14 @@ async def _load_registrations(
                 )
             )
         ).scalars()
-        if _in_window(row.registered_at, window_start, window_end)
-    ]
+    )
     if not rows:
         return [], None
     fetched_at = max(
         (row.updated_at for row in rows if row.updated_at),
         default=datetime.now(timezone.utc),
     )
-    return list(rows), fetched_at
+    return rows, fetched_at
 
 
 def _minutes_watched(duration_seconds: int | None) -> int:

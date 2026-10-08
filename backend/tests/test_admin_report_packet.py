@@ -910,103 +910,11 @@ async def test_report_packet_cpr42_attendee_summary(
     assert body["inputCompleteness"]["registrations"]["status"] == "ok"
     assert body["inputCompleteness"]["registrations"]["rowCount"] == 2
 
-
-@pytest.mark.asyncio
-async def test_report_packet_cpr42_attendee_summary(
-    client: AsyncClient, db_session: AsyncSession
-):
-    create = await client.post(
-        "/api/admin/campaigns",
-        headers=admin_headers(),
-        json={"name": "CPR-42 Attendees"},
-    )
-    campaign_id = create.json()["id"]
-    db_session.add(
-        ExportSession(
-            platform_tool_program_id="prog-cpr42",
-            campaign_id=campaign_id,
-            title="Live",
-            transcript_text="Hi.",
-        )
-    )
-    db_session.add(
-        ExportRegistration(
-            dedupe_key="prog-cpr42|u1",
-            platform_tool_program_id="prog-cpr42",
-            campaign_id=campaign_id,
-            user_id="u1",
-            registered_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
-            status="APPROVED",
-            specialty="Cardiology",
-            institution="CHM",
-        )
-    )
-    db_session.add(
-        ExportRegistration(
-            dedupe_key="prog-cpr42|u2",
-            platform_tool_program_id="prog-cpr42",
-            campaign_id=campaign_id,
-            user_id="u2",
-            registered_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
-            status="PENDING",
-            specialty="Oncology",
-            institution="Other",
-        )
-    )
-    db_session.add(
-        ExportAttendanceEvent(
-            dedupe_key="rollup:prog-cpr42:e:a@example.com",
-            platform_tool_program_id="prog-cpr42",
-            campaign_id=campaign_id,
-            source="REPORT_IMPORT",
-            event="JOINED",
-            occurred_at=datetime(2026, 8, 15, 17, 0, tzinfo=timezone.utc),
-            participant_email="a@example.com",
-            duration_seconds=125,
-            specialty="Cardiology",
-            institution="CHM",
-            user_id="u1",
-        )
-    )
-    db_session.add(
-        ExportAttendanceEvent(
-            dedupe_key="rollup:prog-cpr42:e:b@example.com",
-            platform_tool_program_id="prog-cpr42",
-            campaign_id=campaign_id,
-            source="REPORT_IMPORT",
-            event="JOINED",
-            occurred_at=datetime(2026, 8, 15, 17, 5, tzinfo=timezone.utc),
-            participant_email="b@example.com",
-            duration_seconds=60,
-            specialty="Oncology",
-            institution="Other",
-            user_id="u2",
-        )
-    )
-    await db_session.commit()
-
-    response = await client.get(
+    # Early registrations must still count inside a short Generate window.
+    windowed = await client.get(
         f"/api/campaigns/{campaign_id}/report-packet",
         headers=admin_headers(),
+        params={"windowStart": "2026-08-10", "windowEnd": "2026-08-31"},
     )
-    assert response.status_code == 200
-    body = response.json()
-
-    assert body["registeredCount"] == 2
-    assert body["attendedCount"] == 2
-    assert body["avgMinutesWatched"] == 1.5
-    assert body["attendees"] == [
-        {
-            "specialty": "Cardiology",
-            "institution": "CHM",
-            "minutesWatched": 2,
-        },
-        {
-            "specialty": "Oncology",
-            "institution": "Other",
-            "minutesWatched": 1,
-        },
-    ]
-    assert "participantEmail" not in body["attendees"][0]
-    assert body["inputCompleteness"]["registrations"]["status"] == "ok"
-    assert body["inputCompleteness"]["registrations"]["rowCount"] == 2
+    assert windowed.json()["registeredCount"] == 2
+    assert windowed.json()["attendedCount"] == 2

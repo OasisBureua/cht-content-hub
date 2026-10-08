@@ -32,10 +32,14 @@ def normalize_export_payload(raw: dict[str, Any]) -> PlatformExportPacket:
     data["attendance"] = [
         _normalize_attendance(item) for item in _as_list(data.get("attendance"))
     ]
-    data["registrations"] = [
-        _normalize_registration(item)
-        for item in _as_list(data.get("registrations"))
-    ]
+    # Omit key ⇒ None (do not wipe warehouse). Explicit [] ⇒ clear programs.
+    if "registrations" in data:
+        data["registrations"] = [
+            _normalize_registration(item)
+            for item in _as_list(data.get("registrations"))
+        ]
+    else:
+        data["registrations"] = None
 
     surveys = data.get("surveyResponses")
     if surveys is None:

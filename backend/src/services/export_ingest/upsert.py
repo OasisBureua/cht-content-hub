@@ -166,27 +166,34 @@ async def _upsert_registration(db: AsyncSession, fields: dict) -> ExportRegistra
 
 async def _replace_program_attendance_and_registrations(
     db: AsyncSession,
-    program_ids: set[str],
+    *,
+    attendance_program_ids: set[str],
+    registration_program_ids: set[str] | None,
 ) -> None:
     """Drop prior rows for programs in this packet before CPR-42 re-ingest.
 
     Old first-JOINED-wins attendance used different dedupe keys than rolled
     ``platform_event:rollup:…`` rows; leaving them would double-count the
-    report packet. Registrations similarly need replace semantics so
-    REJECTED/removed rows disappear.
+    report packet. Registrations are only wiped when the packet explicitly
+    includes the registrations section (``[]`` clears; omitted leaves alone
+    so legacy/v1 assemble does not erase CPR-42 data).
     """
-    if not program_ids:
-        return
-    await db.execute(
-        delete(ExportAttendanceEvent).where(
-            ExportAttendanceEvent.platform_tool_program_id.in_(program_ids)
+    if attendance_program_ids:
+        await db.execute(
+            delete(ExportAttendanceEvent).where(
+                ExportAttendanceEvent.platform_tool_program_id.in_(
+                    attendance_program_ids
+                )
+            )
         )
-    )
-    await db.execute(
-        delete(ExportRegistration).where(
-            ExportRegistration.platform_tool_program_id.in_(program_ids)
+    if registration_program_ids:
+        await db.execute(
+            delete(ExportRegistration).where(
+                ExportRegistration.platform_tool_program_id.in_(
+                    registration_program_ids
+                )
+            )
         )
-    )
 
 
 async def _drop_legacy_platform_surveys(
@@ -253,12 +260,21 @@ async def upsert_packet(
             db, map_session(session, default_campaign_id=campaign_id)
         )
 
-    program_ids = {
+    attendance_program_ids = {
         *(s.platform_tool_program_id for s in packet.sessions),
         *(e.platform_tool_program_id for e in packet.attendance),
-        *(r.platform_tool_program_id for r in packet.registrations),
     }
-    await _replace_program_attendance_and_registrations(db, program_ids)
+    registration_program_ids: set[str] | None = None
+    if packet.registrations is not None:
+        registration_program_ids = {
+            *attendance_program_ids,
+            *(r.platform_tool_program_id for r in packet.registrations),
+        }
+    await _replace_program_attendance_and_registrations(
+        db,
+        attendance_program_ids=attendance_program_ids,
+        registration_program_ids=registration_program_ids,
+    )
 
     for event in packet.attendance:
         await _ensure_session_stub(
@@ -270,15 +286,16 @@ async def upsert_packet(
             db, map_attendance(event, default_campaign_id=campaign_id)
         )
 
-    for reg in packet.registrations:
-        await _ensure_session_stub(
-            db,
-            platform_tool_program_id=reg.platform_tool_program_id,
-            campaign_id=campaign_id,
-        )
-        await _upsert_registration(
-            db, map_registration(reg, default_campaign_id=campaign_id)
-        )
+    if packet.registrations is not None:
+        for reg in packet.registrations:
+            await _ensure_session_stub(
+                db,
+                platform_tool_program_id=reg.platform_tool_program_id,
+                campaign_id=campaign_id,
+            )
+            await _upsert_registration(
+                db, map_registration(reg, default_campaign_id=campaign_id)
+            )
 
     await _drop_legacy_platform_surveys(db, campaign_id)
     for survey in packet.survey_responses:
@@ -290,7 +307,9 @@ async def upsert_packet(
         sessions_upserted=len(packet.sessions),
         attendance_upserted=len(packet.attendance),
         surveys_upserted=len(packet.survey_responses),
-        registrations_upserted=len(packet.registrations),
+        registrations_upserted=(
+            len(packet.registrations) if packet.registrations is not None else 0
+        ),
     )
 
 

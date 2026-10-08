@@ -135,7 +135,9 @@ class PlatformExportPacket(ApiModel):
     campaign_id: str | int
     sessions: list[ExportSession] = Field(default_factory=list)
     attendance: list[ExportAttendanceEvent] = Field(default_factory=list)
-    registrations: list[ExportRegistration] = Field(default_factory=list)
+    # None = section omitted (legacy/v1 assemble) — do not wipe warehouse regs.
+    # [] = explicit empty from Platform input-packet — replace/wipe for programs.
+    registrations: list[ExportRegistration] | None = None
     survey_responses: list[ExportSurveyResponse] = Field(default_factory=list)
     input_completeness: dict[str, ExportSourceCompleteness] = Field(
         default_factory=dict

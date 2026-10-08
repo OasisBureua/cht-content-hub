@@ -355,3 +355,57 @@ async def test_cpr42_reingest_replaces_stale_attendance_and_registrations(
     assert len(regs) == 1
     assert regs[0].user_id == "u1"
     assert regs[0].status == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_omitted_registrations_section_does_not_wipe_warehouse(
+    db_session: AsyncSession,
+):
+    """Legacy/v1 packets without a registrations key must leave regs alone."""
+    await _seed_campaign(db_session, 8)
+    with_regs = PlatformExportPacket.model_validate(
+        {
+            "campaignId": 8,
+            "sessions": [{"platformToolProgramId": "prog-keep", "title": "Live"}],
+            "attendance": [],
+            "registrations": [
+                {
+                    "platformToolProgramId": "prog-keep",
+                    "userId": "u-keep",
+                    "registeredAt": "2026-08-01T00:00:00Z",
+                    "status": "APPROVED",
+                }
+            ],
+        }
+    )
+    await upsert_packet(db_session, with_regs)
+    await db_session.commit()
+
+    # No "registrations" key → normalize leaves None → do not wipe.
+    from services.export_ingest.normalize import normalize_export_payload
+
+    omitted = normalize_export_payload(
+        {
+            "campaignId": 8,
+            "sessions": [{"platformToolProgramId": "prog-keep", "title": "Live"}],
+            "attendance": [
+                {
+                    "platformToolProgramId": "prog-keep",
+                    "source": "REPORT_IMPORT",
+                    "joinTime": "2026-08-15T17:00:00Z",
+                    "participantEmail": "a@example.com",
+                    "durationSeconds": 60,
+                    "platformEventId": "rollup:prog-keep:e:a@example.com",
+                }
+            ],
+        }
+    )
+    assert omitted.registrations is None
+    await upsert_packet(db_session, omitted)
+    await db_session.commit()
+
+    regs = (
+        await db_session.execute(select(ExportRegistration))
+    ).scalars().all()
+    assert len(regs) == 1
+    assert regs[0].user_id == "u-keep"
