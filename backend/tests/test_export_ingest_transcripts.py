@@ -142,3 +142,26 @@ async def test_ingest_preserves_existing_transcript_when_packet_text_null(
     ).scalar_one()
     assert session.transcript_text == "Dr. Smith: kept from VTT Lambda"
     assert session.transcript_s3_key == SAMPLE_KEY
+
+
+class _FailingStore:
+    def get_vtt(self, key: str) -> str:
+        raise TranscriptStoreError(f"denied: {key}")
+
+
+@pytest.mark.asyncio
+async def test_ingest_continues_when_transcript_store_fails(
+    db_session: AsyncSession,
+):
+    raw = json.loads(
+        (FIXTURES / "campaign_42_packet.json").read_text(encoding="utf-8")
+    )
+    packet = PlatformExportPacket.model_validate(raw)
+    db_session.add(Campaign(id=packet.campaign_id, name="Campaign 42"))
+    await db_session.flush()
+
+    await ingest_packet(db_session, packet, transcript_store=_FailingStore())
+    await db_session.commit()
+
+    session = (await db_session.execute(select(ExportSession))).scalar_one()
+    assert session.platform_tool_program_id == packet.sessions[0].platform_tool_program_id

@@ -10,6 +10,7 @@ and empty ``transcript_text`` are filled by GetObject + VTT cue stripping.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -27,8 +28,10 @@ from schemas.platform_export import (
     PlatformExportPacket,
 )
 from services.export_ingest.mappers import map_attendance, map_session, map_survey
-from services.export_ingest.transcript_s3 import TranscriptStore
+from services.export_ingest.transcript_s3 import TranscriptStore, TranscriptStoreError
 from services.export_ingest.vtt import strip_vtt
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -186,7 +189,16 @@ async def upsert_packet(
 
     for session in packet.sessions:
         if transcript_store is not None:
-            session = enrich_session_transcript(session, transcript_store)
+            try:
+                session = enrich_session_transcript(session, transcript_store)
+            except TranscriptStoreError as exc:
+                # Missing/denied VTT must not abort attendance/survey upsert;
+                # preserve path keeps any warehouse text already filled by VTT Lambda.
+                log.warning(
+                    "transcript enrich skipped program=%s: %s",
+                    session.platform_tool_program_id,
+                    exc,
+                )
         await _upsert_session(
             db, map_session(session, default_campaign_id=campaign_id)
         )
