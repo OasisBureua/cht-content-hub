@@ -121,8 +121,10 @@ class ReportInputPacketOut(ApiModel):
     kols: list[ReportPacketKolOut] = Field(default_factory=list)
     template: ReportPacketTemplateOut | None = None
     # CPR-42 — Attendees section aggregates (nameless).
-    registered_count: int = 0
-    attended_count: int = 0
+    # Null when the attendance source toggle is off (CPR-44) so cht-reports
+    # hides the section instead of printing zeros.
+    registered_count: int | None = None
+    attended_count: int | None = None
     avg_minutes_watched: float | None = None
     attendees: list[ReportPacketAttendeeOut] = Field(default_factory=list)
     input_completeness: dict[str, SourceCompletenessOut]

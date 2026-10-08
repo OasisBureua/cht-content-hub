@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import api_headers
+from models.campaign import CampaignKOL, CampaignPlatformData
 from models.client import Client
 from models.export_warehouse import (
     ExportAttendanceEvent,
@@ -17,14 +18,14 @@ from models.export_warehouse import (
     ExportSession,
     ExportSurveyResponse,
 )
+from models.kol import KOL, KOLGroup, KOLGroupMember
+from models.project import Project
+from models.shoot import Shoot
 from services.export_ingest.normalize import (
     normalize_export_payload,
     rewrite_packet_hub_campaign_id,
 )
 from services.export_ingest.upsert import ingest_packet
-from models.kol import KOL, KOLGroup, KOLGroupMember
-from models.project import Project
-from models.shoot import Shoot
 from services.export_ingest.transcript_s3 import MemoryTranscriptStore
 
 
@@ -789,10 +790,207 @@ async def test_report_packet_sources_limit_sections(
     assert body["attendance"] == []
     assert len(body["surveyResponses"]) == 1
     assert body["hubspotRawData"] is None
-    assert body["inputCompleteness"]["sessions"]["status"] == "missing"
-    assert body["inputCompleteness"]["attendance"]["status"] == "missing"
+    # Off toggles must not appear as "missing" in completeness (cht-reports note).
+    assert "sessions" not in body["inputCompleteness"]
+    assert "attendance" not in body["inputCompleteness"]
+    assert "hubspot" not in body["inputCompleteness"]
     assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
-    assert body["inputCompleteness"]["hubspot"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_report_packet_sessions_toggle_keeps_attendance_and_kols(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-44: deselecting sessions must not clear attendance or KOLs."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Independent Sources"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-indep",
+            campaign_id=campaign_id,
+            title="Zoom",
+            transcript_text="Zoom text.",
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="att-indep",
+            platform_tool_program_id="prog-indep",
+            campaign_id=campaign_id,
+            source="WEBHOOK",
+            event="JOINED",
+            occurred_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            duration_seconds=600,
+        )
+    )
+    kol = KOL(
+        slug="dr-indep-packet",
+        name="Dr Indep",
+        title="MD",
+        institution="CHM",
+    )
+    db_session.add(kol)
+    await db_session.flush()
+    db_session.add(CampaignKOL(campaign_id=campaign_id, kol_id=kol.id))
+    await db_session.commit()
+
+    no_sessions = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["attendance", "kols"]},
+    )
+    body = no_sessions.json()
+    assert body["sessions"] == []
+    assert len(body["attendance"]) == 1
+    assert len(body["kols"]) == 1
+    assert body["kols"][0]["name"] == "Dr Indep"
+
+    sessions_only = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["sessions"]},
+    )
+    only = sessions_only.json()
+    assert len(only["sessions"]) == 1
+    assert only["attendance"] == []
+    assert only["kols"] == []
+    # Off attendance must not emit zero counts (cht-reports would show Attendees).
+    assert only["registeredCount"] is None
+    assert only["attendedCount"] is None
+    assert only["attendees"] == []
+    assert only["avgMinutesWatched"] is None
+
+
+@pytest.mark.asyncio
+async def test_report_packet_surveys_toggle_includes_uploaded_survey_slice(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-44: UI ``surveys`` must include CampaignPlatformData platform=survey."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Survey Slice Campaign"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="survey",
+            fetch_date=date(2026, 8, 15),
+            status="available",
+            synced_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            row_count=1,
+            rows=[{"nps": "9"}],
+            source="csv",
+            filename="survey.csv",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["surveys"]},
+    )
+    body = response.json()
+    assert len(body["platformSlices"]) == 1
+    assert body["platformSlices"][0]["platform"] == "survey"
+    assert body["platformSlices"][0]["rows"] == [{"nps": "9"}]
+    # Upload-only surveys must not look "missing" in completeness.
+    assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
+    assert body["inputCompleteness"]["surveyResponses"]["rowCount"] == 1
+
+    # All-sources mode must still exclude livestream platform rows.
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="livestream",
+            fetch_date=date(2026, 8, 15),
+            status="available",
+            synced_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            row_count=1,
+            rows=[{"viewers": "10"}],
+            source="csv",
+        )
+    )
+    await db_session.commit()
+    all_sources = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    platforms = {s["platform"] for s in all_sources.json()["platformSlices"]}
+    assert "survey" in platforms
+    assert "livestream" not in platforms
+
+
+@pytest.mark.asyncio
+async def test_report_packet_window_filters_platform_and_hubspot(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-44: platform fetch_date + hubspot_synced_at respect the window."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={
+            "name": "Window Filter Campaign",
+            "hubspotRawData": {"opens": 42},
+            "hubspotSyncedAt": "2026-07-01T12:00:00Z",
+        },
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="linkedin",
+            fetch_date=date(2026, 7, 10),
+            status="available",
+            synced_at=datetime(2026, 7, 10, tzinfo=timezone.utc),
+            row_count=1,
+            rows=[{"views": "1"}],
+            source="csv",
+        )
+    )
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="linkedin",
+            fetch_date=date(2026, 8, 20),
+            status="available",
+            synced_at=datetime(2026, 8, 20, tzinfo=timezone.utc),
+            row_count=2,
+            rows=[{"views": "99"}],
+            source="csv",
+        )
+    )
+    await db_session.commit()
+
+    in_window = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={
+            "windowStart": "2026-08-01",
+            "windowEnd": "2026-08-31",
+            "sources": ["linkedin", "hubspot"],
+        },
+    )
+    body = in_window.json()
+    assert len(body["platformSlices"]) == 1
+    assert body["platformSlices"][0]["fetchDate"] == "2026-08-20"
+    assert body["platformSlices"][0]["rows"] == [{"views": "99"}]
+    assert body["hubspotRawData"] is None  # synced July, outside August window
+
+    no_window = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["linkedin", "hubspot"]},
+    )
+    latest = no_window.json()
+    assert latest["platformSlices"][0]["fetchDate"] == "2026-08-20"
+    assert latest["hubspotRawData"] == {"opens": 42}
 
 
 @pytest.mark.asyncio
