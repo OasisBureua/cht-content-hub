@@ -10,6 +10,7 @@ from typing import Any
 
 from schemas.platform_export import (
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -84,6 +85,10 @@ def map_session(
     }
 
 
+def registration_dedupe_key(row: ExportRegistration) -> str:
+    return f"{row.platform_tool_program_id}|{row.user_id.strip()}"
+
+
 def map_attendance(
     event: ExportAttendanceEvent,
     *,
@@ -104,6 +109,26 @@ def map_attendance(
         "zoom_meeting_id": event.zoom_meeting_id,
         "join_time": event.join_time,
         "leave_time": event.leave_time,
+        "user_id": event.user_id,
+        "specialty": event.specialty,
+        "institution": event.institution,
+    }
+
+
+def map_registration(
+    row: ExportRegistration,
+    *,
+    default_campaign_id: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "dedupe_key": registration_dedupe_key(row),
+        "platform_tool_program_id": row.platform_tool_program_id,
+        "campaign_id": default_campaign_id,
+        "user_id": row.user_id,
+        "registered_at": row.registered_at,
+        "status": row.status,
+        "specialty": row.specialty,
+        "institution": row.institution,
     }
 
 
@@ -116,17 +141,24 @@ def map_survey(
         row.campaign_id if row.campaign_id is not None else default_campaign_id
     )
     campaign_id = _as_hub_campaign_id(raw_campaign, default_campaign_id)
+    questions: list[dict[str, Any]] | None = None
+    if row.questions:
+        questions = [
+            q.model_dump(by_alias=False, exclude_none=True) for q in row.questions
+        ]
     return {
         "dedupe_key": survey_dedupe_key(row),
         "campaign_id": campaign_id,
         "platform_tool_program_id": row.platform_tool_program_id,
         "respondent_id": row.respondent_id,
         "source": row.source,
+        "survey_id": row.survey_id,
         "survey_type": row.survey_type,
         "submitted_at": row.submitted_at,
         "submission_id": row.submission_id,
         "jotform_form_id": row.jotform_form_id,
         "answers": dict(row.answers or {}),
+        "questions": questions,
     }
 
 

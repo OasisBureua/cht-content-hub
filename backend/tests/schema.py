@@ -18,6 +18,7 @@ from models.campaign import (
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -50,6 +51,7 @@ ORM_TABLES = [
     IntegrationSetting.__table__,
     ExportSession.__table__,
     ExportAttendanceEvent.__table__,
+    ExportRegistration.__table__,
     ExportSurveyResponse.__table__,
     ExportIngestRun.__table__,
     Client.__table__,

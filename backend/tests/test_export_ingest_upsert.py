@@ -13,6 +13,7 @@ from models.campaign import Campaign
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -82,6 +83,7 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
                 "type": "POST_TEST",
                 "jotformFormId": "jf-99",
                 "source": "jotform",
+                "questions": None,
                 "responses": [
                     {
                         "userId": "u2",
@@ -93,15 +95,40 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
             },
             {
                 "platformToolProgramId": "prog-1",
+                "surveyId": "survey-native-fb",
                 "type": "FEEDBACK",
                 "source": "native",
+                "questions": [
+                    {
+                        "id": "q2_setting",
+                        "prompt": "What is your practice setting?",
+                        "type": "single_choice",
+                        "options": ["Academic", "Community", "Other"],
+                    }
+                ],
                 "responses": [
                     {
                         "userId": "u3",
                         "submittedAt": "2026-09-02T12:05:00Z",
-                        "answers": {"q1": "yes"},
+                        "answers": {"q2_setting": "Academic"},
                     }
                 ],
+            },
+            {
+                # CPR-43: schema with zero responses is not warehoused (no answer rows).
+                "platformToolProgramId": "prog-1",
+                "surveyId": "survey-empty",
+                "type": "FEEDBACK",
+                "source": "native",
+                "questions": [
+                    {
+                        "id": "q1_role",
+                        "prompt": "Role?",
+                        "type": "single_choice",
+                        "options": ["A", "B"],
+                    }
+                ],
+                "responses": [],
             },
         ],
     }
@@ -120,9 +147,21 @@ async def test_ingest_stores_packet_survey_fields(db_session: AsyncSession):
     assert by_respondent["u2"].submission_id == "jf-sub-1"
     assert by_respondent["u2"].jotform_form_id == "jf-99"
     assert by_respondent["u2"].survey_type == "POST_TEST"
+    assert by_respondent["u2"].questions is None
     assert by_respondent["u3"].source == "native"
     assert by_respondent["u3"].submission_id is None
     assert by_respondent["u3"].jotform_form_id is None
+    assert by_respondent["u3"].survey_id == "survey-native-fb"
+    assert by_respondent["u3"].questions == [
+        {
+            "id": "q2_setting",
+            "prompt": "What is your practice setting?",
+            "type": "single_choice",
+            "options": ["Academic", "Community", "Other"],
+        }
+    ]
+    assert len(rows) == 2  # empty-responses survey not stored
+    assert "survey-empty" not in {r.survey_id for r in rows}
 
 
 @pytest.mark.asyncio
@@ -267,3 +306,144 @@ async def test_empty_packet_ingest(db_session: AsyncSession):
     assert (
         await db_session.execute(select(func.count()).select_from(ExportSession))
     ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_cpr42_reingest_replaces_stale_attendance_and_registrations(
+    db_session: AsyncSession,
+):
+    """Rolled rows must replace first-wins leftovers so counts don't double."""
+    await _seed_campaign(db_session, 7)
+    old = PlatformExportPacket.model_validate(
+        {
+            "campaignId": 7,
+            "sessions": [
+                {"platformToolProgramId": "prog-1", "title": "Live"},
+            ],
+            "attendance": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "source": "WEBHOOK",
+                    "event": "JOINED",
+                    "occurredAt": "2026-08-15T17:00:00Z",
+                    "participantEmail": "a@example.com",
+                    "durationSeconds": 30,
+                }
+            ],
+            "registrations": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "userId": "u-gone",
+                    "registeredAt": "2026-08-01T00:00:00Z",
+                    "status": "PENDING",
+                }
+            ],
+        }
+    )
+    await upsert_packet(db_session, old)
+    await db_session.commit()
+
+    rolled = PlatformExportPacket.model_validate(
+        {
+            "campaignId": 7,
+            "sessions": [
+                {"platformToolProgramId": "prog-1", "title": "Live"},
+            ],
+            "attendance": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "source": "REPORT_IMPORT",
+                    "event": "JOINED",
+                    "joinTime": "2026-08-15T17:00:00Z",
+                    "participantEmail": "a@example.com",
+                    "durationSeconds": 90,
+                    "specialty": "Cardio",
+                    "institution": "CHM",
+                    "platformEventId": "rollup:prog-1:e:a@example.com",
+                    "userId": "u1",
+                }
+            ],
+            "registrations": [
+                {
+                    "platformToolProgramId": "prog-1",
+                    "userId": "u1",
+                    "registeredAt": "2026-08-01T00:00:00Z",
+                    "status": "APPROVED",
+                    "specialty": "Cardio",
+                    "institution": "CHM",
+                }
+            ],
+        }
+    )
+    await upsert_packet(db_session, rolled)
+    await db_session.commit()
+
+    attendance = (
+        await db_session.execute(select(ExportAttendanceEvent))
+    ).scalars().all()
+    regs = (
+        await db_session.execute(select(ExportRegistration))
+    ).scalars().all()
+    assert len(attendance) == 1
+    assert attendance[0].dedupe_key == (
+        "platform_event:rollup:prog-1:e:a@example.com"
+    )
+    assert attendance[0].duration_seconds == 90
+    assert attendance[0].specialty == "Cardio"
+    assert len(regs) == 1
+    assert regs[0].user_id == "u1"
+    assert regs[0].status == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_omitted_registrations_section_does_not_wipe_warehouse(
+    db_session: AsyncSession,
+):
+    """Legacy/v1 packets without a registrations key must leave regs alone."""
+    await _seed_campaign(db_session, 8)
+    with_regs = PlatformExportPacket.model_validate(
+        {
+            "campaignId": 8,
+            "sessions": [{"platformToolProgramId": "prog-keep", "title": "Live"}],
+            "attendance": [],
+            "registrations": [
+                {
+                    "platformToolProgramId": "prog-keep",
+                    "userId": "u-keep",
+                    "registeredAt": "2026-08-01T00:00:00Z",
+                    "status": "APPROVED",
+                }
+            ],
+        }
+    )
+    await upsert_packet(db_session, with_regs)
+    await db_session.commit()
+
+    # No "registrations" key → normalize leaves None → do not wipe.
+    from services.export_ingest.normalize import normalize_export_payload
+
+    omitted = normalize_export_payload(
+        {
+            "campaignId": 8,
+            "sessions": [{"platformToolProgramId": "prog-keep", "title": "Live"}],
+            "attendance": [
+                {
+                    "platformToolProgramId": "prog-keep",
+                    "source": "REPORT_IMPORT",
+                    "joinTime": "2026-08-15T17:00:00Z",
+                    "participantEmail": "a@example.com",
+                    "durationSeconds": 60,
+                    "platformEventId": "rollup:prog-keep:e:a@example.com",
+                }
+            ],
+        }
+    )
+    assert omitted.registrations is None
+    await upsert_packet(db_session, omitted)
+    await db_session.commit()
+
+    regs = (
+        await db_session.execute(select(ExportRegistration))
+    ).scalars().all()
+    assert len(regs) == 1
+    assert regs[0].user_id == "u-keep"

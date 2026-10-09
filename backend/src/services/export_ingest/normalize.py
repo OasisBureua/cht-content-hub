@@ -11,9 +11,7 @@ from typing import Any
 from schemas.platform_export import (
     AttendanceEventType,
     AttendanceSource,
-    ExportAttendanceEvent,
     ExportSession,
-    ExportSurveyResponse,
     PlatformExportPacket,
 )
 
@@ -34,6 +32,14 @@ def normalize_export_payload(raw: dict[str, Any]) -> PlatformExportPacket:
     data["attendance"] = [
         _normalize_attendance(item) for item in _as_list(data.get("attendance"))
     ]
+    # Omit key ⇒ None (do not wipe warehouse). Explicit [] ⇒ clear programs.
+    if "registrations" in data:
+        data["registrations"] = [
+            _normalize_registration(item)
+            for item in _as_list(data.get("registrations"))
+        ]
+    else:
+        data["registrations"] = None
 
     surveys = data.get("surveyResponses")
     if surveys is None:
@@ -85,6 +91,15 @@ def _normalize_attendance(item: Any) -> dict[str, Any]:
     return row
 
 
+def _normalize_registration(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("registration row must be an object")
+    row = dict(item)
+    if row.get("registeredAt") is None and row.get("createdAt") is not None:
+        row["registeredAt"] = row["createdAt"]
+    return row
+
+
 def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
     """Fixture: flat surveyResponses. CPR-28: nested surveys[].responses[]."""
     flat: list[dict[str, Any]] = []
@@ -99,6 +114,10 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
             survey_id = _blank_to_none(item.get("surveyId"))
             source = _blank_to_none(item.get("source")) or "unknown"
             jotform_form_id = _blank_to_none(item.get("jotformFormId"))
+            # CPR-43 — parent-level native schema; jotform leaves this null/absent.
+            questions = item.get("questions")
+            if not isinstance(questions, list):
+                questions = None
             for resp in nested:
                 if not isinstance(resp, dict):
                     continue
@@ -114,6 +133,7 @@ def _flatten_surveys(items: list[Any]) -> list[dict[str, Any]]:
                         "submissionId": _blank_to_none(resp.get("submissionId")),
                         "jotformFormId": jotform_form_id,
                         "answers": resp.get("answers") or {},
+                        "questions": questions,
                     }
                 )
         else:

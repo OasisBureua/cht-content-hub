@@ -83,11 +83,25 @@ async def _all_rows_for_campaign(
 
 
 async def latest_by_platform(
-    db: AsyncSession, campaign_id: int
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
 ) -> dict[str, CampaignPlatformData]:
-    """Most recent fetch_date (then synced_at) per platform."""
+    """Most recent fetch_date (then synced_at) per platform.
+
+    CPR-44: when a date window is set, only snapshots whose ``fetch_date``
+    falls inside the window are considered; otherwise the global latest.
+    """
     latest: dict[str, CampaignPlatformData] = {}
     for row in await _all_rows_for_campaign(db, campaign_id):
+        if window_start is not None or window_end is not None:
+            day = row.fetch_date
+            if window_start is not None and day < window_start:
+                continue
+            if window_end is not None and day > window_end:
+                continue
         if row.platform not in latest:
             latest[row.platform] = row
     return latest

@@ -76,7 +76,7 @@ class ExportSession(ApiModel):
 
 
 class ExportAttendanceEvent(ApiModel):
-    """Attendance row — fixture raw JOINED/LEFT or CPR-28 JOINED rollup."""
+    """Attendance row — fixture raw JOINED/LEFT or CPR-42 rolled watch-time."""
 
     platform_tool_program_id: str
     source: AttendanceSource = AttendanceSource.WEBHOOK
@@ -91,6 +91,8 @@ class ExportAttendanceEvent(ApiModel):
     join_time: datetime | None = None
     leave_time: datetime | None = None
     user_id: str | None = None
+    specialty: str | None = None
+    institution: str | None = None
 
     @model_validator(mode="after")
     def _require_occurred_at(self) -> ExportAttendanceEvent:
@@ -99,6 +101,26 @@ class ExportAttendanceEvent(ApiModel):
         if self.occurred_at is None:
             raise ValueError("occurred_at or join_time is required")
         return self
+
+
+class ExportRegistration(ApiModel):
+    """CPR-42 — program registration row (no names)."""
+
+    platform_tool_program_id: str
+    user_id: str
+    registered_at: datetime
+    status: str
+    specialty: str | None = None
+    institution: str | None = None
+
+
+class ExportSurveyQuestion(ApiModel):
+    """CPR-43 — flat native question schema row from Platform export."""
+
+    id: str
+    prompt: str
+    type: str
+    options: list[str] | None = None
 
 
 class ExportSurveyResponse(ApiModel):
@@ -114,6 +136,8 @@ class ExportSurveyResponse(ApiModel):
     submission_id: str | None = None
     jotform_form_id: str | None = None
     answers: dict[str, Any] = Field(default_factory=dict)
+    # CPR-43 — copied from parent surveys[] envelope during flatten.
+    questions: list[ExportSurveyQuestion] | None = None
 
 
 class PlatformExportPacket(ApiModel):
@@ -122,6 +146,9 @@ class PlatformExportPacket(ApiModel):
     campaign_id: str | int
     sessions: list[ExportSession] = Field(default_factory=list)
     attendance: list[ExportAttendanceEvent] = Field(default_factory=list)
+    # None = section omitted (legacy/v1 assemble) — do not wipe warehouse regs.
+    # [] = explicit empty from Platform input-packet — replace/wipe for programs.
+    registrations: list[ExportRegistration] | None = None
     survey_responses: list[ExportSurveyResponse] = Field(default_factory=list)
     input_completeness: dict[str, ExportSourceCompleteness] = Field(
         default_factory=dict

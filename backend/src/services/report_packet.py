@@ -16,12 +16,20 @@ Data sources:
   ``kols`` stay empty. Campaign ``kols`` still lists Hub KOL rows from
   shoots linked to the campaign, without using the shoot transcript.
 * ``attendance`` — CPR-13 ``export_attendance_events`` for this campaign.
-  Included with sessions. Not the empty ``reports.attendance`` table.
-* ``surveyResponses`` — CPR-13 ``export_survey_responses``
+  Own source key (CPR-44), independent of ``sessions``.
+* ``kols`` — campaign / shoot Hub KOL rows; own source key (CPR-44).
+* ``surveyResponses`` — CPR-13 ``export_survey_responses`` (toggle ``surveys``;
+  uploaded ``CampaignPlatformData`` platform ``survey`` maps to the same key).
+* ``surveyQuestions`` — CPR-43 native question schema (prompt + option order)
+* CPR-42 ``registeredCount`` / ``attendedCount`` / ``avgMinutesWatched`` /
+  nameless ``attendees[]`` — from ``export_registrations`` + rolled
+  attendance watch time (gated with ``attendance``).
 
-``windowStart`` / ``windowEnd`` filter sessions, attendance, and surveys
-by date. A blank window leaves those lists unfiltered. ``sources`` limits
-which sections are returned; a blank list returns every section.
+``windowStart`` / ``windowEnd`` filter sessions, attendance, surveys,
+platform snapshots (``fetch_date``), and HubSpot (``hubspot_synced_at``)
+when those fields are present. A blank window leaves lists unfiltered.
+``sources`` limits which sections are returned; a blank list returns every
+section. Canonical keys: ``schemas.report_sources.REPORT_SOURCE_KEYS``.
 * ``template`` — CPR-25 pointer (``type``/``semver``/``s3Key``) to the
   template body in the cht-reports bucket: the campaign's linked template,
   else the latest ``executive_summary`` version
@@ -46,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.campaign import CampaignKOL, ReportTemplate
 from models.export_warehouse import (
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -54,14 +63,17 @@ from models.shoot import Shoot
 from schemas.report_packet import (
     ReportInputPacketOut,
     ReportPacketAttendanceOut,
+    ReportPacketAttendeeOut,
     ReportPacketKolOut,
     ReportPacketPlatformSliceOut,
     ReportPacketSessionOut,
     ReportPacketSurveyOut,
+    ReportPacketSurveyQuestionOut,
     ReportPacketTemplateOut,
     SourceCompletenessOut,
     SourceStatus,
 )
+from schemas.report_sources import normalize_requested_sources, wants_source
 from services import campaigns as campaign_service
 from services import platform_data
 from services.export_ingest.transcript_s3 import (
@@ -87,9 +99,14 @@ async def build_report_packet(
 ) -> ReportInputPacketOut:
     campaign = await campaign_service._get_campaign_row(db, campaign_id)
 
-    requested = _requested_sources(sources)
+    requested = normalize_requested_sources(sources)
 
-    latest_platforms = await platform_data.latest_by_platform(db, campaign_id)
+    latest_platforms = await platform_data.latest_by_platform(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
     platform_slices = [
         ReportPacketPlatformSliceOut(
             platform=row.platform,
@@ -100,7 +117,7 @@ async def build_report_packet(
             synced_at=row.synced_at,
         )
         for row in latest_platforms.values()
-        if row.status == "available" and _wants(requested, row.platform)
+        if row.status == "available" and wants_source(requested, row.platform)
     ]
 
     store = transcript_store if transcript_store is not None else _resolve_transcript_store()
@@ -117,7 +134,13 @@ async def build_report_packet(
         window_start=window_start,
         window_end=window_end,
     )
-    survey_responses, surveys_fetched_at = await _load_surveys(
+    registrations, registrations_fetched_at = await _load_registrations(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    survey_responses, survey_questions, surveys_fetched_at = await _load_surveys(
         db,
         campaign_id,
         window_start=window_start,
@@ -129,52 +152,126 @@ async def build_report_packet(
         window_start=window_start,
         window_end=window_end,
     )
-    if not _wants(requested, "sessions"):
+    # CPR-44: each toggle is independent (sessions no longer clears attendance/KOLs).
+    if not wants_source(requested, "sessions"):
         sessions, sessions_fetched_at = [], None
+    if not wants_source(requested, "attendance"):
         attendance, attendance_fetched_at = [], None
+        registrations, registrations_fetched_at = [], None
+    if not wants_source(requested, "kols"):
         kols = []
-    if not _wants(requested, "surveys"):
-        survey_responses, surveys_fetched_at = [], None
+        # Shoot fallback embeds faculty on each session — strip when KOLs off.
+        sessions = [
+            session.model_copy(update={"kols": []}) if session.kols else session
+            for session in sessions
+        ]
+    if not wants_source(requested, "surveys"):
+        survey_responses, survey_questions, surveys_fetched_at = [], [], None
+
+    if wants_source(requested, "attendance"):
+        attendees, registered_count, attended_count, avg_minutes = _attendee_summary(
+            registrations=registrations,
+            attendance=attendance,
+        )
+    else:
+        # Null counts (not 0) so cht-reports omits the Attendees section.
+        attendees, registered_count, attended_count, avg_minutes = [], None, None, None
 
     # Dict keys, unlike model fields, aren't touched by ApiModel's
     # camelCase alias generator, so multi-word keys must be written
     # camelCase by hand to match the rest of the wire contract.
+    # Only requested sources appear here so cht-reports' "unavailable"
+    # note does not list toggles the admin turned off.
     input_completeness: dict[str, SourceCompletenessOut] = {}
 
-    include_hubspot = _wants(requested, "hubspot")
-    hubspot_raw = campaign.hubspot_raw_data if include_hubspot else None
-    input_completeness["hubspot"] = SourceCompletenessOut(
-        fetched_at=campaign.hubspot_synced_at if include_hubspot else None,
-        row_count=1 if hubspot_raw else 0,
-        status=SourceStatus.OK if hubspot_raw else SourceStatus.MISSING,
+    include_hubspot = wants_source(requested, "hubspot")
+    hubspot_raw = (
+        _hubspot_in_window(
+            campaign.hubspot_raw_data,
+            campaign.hubspot_synced_at,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        if include_hubspot
+        else None
     )
+    if include_hubspot:
+        input_completeness["hubspot"] = SourceCompletenessOut(
+            fetched_at=campaign.hubspot_synced_at if hubspot_raw is not None else None,
+            row_count=1 if hubspot_raw else 0,
+            status=SourceStatus.OK if hubspot_raw else SourceStatus.MISSING,
+        )
 
     for row in latest_platforms.values():
-        if not _wants(requested, row.platform):
+        if not wants_source(requested, row.platform):
             continue
         input_completeness[row.platform] = SourceCompletenessOut(
             fetched_at=row.synced_at,
             row_count=row.row_count or 0,
             status=SourceStatus.OK if row.status == "available" else SourceStatus.MISSING,
         )
+    # Requested social platforms with no in-window snapshot still need a
+    # missing marker so the report note is accurate.
+    for platform_key in ("linkedin", "meta", "youtube"):
+        if wants_source(requested, platform_key) and platform_key not in input_completeness:
+            input_completeness[platform_key] = SourceCompletenessOut(
+                fetched_at=None,
+                row_count=0,
+                status=SourceStatus.MISSING,
+            )
 
-    input_completeness["sessions"] = SourceCompletenessOut(
-        fetched_at=sessions_fetched_at,
-        row_count=len(sessions),
-        status=SourceStatus.OK if sessions else SourceStatus.MISSING,
-    )
+    if wants_source(requested, "sessions"):
+        input_completeness["sessions"] = SourceCompletenessOut(
+            fetched_at=sessions_fetched_at,
+            row_count=len(sessions),
+            status=SourceStatus.OK if sessions else SourceStatus.MISSING,
+        )
 
-    input_completeness["attendance"] = SourceCompletenessOut(
-        fetched_at=attendance_fetched_at,
-        row_count=len(attendance),
-        status=SourceStatus.OK if attendance else SourceStatus.MISSING,
-    )
+    if wants_source(requested, "attendance"):
+        input_completeness["attendance"] = SourceCompletenessOut(
+            fetched_at=attendance_fetched_at,
+            row_count=len(attendance),
+            status=SourceStatus.OK if attendance else SourceStatus.MISSING,
+        )
+        input_completeness["registrations"] = SourceCompletenessOut(
+            fetched_at=registrations_fetched_at,
+            row_count=len(registrations),
+            status=SourceStatus.OK if registrations else SourceStatus.MISSING,
+        )
 
-    input_completeness["surveyResponses"] = SourceCompletenessOut(
-        fetched_at=surveys_fetched_at,
-        row_count=len(survey_responses),
-        status=SourceStatus.OK if survey_responses else SourceStatus.MISSING,
-    )
+    if wants_source(requested, "kols"):
+        input_completeness["kols"] = SourceCompletenessOut(
+            fetched_at=None,
+            row_count=len(kols),
+            status=SourceStatus.OK if kols else SourceStatus.MISSING,
+        )
+
+    if wants_source(requested, "surveys"):
+        # Warehouse responses and/or uploaded CampaignPlatformData(platform=survey).
+        survey_upload = next(
+            (
+                row
+                for row in latest_platforms.values()
+                if row.platform == "survey" and row.status == "available"
+            ),
+            None,
+        )
+        survey_rows = len(survey_responses) + (
+            survey_upload.row_count or 0 if survey_upload else 0
+        )
+        survey_fetched = surveys_fetched_at
+        if survey_upload and survey_upload.synced_at:
+            if survey_fetched is None or survey_upload.synced_at > survey_fetched:
+                survey_fetched = survey_upload.synced_at
+        input_completeness["surveyResponses"] = SourceCompletenessOut(
+            fetched_at=survey_fetched,
+            row_count=survey_rows,
+            status=(
+                SourceStatus.OK
+                if survey_responses or survey_upload is not None
+                else SourceStatus.MISSING
+            ),
+        )
 
     template = await _resolve_template(db, campaign.template_id)
     input_completeness["template"] = SourceCompletenessOut(
@@ -194,7 +291,12 @@ async def build_report_packet(
         sessions=sessions,
         attendance=attendance,
         survey_responses=survey_responses,
+        survey_questions=survey_questions,
         kols=kols,
+        registered_count=registered_count,
+        attended_count=attended_count,
+        avg_minutes_watched=avg_minutes,
+        attendees=attendees,
         template=(
             ReportPacketTemplateOut(
                 id=template.id,
@@ -254,15 +356,22 @@ def _resolve_transcript_store() -> TranscriptStore | None:
     return S3TranscriptStore(bucket, region_name=settings.aws_region)
 
 
-def _requested_sources(sources: list[str] | None) -> set[str] | None:
-    """None means every section. A non-empty list limits the packet."""
-    if not sources:
+def _hubspot_in_window(
+    raw: object,
+    synced_at: datetime | None,
+    *,
+    window_start: date | None,
+    window_end: date | None,
+) -> object | None:
+    """CPR-44: omit HubSpot when ``hubspot_synced_at`` falls outside the window."""
+    if not raw:
         return None
-    return {item.strip() for item in sources if item and item.strip()}
-
-
-def _wants(requested: set[str] | None, name: str) -> bool:
-    return requested is None or name in requested
+    if window_start is None and window_end is None:
+        return raw
+    if synced_at is None:
+        # No date on the blob — cannot apply the window; keep the data.
+        return raw
+    return raw if _in_window(synced_at, window_start, window_end) else None
 
 
 def _on_day(value: datetime | date | None) -> date | None:
@@ -494,6 +603,8 @@ async def _load_attendance(
             duration_seconds=row.duration_seconds,
             join_time=row.join_time,
             leave_time=row.leave_time,
+            specialty=row.specialty,
+            institution=row.institution,
         )
         for row in rows
     ]
@@ -504,13 +615,83 @@ async def _load_attendance(
     return attendance, fetched_at
 
 
+async def _load_registrations(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
+) -> tuple[list[ExportRegistration], datetime | None]:
+    """Load campaign registrations for CPR-42 counts.
+
+    Do **not** filter by ``registered_at`` against the report window —
+    people often register weeks before the session; Generate's default
+    30-day window would undercount ``registeredCount``. Optional window
+    args are accepted for call-site symmetry only.
+    """
+    del window_start, window_end
+    rows = list(
+        (
+            await db.execute(
+                select(ExportRegistration)
+                .where(ExportRegistration.campaign_id == campaign_id)
+                .order_by(
+                    ExportRegistration.registered_at.asc(),
+                    ExportRegistration.id.asc(),
+                )
+            )
+        ).scalars()
+    )
+    if not rows:
+        return [], None
+    fetched_at = max(
+        (row.updated_at for row in rows if row.updated_at),
+        default=datetime.now(timezone.utc),
+    )
+    return rows, fetched_at
+
+
+def _minutes_watched(duration_seconds: int | None) -> int:
+    if duration_seconds is None or duration_seconds <= 0:
+        return 0
+    return int(duration_seconds) // 60
+
+
+def _attendee_summary(
+    *,
+    registrations: list[ExportRegistration],
+    attendance: list[ReportPacketAttendanceOut],
+) -> tuple[list[ReportPacketAttendeeOut], int, int, float | None]:
+    """Nameless attendee list + counts for the report Attendees section."""
+    attendees = [
+        ReportPacketAttendeeOut(
+            specialty=row.specialty,
+            institution=row.institution,
+            minutes_watched=_minutes_watched(row.duration_seconds),
+        )
+        for row in attendance
+        if (row.event or "").upper() == "JOINED"
+    ]
+    registered_count = len(registrations)
+    attended_count = len(attendees)
+    if attended_count == 0:
+        return attendees, registered_count, 0, None
+    total_minutes = sum(a.minutes_watched for a in attendees)
+    avg = round(total_minutes / attended_count, 1)
+    return attendees, registered_count, attended_count, avg
+
+
 async def _load_surveys(
     db: AsyncSession,
     campaign_id: int,
     *,
     window_start: date | None = None,
     window_end: date | None = None,
-) -> tuple[list[ReportPacketSurveyOut], datetime | None]:
+) -> tuple[
+    list[ReportPacketSurveyOut],
+    list[ReportPacketSurveyQuestionOut],
+    datetime | None,
+]:
     rows = [
         row
         for row in (
@@ -526,7 +707,7 @@ async def _load_surveys(
         if _in_window(row.submitted_at, window_start, window_end)
     ]
     if not rows:
-        return [], None
+        return [], [], None
 
     surveys = [
         ReportPacketSurveyOut(
@@ -538,8 +719,47 @@ async def _load_surveys(
         )
         for row in rows
     ]
+    questions = _collect_survey_questions(rows)
     fetched_at = max(
         (row.updated_at for row in rows if row.updated_at),
         default=datetime.now(timezone.utc),
     )
-    return surveys, fetched_at
+    return surveys, questions, fetched_at
+
+
+def _collect_survey_questions(
+    rows: list[ExportSurveyResponse],
+) -> list[ReportPacketSurveyQuestionOut]:
+    """Dedupe native question schema across response rows (CPR-43)."""
+    seen: set[tuple[str | None, str]] = set()
+    out: list[ReportPacketSurveyQuestionOut] = []
+    for row in rows:
+        raw_list = row.questions
+        if not isinstance(raw_list, list):
+            continue
+        for raw in raw_list:
+            if not isinstance(raw, dict):
+                continue
+            qid = str(raw.get("id") or "").strip()
+            prompt = str(raw.get("prompt") or "").strip()
+            qtype = str(raw.get("type") or "").strip()
+            if not qid or not prompt or not qtype:
+                continue
+            key = (row.survey_type, qid)
+            if key in seen:
+                continue
+            seen.add(key)
+            options = raw.get("options")
+            opts: list[str] | None = None
+            if isinstance(options, list) and options:
+                opts = [str(o) for o in options]
+            out.append(
+                ReportPacketSurveyQuestionOut(
+                    id=qid,
+                    prompt=prompt,
+                    type=qtype,
+                    options=opts,
+                    survey_type=row.survey_type,
+                )
+            )
+    return out

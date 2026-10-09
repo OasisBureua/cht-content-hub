@@ -10,15 +10,22 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import api_headers
+from models.campaign import CampaignKOL, CampaignPlatformData
 from models.client import Client
 from models.export_warehouse import (
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
 from models.kol import KOL, KOLGroup, KOLGroupMember
 from models.project import Project
 from models.shoot import Shoot
+from services.export_ingest.normalize import (
+    normalize_export_payload,
+    rewrite_packet_hub_campaign_id,
+)
+from services.export_ingest.upsert import ingest_packet
 from services.export_ingest.transcript_s3 import MemoryTranscriptStore
 
 
@@ -281,11 +288,25 @@ async def test_report_packet_includes_export_survey_responses(
             campaign_id=campaign_id,
             platform_tool_program_id="clxyz_program_cpr32",
             respondent_id="user_1",
-            source="platform",
+            source="native",
+            survey_id="survey-native-1",
             survey_type="POST_TEST",
             submitted_at=datetime(2026, 8, 15, 19, 0, tzinfo=timezone.utc),
             submission_id="survey_cpr32_1",
-            answers={"nps": 9, "q1": "excellent"},
+            answers={"q2_setting": "Academic", "nps": 9},
+            questions=[
+                {
+                    "id": "q2_setting",
+                    "prompt": "What is your practice setting?",
+                    "type": "single_choice",
+                    "options": ["Academic", "Community", "Other"],
+                },
+                {
+                    "id": "nps",
+                    "prompt": "How likely are you to recommend?",
+                    "type": "rating",
+                },
+            ],
         )
     )
     await db_session.commit()
@@ -299,11 +320,123 @@ async def test_report_packet_includes_export_survey_responses(
     assert len(body["surveyResponses"]) == 1
     survey = body["surveyResponses"][0]
     assert survey["respondentId"] == "user_1"
-    assert survey["source"] == "platform"
+    assert survey["source"] == "native"
     assert survey["surveyType"] == "POST_TEST"
-    assert survey["answers"] == {"nps": 9, "q1": "excellent"}
+    assert survey["answers"] == {"q2_setting": "Academic", "nps": 9}
+    assert body["surveyQuestions"] == [
+        {
+            "id": "q2_setting",
+            "prompt": "What is your practice setting?",
+            "type": "single_choice",
+            "options": ["Academic", "Community", "Other"],
+            "surveyType": "POST_TEST",
+        },
+        {
+            "id": "nps",
+            "prompt": "How likely are you to recommend?",
+            "type": "rating",
+            "options": None,
+            "surveyType": "POST_TEST",
+        },
+    ]
     assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
     assert body["inputCompleteness"]["surveyResponses"]["rowCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_report_packet_survey_questions_survive_ingest(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-43 e2e: Platform nested surveys → warehouse → report-packet."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "CPR-43 Ingest Survey Campaign"},
+    )
+    campaign_id = create.json()["id"]
+
+    raw = {
+        "campaignId": "AZ-25-01_LIV001",
+        "sessions": [],
+        "attendance": [],
+        "surveys": [
+            {
+                "platformToolProgramId": "prog-cpr43",
+                "surveyId": "survey-fb",
+                "type": "FEEDBACK",
+                "source": "native",
+                "questions": [
+                    {
+                        "id": "q2_setting",
+                        "prompt": "What is your practice setting?",
+                        "type": "single_choice",
+                        "options": ["Academic", "Community", "Other"],
+                    },
+                    {
+                        "id": "q6_other",
+                        "prompt": "Briefly describe:",
+                        "type": "text",
+                    },
+                ],
+                "responses": [
+                    {
+                        "userId": "u1",
+                        "submittedAt": "2026-09-02T12:00:00Z",
+                        "submissionId": "fb-1",
+                        "answers": {"q2_setting": "Community"},
+                    }
+                ],
+            },
+            {
+                "platformToolProgramId": "prog-cpr43",
+                "surveyId": "survey-intake",
+                "type": "INTAKE",
+                "source": "native",
+                "questions": [
+                    {
+                        "id": "organization",
+                        "prompt": "Organization",
+                        "type": "text",
+                    }
+                ],
+                "responses": [
+                    {
+                        "userId": "u1",
+                        "submittedAt": "2026-09-01T12:00:00Z",
+                        "submissionId": "in-1",
+                        "answers": {"organization": "CHM"},
+                    }
+                ],
+            },
+        ],
+    }
+    packet = rewrite_packet_hub_campaign_id(
+        normalize_export_payload(raw), campaign_id
+    )
+    await ingest_packet(db_session, packet, trigger="manual")
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    body = response.json()
+    assert len(body["surveyResponses"]) == 2
+    feedback_qs = [
+        q for q in body["surveyQuestions"] if q["surveyType"] == "FEEDBACK"
+    ]
+    assert feedback_qs[0] == {
+        "id": "q2_setting",
+        "prompt": "What is your practice setting?",
+        "type": "single_choice",
+        "options": ["Academic", "Community", "Other"],
+        "surveyType": "FEEDBACK",
+    }
+    assert feedback_qs[1]["id"] == "q6_other"
+    assert any(
+        q["id"] == "organization" and q["surveyType"] == "INTAKE"
+        for q in body["surveyQuestions"]
+    )
 
 
 @pytest.mark.asyncio
@@ -657,10 +790,207 @@ async def test_report_packet_sources_limit_sections(
     assert body["attendance"] == []
     assert len(body["surveyResponses"]) == 1
     assert body["hubspotRawData"] is None
-    assert body["inputCompleteness"]["sessions"]["status"] == "missing"
-    assert body["inputCompleteness"]["attendance"]["status"] == "missing"
+    # Off toggles must not appear as "missing" in completeness (cht-reports note).
+    assert "sessions" not in body["inputCompleteness"]
+    assert "attendance" not in body["inputCompleteness"]
+    assert "hubspot" not in body["inputCompleteness"]
     assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
-    assert body["inputCompleteness"]["hubspot"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_report_packet_sessions_toggle_keeps_attendance_and_kols(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-44: deselecting sessions must not clear attendance or KOLs."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Independent Sources"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-indep",
+            campaign_id=campaign_id,
+            title="Zoom",
+            transcript_text="Zoom text.",
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="att-indep",
+            platform_tool_program_id="prog-indep",
+            campaign_id=campaign_id,
+            source="WEBHOOK",
+            event="JOINED",
+            occurred_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            duration_seconds=600,
+        )
+    )
+    kol = KOL(
+        slug="dr-indep-packet",
+        name="Dr Indep",
+        title="MD",
+        institution="CHM",
+    )
+    db_session.add(kol)
+    await db_session.flush()
+    db_session.add(CampaignKOL(campaign_id=campaign_id, kol_id=kol.id))
+    await db_session.commit()
+
+    no_sessions = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["attendance", "kols"]},
+    )
+    body = no_sessions.json()
+    assert body["sessions"] == []
+    assert len(body["attendance"]) == 1
+    assert len(body["kols"]) == 1
+    assert body["kols"][0]["name"] == "Dr Indep"
+
+    sessions_only = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["sessions"]},
+    )
+    only = sessions_only.json()
+    assert len(only["sessions"]) == 1
+    assert only["attendance"] == []
+    assert only["kols"] == []
+    # Off attendance must not emit zero counts (cht-reports would show Attendees).
+    assert only["registeredCount"] is None
+    assert only["attendedCount"] is None
+    assert only["attendees"] == []
+    assert only["avgMinutesWatched"] is None
+
+
+@pytest.mark.asyncio
+async def test_report_packet_surveys_toggle_includes_uploaded_survey_slice(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-44: UI ``surveys`` must include CampaignPlatformData platform=survey."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Survey Slice Campaign"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="survey",
+            fetch_date=date(2026, 8, 15),
+            status="available",
+            synced_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            row_count=1,
+            rows=[{"nps": "9"}],
+            source="csv",
+            filename="survey.csv",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["surveys"]},
+    )
+    body = response.json()
+    assert len(body["platformSlices"]) == 1
+    assert body["platformSlices"][0]["platform"] == "survey"
+    assert body["platformSlices"][0]["rows"] == [{"nps": "9"}]
+    # Upload-only surveys must not look "missing" in completeness.
+    assert body["inputCompleteness"]["surveyResponses"]["status"] == "ok"
+    assert body["inputCompleteness"]["surveyResponses"]["rowCount"] == 1
+
+    # All-sources mode must still exclude livestream platform rows.
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="livestream",
+            fetch_date=date(2026, 8, 15),
+            status="available",
+            synced_at=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            row_count=1,
+            rows=[{"viewers": "10"}],
+            source="csv",
+        )
+    )
+    await db_session.commit()
+    all_sources = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    platforms = {s["platform"] for s in all_sources.json()["platformSlices"]}
+    assert "survey" in platforms
+    assert "livestream" not in platforms
+
+
+@pytest.mark.asyncio
+async def test_report_packet_window_filters_platform_and_hubspot(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """CPR-44: platform fetch_date + hubspot_synced_at respect the window."""
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={
+            "name": "Window Filter Campaign",
+            "hubspotRawData": {"opens": 42},
+            "hubspotSyncedAt": "2026-07-01T12:00:00Z",
+        },
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="linkedin",
+            fetch_date=date(2026, 7, 10),
+            status="available",
+            synced_at=datetime(2026, 7, 10, tzinfo=timezone.utc),
+            row_count=1,
+            rows=[{"views": "1"}],
+            source="csv",
+        )
+    )
+    db_session.add(
+        CampaignPlatformData(
+            campaign_id=campaign_id,
+            platform="linkedin",
+            fetch_date=date(2026, 8, 20),
+            status="available",
+            synced_at=datetime(2026, 8, 20, tzinfo=timezone.utc),
+            row_count=2,
+            rows=[{"views": "99"}],
+            source="csv",
+        )
+    )
+    await db_session.commit()
+
+    in_window = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={
+            "windowStart": "2026-08-01",
+            "windowEnd": "2026-08-31",
+            "sources": ["linkedin", "hubspot"],
+        },
+    )
+    body = in_window.json()
+    assert len(body["platformSlices"]) == 1
+    assert body["platformSlices"][0]["fetchDate"] == "2026-08-20"
+    assert body["platformSlices"][0]["rows"] == [{"views": "99"}]
+    assert body["hubspotRawData"] is None  # synced July, outside August window
+
+    no_window = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"sources": ["linkedin", "hubspot"]},
+    )
+    latest = no_window.json()
+    assert latest["platformSlices"][0]["fetchDate"] == "2026-08-20"
+    assert latest["hubspotRawData"] == {"opens": 42}
 
 
 @pytest.mark.asyncio
@@ -807,3 +1137,113 @@ async def test_report_packet_zoom_session_has_no_kol_and_blocks_shoot(
 
     assert body["sessions"] == []
     assert body["inputCompleteness"]["sessions"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_report_packet_cpr42_attendee_summary(
+    client: AsyncClient, db_session: AsyncSession
+):
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "CPR-42 Attendees"},
+    )
+    campaign_id = create.json()["id"]
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id="prog-cpr42",
+            campaign_id=campaign_id,
+            title="Live",
+            transcript_text="Hi.",
+        )
+    )
+    db_session.add(
+        ExportRegistration(
+            dedupe_key="prog-cpr42|u1",
+            platform_tool_program_id="prog-cpr42",
+            campaign_id=campaign_id,
+            user_id="u1",
+            registered_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            status="APPROVED",
+            specialty="Cardiology",
+            institution="CHM",
+        )
+    )
+    db_session.add(
+        ExportRegistration(
+            dedupe_key="prog-cpr42|u2",
+            platform_tool_program_id="prog-cpr42",
+            campaign_id=campaign_id,
+            user_id="u2",
+            registered_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+            status="PENDING",
+            specialty="Oncology",
+            institution="Other",
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="rollup:prog-cpr42:e:a@example.com",
+            platform_tool_program_id="prog-cpr42",
+            campaign_id=campaign_id,
+            source="REPORT_IMPORT",
+            event="JOINED",
+            occurred_at=datetime(2026, 8, 15, 17, 0, tzinfo=timezone.utc),
+            participant_email="a@example.com",
+            duration_seconds=125,
+            specialty="Cardiology",
+            institution="CHM",
+            user_id="u1",
+        )
+    )
+    db_session.add(
+        ExportAttendanceEvent(
+            dedupe_key="rollup:prog-cpr42:e:b@example.com",
+            platform_tool_program_id="prog-cpr42",
+            campaign_id=campaign_id,
+            source="REPORT_IMPORT",
+            event="JOINED",
+            occurred_at=datetime(2026, 8, 15, 17, 5, tzinfo=timezone.utc),
+            participant_email="b@example.com",
+            duration_seconds=60,
+            specialty="Oncology",
+            institution="Other",
+            user_id="u2",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["registeredCount"] == 2
+    assert body["attendedCount"] == 2
+    assert body["avgMinutesWatched"] == 1.5
+    assert body["attendees"] == [
+        {
+            "specialty": "Cardiology",
+            "institution": "CHM",
+            "minutesWatched": 2,
+        },
+        {
+            "specialty": "Oncology",
+            "institution": "Other",
+            "minutesWatched": 1,
+        },
+    ]
+    assert "participantEmail" not in body["attendees"][0]
+    assert body["inputCompleteness"]["registrations"]["status"] == "ok"
+    assert body["inputCompleteness"]["registrations"]["rowCount"] == 2
+
+    # Early registrations must still count inside a short Generate window.
+    windowed = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(),
+        params={"windowStart": "2026-08-10", "windowEnd": "2026-08-31"},
+    )
+    assert windowed.json()["registeredCount"] == 2
+    assert windowed.json()["attendedCount"] == 2
