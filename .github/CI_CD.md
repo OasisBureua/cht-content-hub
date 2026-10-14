@@ -33,6 +33,10 @@ Manual **Run workflow** has `deploy_all` (default off) to force every lane. Chan
 
 A `backend/**` change still rebuilds the shared Lambda zip because `sync_lambda_source_hash` includes `backend/src`. Use `deploy_all` when you want an explicit full stack.
 
+## Terraform apply approval
+
+Deploys stop after `terraform plan` and open a GitHub issue. Only the user who triggered the run (usually whoever merged) can approve it: comment **approve** on the issue. The run waits up to 2 hours. The AWS role is re-assumed after approval, so a slow approval no longer fails the apply on expired credentials.
+
 ## ECR repositories
 
 | Repo | Environment | Rolling alias |

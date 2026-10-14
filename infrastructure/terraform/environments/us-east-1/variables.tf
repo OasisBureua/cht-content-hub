@@ -432,7 +432,7 @@ variable "hub_m2m_outbound_scopes" {
 variable "enable_reports_m2m_client" {
   type        = bool
   default     = false
-  description = "Create cht-reports-m2m-{env} + SM cht-{env}-cognito-m2m-reports (hub/reports.read). Requires hub RS. Dev on; prod off. Does not create cht-platform-m2m."
+  description = "Create cht-reports-m2m-{env} + SM cht-{env}-cognito-m2m-reports (hub/reports.read + platform/reports.notify). Requires hub RS. Does not create cht-platform-m2m."
 }
 
 variable "enable_ecr_replication" {

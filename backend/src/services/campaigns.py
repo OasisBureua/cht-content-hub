@@ -59,8 +59,17 @@ async def _get_campaign_row(db: AsyncSession, campaign_id: int) -> Campaign:
     return campaign
 
 
+def _blank_to_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 async def create_campaign(db: AsyncSession, payload: CampaignCreate) -> CampaignOut:
     data = payload.model_dump(exclude_unset=True)
+    if "platform_campaign_id" in data:
+        data["platform_campaign_id"] = _blank_to_none(data["platform_campaign_id"])
     if not data.get("name"):
         data["name"] = "Untitled campaign"
 
@@ -83,7 +92,9 @@ async def update_campaign(
 ) -> CampaignOut:
     campaign = await _get_campaign_row(db, campaign_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
-        if hasattr(value, "value"):
+        if key == "platform_campaign_id":
+            value = _blank_to_none(value)
+        elif hasattr(value, "value"):
             value = value.value
         setattr(campaign, key, value)
     campaign.updated_at = datetime.now(timezone.utc)

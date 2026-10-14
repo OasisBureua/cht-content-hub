@@ -7,7 +7,7 @@ POST .../report/generate. HubSpot sync stays on CHT → PATCH campaign.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,8 @@ from database import get_db
 from schemas.campaigns import (
     AnalyticsReportOut,
     CampaignCreate,
+    CampaignKolListOut,
+    CampaignKolsUpdate,
     CampaignListOut,
     CampaignOut,
     CampaignUpdate,
@@ -39,13 +41,30 @@ from schemas.campaigns import (
     TemplateOut,
 )
 from schemas.platform_export import ExportIngestRunOut
-from services import campaign_integrations, campaign_reports, campaigns, platform_data
+from services import (
+    campaign_integrations,
+    campaign_kols,
+    campaign_reports,
+    campaigns,
+    platform_data,
+)
 from services.export_ingest.ingest import (
     ingest_campaign,
     resolve_export_ingest_runtime_http,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin-campaigns"])
+
+# CPR-41 — recorded on export_ingest_runs.trigger for event-driven syncs.
+EXPORT_INGEST_TRIGGERS: Final[frozenset[str]] = frozenset(
+    {
+        "manual",
+        "platform_link",
+        "platform_zoom",
+        "platform_generate",
+        "platform_refresh",
+    }
+)
 
 
 @router.get("/campaigns", response_model=CampaignListOut)
@@ -65,6 +84,27 @@ async def get_campaign(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CampaignOut:
     return await campaigns.get_campaign(db, campaign_id)
+
+
+@router.get("/campaigns/{campaign_id}/kols", response_model=CampaignKolListOut)
+async def list_campaign_kols(
+    campaign_id: int,
+    _key: Annotated[str, Depends(verify_admin_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CampaignKolListOut:
+    """KOLs attached to the campaign (CPR-45). Shoot KOLs are not listed here."""
+    return await campaign_kols.list_campaign_kols(db, campaign_id)
+
+
+@router.put("/campaigns/{campaign_id}/kols", response_model=CampaignKolListOut)
+async def set_campaign_kols(
+    campaign_id: int,
+    payload: CampaignKolsUpdate,
+    _key: Annotated[str, Depends(verify_admin_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CampaignKolListOut:
+    """Replace the campaign's attached KOLs. They feed the report packet's kols."""
+    return await campaign_kols.set_campaign_kols(db, campaign_id, payload.kol_ids)
 
 
 @router.post("/campaigns", response_model=CampaignOut, status_code=status.HTTP_201_CREATED)
@@ -158,33 +198,50 @@ async def trigger_export_ingest(
         default=None,
         alias="exportCampaignId",
         description=(
-            "Platform Program.campaignId string for live export "
-            "(e.g. AZ-25-01_LIV001). Required when source=http."
+            "Optional Program.campaignId override for live export "
+            "(e.g. AZ-25-01_LIV001). Falls back to the campaign's "
+            "platformCampaignId, then to the Hub campaign id."
+        ),
+    ),
+    trigger: str = Query(
+        default="manual",
+        description=(
+            "Audit label for export_ingest_runs.trigger. "
+            "Allowed: manual, platform_link, platform_zoom, "
+            "platform_generate, platform_refresh."
         ),
     ),
 ) -> ExportIngestRunOut:
     """Pull platform Zoom export for this Hub campaign into the warehouse.
 
-    Hub ``campaign_id`` is the integer PK. Live CPR-28 export keys off the
-    string ``exportCampaignId`` linked on platform Programs.
+    Hub ``campaign_id`` is the integer PK. Live export uses
+    ``exportCampaignId`` or ``platformCampaignId`` when set, otherwise
+    the Hub id.
     """
     normalized = (source or "http").strip().lower()
-    if normalized == "http" and not (export_campaign_id and export_campaign_id.strip()):
+    resolved_trigger = (trigger or "manual").strip().lower() or "manual"
+    if resolved_trigger not in EXPORT_INGEST_TRIGGERS:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "exportCampaignId is required when source=http "
-                "(platform Program.campaignId, e.g. AZ-25-01_LIV001)"
+                "trigger must be one of: "
+                + ", ".join(sorted(EXPORT_INGEST_TRIGGERS))
             ),
         )
+    resolved_export_id = (export_campaign_id or "").strip() or None
+    if normalized == "http" and resolved_export_id is None:
+        campaign = await campaigns._get_campaign_row(db, campaign_id)
+        resolved_export_id = (campaign.platform_campaign_id or "").strip() or None
+    if normalized == "http" and not resolved_export_id:
+        resolved_export_id = str(campaign_id)
     runtime = resolve_export_ingest_runtime_http(settings, source=source)
     run = await ingest_campaign(
         db,
         campaign_id,
         client=runtime.client,
         transcript_store=runtime.transcript_store,
-        trigger="manual",
-        export_campaign_id=export_campaign_id,
+        trigger=resolved_trigger,
+        export_campaign_id=resolved_export_id,
     )
     return ExportIngestRunOut.model_validate(run)
 

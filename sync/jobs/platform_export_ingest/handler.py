@@ -12,6 +12,13 @@ Event payload (optional)::
       "source": "http"
     }
 
+The schedule target sends
+``{"job": "...", "source": "eventbridge", "limit": 25}`` (limit from
+Terraform ``sync_job_schedule_input``). A raw EventBridge envelope uses
+``source: aws.events``. Both are the live HTTP pull. Live pulls use
+``campaigns.platform_campaign_id`` (Hub id fallback when blank).
+``source=fixture`` still addresses campaigns by the Hub integer id.
+
 Enable via Terraform ``sync_jobs_enabled.platform_export_ingest = true`` once
 M2M + export are provisioned. Keep disabled until live smoke succeeds.
 """
@@ -38,6 +45,21 @@ def _parse_event(event: dict | None) -> dict:
     return event
 
 
+def _client_source(event: dict) -> str:
+    """Export client mode.
+
+    The Lambda schedule input is ``source=eventbridge``. A raw EventBridge
+    envelope is ``source=aws.events``. Neither is the fixture client.
+    """
+    raw = event.get("source")
+    if raw is None or not str(raw).strip():
+        return "http"
+    normalized = str(raw).strip().lower()
+    if normalized in {"aws.events", "eventbridge"}:
+        return "http"
+    return normalized
+
+
 def _export_campaign_map(event: dict) -> dict[int, str] | None:
     raw = event.get("exportCampaignIds") or event.get("export_campaign_ids")
     if not raw or not isinstance(raw, dict):
@@ -62,7 +84,7 @@ async def _run(event: dict) -> dict:
 
     get_settings.cache_clear()
     settings = get_settings()
-    source = str(event.get("source") or "http")
+    source = _client_source(event)
     campaign_ids = event.get("campaignIds") or event.get("campaign_ids")
     limit = event.get("limit")
     export_map = _export_campaign_map(event)
@@ -86,6 +108,7 @@ async def _run(event: dict) -> dict:
             export_campaign_ids=export_map,
             limit=int(limit) if limit is not None else None,
             trigger="schedule",
+            use_stored_platform_campaign_id=(source == "http"),
         )
         await db.commit()
 
@@ -95,6 +118,7 @@ async def _run(event: dict) -> dict:
         "processed": batch.processed,
         "succeeded": batch.succeeded,
         "failed": batch.failed,
+        "skipped": batch.skipped,
         "results": [
             {
                 "campaignId": row.campaign_id,

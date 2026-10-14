@@ -10,6 +10,7 @@ from schemas.platform_export import (
     AttendanceEventType,
     AttendanceSource,
     ExportAttendanceEvent,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
     PlatformExportPacket,
@@ -17,8 +18,10 @@ from schemas.platform_export import (
 from services.export_ingest.mappers import (
     attendance_dedupe_key,
     map_attendance,
+    map_registration,
     map_session,
     map_survey,
+    registration_dedupe_key,
     survey_dedupe_key,
 )
 
@@ -90,6 +93,40 @@ def test_survey_dedupe_prefers_submission_id():
     assert survey_dedupe_key(row) == "submission:sub_1"
 
 
+def test_survey_dedupe_fallback_includes_survey_id():
+    submitted = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    intake = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        respondent_id="u3",
+        source="native",
+        survey_id="survey-intake",
+        survey_type="INTAKE",
+        submitted_at=submitted,
+    )
+    feedback = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        respondent_id="u3",
+        source="native",
+        survey_id="survey-feedback",
+        survey_type="FEEDBACK",
+        submitted_at=submitted,
+    )
+    intake_key = survey_dedupe_key(intake)
+    feedback_key = survey_dedupe_key(feedback)
+    assert intake_key != feedback_key
+    assert "survey-intake" in intake_key
+    assert "survey-feedback" in feedback_key
+
+    typed_only = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        respondent_id="u3",
+        source="native",
+        survey_type="INTAKE",
+        submitted_at=submitted,
+    )
+    assert survey_dedupe_key(typed_only).endswith("|INTAKE|2026-09-02T12:00:00Z")
+
+
 def test_fixture_packet_maps_without_error():
     packet = _packet()
     session_fields = map_session(
@@ -104,3 +141,88 @@ def test_fixture_packet_maps_without_error():
     survey = map_survey(packet.survey_responses[0], default_campaign_id=42)
     assert survey["dedupe_key"] == "submission:sub_abc123"
     assert survey["answers"]["nps"] == 9
+    assert survey["jotform_form_id"] is None
+
+
+def test_map_survey_keeps_packet_source_submission_and_form_id():
+    row = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        source="jotform",
+        submission_id="jf-sub-1",
+        jotform_form_id="jf-99",
+        survey_type="POST_TEST",
+        answers={"q1": "no"},
+    )
+    fields = map_survey(row, default_campaign_id=42)
+    assert fields["source"] == "jotform"
+    assert fields["submission_id"] == "jf-sub-1"
+    assert fields["jotform_form_id"] == "jf-99"
+    assert fields["dedupe_key"] == "submission:jf-sub-1"
+    assert fields["questions"] is None
+    assert fields["survey_id"] is None
+
+
+def test_map_survey_stores_native_questions_schema():
+    from schemas.platform_export import ExportSurveyQuestion
+
+    row = ExportSurveyResponse(
+        platform_tool_program_id="prog-1",
+        source="native",
+        survey_id="survey-1",
+        survey_type="FEEDBACK",
+        submission_id="native-1",
+        answers={"q2_setting": "Academic"},
+        questions=[
+            ExportSurveyQuestion(
+                id="q2_setting",
+                prompt="What is your practice setting?",
+                type="single_choice",
+                options=["Academic", "Community", "Other"],
+            )
+        ],
+    )
+    fields = map_survey(row, default_campaign_id=42)
+    assert fields["survey_id"] == "survey-1"
+    assert fields["questions"] == [
+        {
+            "id": "q2_setting",
+            "prompt": "What is your practice setting?",
+            "type": "single_choice",
+            "options": ["Academic", "Community", "Other"],
+        }
+    ]
+
+
+def test_map_registration_and_attendance_profile_fields():
+    registered = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    reg = ExportRegistration(
+        platform_tool_program_id="prog-1",
+        user_id="u1",
+        registered_at=registered,
+        status="APPROVED",
+        specialty="Cardiology",
+        institution="CHM",
+    )
+    assert registration_dedupe_key(reg) == "prog-1|u1"
+    fields = map_registration(reg, default_campaign_id=42)
+    assert fields["user_id"] == "u1"
+    assert fields["specialty"] == "Cardiology"
+    assert fields["campaign_id"] == 42
+
+    event = ExportAttendanceEvent(
+        platform_tool_program_id="prog-1",
+        source=AttendanceSource.REPORT_IMPORT,
+        event=AttendanceEventType.JOINED,
+        occurred_at=registered,
+        participant_email="a@example.com",
+        duration_seconds=90,
+        user_id="u1",
+        specialty="Cardiology",
+        institution="CHM",
+        platform_event_id="rollup:prog-1:e:a@example.com",
+    )
+    att = map_attendance(event, default_campaign_id=42)
+    assert att["dedupe_key"] == "platform_event:rollup:prog-1:e:a@example.com"
+    assert att["user_id"] == "u1"
+    assert att["specialty"] == "Cardiology"
+    assert att["institution"] == "CHM"

@@ -12,6 +12,8 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
+from pydantic import Field
+
 from schemas.campaigns import ApiModel
 
 
@@ -27,6 +29,14 @@ class SourceCompletenessOut(ApiModel):
     status: SourceStatus
 
 
+class ReportPacketKolOut(ApiModel):
+    """Hub kols row. Not parsed from the transcript."""
+
+    name: str
+    title: str | None = None
+    institution: str | None = None
+
+
 class ReportPacketSessionOut(ApiModel):
     platform_tool_program_id: str | None = None
     kind: str | None = None
@@ -34,6 +44,29 @@ class ReportPacketSessionOut(ApiModel):
     session_date: datetime | None = None
     zoom_meeting_uuid: str | None = None
     transcript_text: str
+    kols: list[ReportPacketKolOut] = Field(default_factory=list)
+
+
+class ReportPacketAttendanceOut(ApiModel):
+    platform_tool_program_id: str
+    participant_email: str | None = None
+    participant_name: str | None = None
+    source: str
+    event: str
+    occurred_at: datetime
+    duration_seconds: int | None = None
+    join_time: datetime | None = None
+    leave_time: datetime | None = None
+    specialty: str | None = None
+    institution: str | None = None
+
+
+class ReportPacketAttendeeOut(ApiModel):
+    """CPR-42 — nameless attendee rollup for the Attendees report section."""
+
+    specialty: str | None = None
+    institution: str | None = None
+    minutes_watched: int = 0
 
 
 class ReportPacketSurveyOut(ApiModel):
@@ -42,6 +75,16 @@ class ReportPacketSurveyOut(ApiModel):
     survey_type: str | None = None
     submitted_at: datetime | None = None
     answers: dict[str, Any]
+
+
+class ReportPacketSurveyQuestionOut(ApiModel):
+    """CPR-43 — native question schema for report chart labels / option order."""
+
+    id: str
+    prompt: str
+    type: str
+    options: list[str] | None = None
+    survey_type: str | None = None
 
 
 class ReportPacketTemplateOut(ApiModel):
@@ -71,6 +114,17 @@ class ReportInputPacketOut(ApiModel):
     hubspot_raw_data: Any | None = None
     platform_slices: list[ReportPacketPlatformSliceOut]
     sessions: list[ReportPacketSessionOut]
+    attendance: list[ReportPacketAttendanceOut]
     survey_responses: list[ReportPacketSurveyOut]
+    # CPR-43 — native question schema alongside responses (prompt + option order).
+    survey_questions: list[ReportPacketSurveyQuestionOut] = Field(default_factory=list)
+    kols: list[ReportPacketKolOut] = Field(default_factory=list)
     template: ReportPacketTemplateOut | None = None
+    # CPR-42 — Attendees section aggregates (nameless).
+    # Null when the attendance source toggle is off (CPR-44) so cht-reports
+    # hides the section instead of printing zeros.
+    registered_count: int | None = None
+    attended_count: int | None = None
+    avg_minutes_watched: float | None = None
+    attendees: list[ReportPacketAttendeeOut] = Field(default_factory=list)
     input_completeness: dict[str, SourceCompletenessOut]

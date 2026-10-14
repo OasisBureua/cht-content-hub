@@ -10,3 +10,6 @@ curl_cffi>=0.7.0
 lxml>=5.0.0
 boto3>=1.34.0
 python-json-logger>=4.1.0
+# backend/src/auth (imported by services.export_ingest) needs these.
+PyJWT[crypto]>=2.8.0
+fastapi>=0.115.0

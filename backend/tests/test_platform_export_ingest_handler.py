@@ -37,6 +37,14 @@ def load_handler():
     return mod
 
 
+def test_client_source_treats_schedule_payload_as_http(load_handler):
+    assert load_handler._client_source({}) == "http"
+    assert load_handler._client_source({"source": "aws.events"}) == "http"
+    assert load_handler._client_source({"job": "platform_export_ingest", "source": "eventbridge"}) == "http"
+    assert load_handler._client_source({"source": "fixture"}) == "fixture"
+    assert load_handler._client_source({"source": "http"}) == "http"
+
+
 def test_parse_event_direct_and_sqs(load_handler):
     assert load_handler._parse_event(None) == {}
     assert load_handler._parse_event({"limit": 3}) == {"limit": 3}
@@ -113,6 +121,7 @@ async def test_run_batch_ok(load_handler):
     assert kwargs["campaign_ids"] == [42]
     assert kwargs["limit"] == 10
     assert kwargs["trigger"] == "schedule"
+    assert kwargs["use_stored_platform_campaign_id"] is False
     session.commit.assert_awaited_once()
 
     assert result["status"] == "ok"
@@ -160,3 +169,38 @@ async def test_run_partial_when_failures(load_handler):
 
     assert result["status"] == "partial"
     assert result["failed"] == 1
+    assert result["skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduled_event_is_http_and_uses_stored_campaign_id(load_handler):
+    settings = MagicMock()
+    runtime = ExportIngestRuntime(client=MagicMock(), transcript_store=None)
+    batch = BatchIngestResult(processed=0, succeeded=0, failed=0, skipped=2)
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.commit = AsyncMock()
+
+    event = {"job": "platform_export_ingest", "source": "eventbridge"}
+    with (
+        patch("config.get_settings", return_value=settings),
+        patch(
+            "services.export_ingest.ingest.resolve_export_ingest_runtime",
+            return_value=runtime,
+        ) as resolve,
+        patch("database.async_session_maker", return_value=session),
+        patch(
+            "services.export_ingest.ingest.ingest_campaigns_batch",
+            new_callable=AsyncMock,
+            return_value=batch,
+        ) as ingest_batch,
+    ):
+        result = await load_handler._run(event)
+
+    resolve.assert_called_once()
+    assert resolve.call_args.kwargs["source"] == "http"
+    assert ingest_batch.await_args.kwargs["use_stored_platform_campaign_id"] is True
+    assert ingest_batch.await_args.kwargs["campaign_ids"] is None
+    assert result["status"] == "ok"
+    assert result["skipped"] == 2

@@ -31,6 +31,12 @@ echo "→ install dependencies"
 # No --upgrade: CI must not churn wheels every run or every Lambda gets a new hash.
 "$PYTHON" -m pip install -r "$REPO_ROOT/sync/requirements.txt" -t "$BUILD_DIR" --quiet
 
+echo "→ drop boto3/botocore/s3transfer (the python3.12 Lambda runtime provides them)"
+# botocore alone is ~15 MB zipped; without this the zip passes Lambda's 50 MB direct-upload limit.
+rm -rf "$BUILD_DIR"/boto3 "$BUILD_DIR"/boto3-*.dist-info \
+  "$BUILD_DIR"/botocore "$BUILD_DIR"/botocore-*.dist-info \
+  "$BUILD_DIR"/s3transfer "$BUILD_DIR"/s3transfer-*.dist-info
+
 echo "→ copy sync handlers"
 cp -R "$REPO_ROOT/sync/jobs" "$REPO_ROOT/sync/shared" "$BUILD_DIR/"
 
@@ -73,7 +79,8 @@ fi
 BYTES=$(wc -c < "$OUT_ZIP" | tr -d ' ')
 echo "✓ $OUT_ZIP (${BYTES} bytes)"
 if [ "$BYTES" -gt 52428800 ]; then
-  echo "⚠ package exceeds 50MB — use S3 deployment (set sync_lambda_s3_bucket in tfvars)"
+  echo "✗ package exceeds Lambda's 50 MB direct-upload limit; Terraform apply would fail with 413"
+  exit 1
 fi
 
 rm -rf "$BUILD_DIR"

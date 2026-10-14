@@ -9,6 +9,7 @@ from database import Base
 from hcp_intel.models import HCP
 from models.campaign import (
     Campaign,
+    CampaignKOL,
     CampaignPlatformData,
     IntegrationSetting,
     PlatformSyncRun,
@@ -17,6 +18,7 @@ from models.campaign import (
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -49,6 +51,7 @@ ORM_TABLES = [
     IntegrationSetting.__table__,
     ExportSession.__table__,
     ExportAttendanceEvent.__table__,
+    ExportRegistration.__table__,
     ExportSurveyResponse.__table__,
     ExportIngestRun.__table__,
     Client.__table__,
@@ -57,6 +60,7 @@ ORM_TABLES = [
     KOL.__table__,
     KOLGroup.__table__,
     KOLGroupMember.__table__,
+    CampaignKOL.__table__,
     PlaylistTag.__table__,
     PlaylistSeriesMatchReview.__table__,
     Shoot.__table__,

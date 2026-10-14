@@ -16,7 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -43,6 +43,9 @@ class Campaign(Base):
     physician_speakers: Mapped[str] = mapped_column(Text, nullable=False, default="")
     landing_page_url: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
     hubspot_campaign_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # Optional override for Program.campaignId (e.g. AZ-25-01_LIV001).
+    # Blank rows use Hub campaigns.id, which the Programs tab writes.
+    platform_campaign_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     livestream_url: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
     hubspot_synced_at: Mapped[datetime | None] = mapped_column(
@@ -76,6 +79,29 @@ class Campaign(Base):
         "CampaignPlatformData",
         back_populates="campaign",
         cascade="all, delete-orphan",
+    )
+
+
+class CampaignKOL(Base):
+    """KOLs an admin attached to a campaign (CPR-45).
+
+    Zoom-based campaigns have no shoots, so their KOLs come from here. The
+    report packet merges these with the KOLs of the campaign's shoots.
+    """
+
+    __tablename__ = "campaign_kols"
+
+    campaign_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("campaigns.id", ondelete="CASCADE"), primary_key=True
+    )
+    kol_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("kols.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

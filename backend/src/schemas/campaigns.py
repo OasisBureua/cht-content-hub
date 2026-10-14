@@ -65,6 +65,7 @@ class CampaignOut(ApiModel):
     physician_speakers: str = ""
     landing_page_url: str = ""
     hubspot_campaign_id: str = ""
+    platform_campaign_id: str | None = None
     event_date: date | None = None
     livestream_url: str = ""
     hubspot_synced_at: datetime | None = None
@@ -100,6 +101,7 @@ class CampaignCreate(ApiModel):
     physician_speakers: str | None = None
     landing_page_url: str | None = None
     hubspot_campaign_id: str | None = None
+    platform_campaign_id: str | None = None
     event_date: date | None = None
     livestream_url: str | None = None
     report_type: ReportType | None = None
@@ -311,3 +313,23 @@ class TemplateCreate(ApiModel):
     # CPR-25: pointer to the template body in the cht-reports bucket.
     semver: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
     s3_key: str | None = Field(default=None, max_length=500)
+
+
+class CampaignKolOut(ApiModel):
+    """A KOL attached to a campaign (CPR-45)."""
+
+    id: str
+    slug: str
+    name: str
+    title: str | None = None
+    institution: str | None = None
+
+
+class CampaignKolListOut(ApiModel):
+    items: list[CampaignKolOut]
+
+
+class CampaignKolsUpdate(ApiModel):
+    """Replaces the campaign's attached KOLs."""
+
+    kol_ids: list[str] = Field(default_factory=list, max_length=200)

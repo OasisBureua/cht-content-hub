@@ -10,15 +10,17 @@ and empty ``transcript_text`` are filled by GetObject + VTT cue stripping.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.export_warehouse import (
     ExportAttendanceEvent,
     ExportIngestRun,
+    ExportRegistration,
     ExportSession,
     ExportSurveyResponse,
 )
@@ -26,9 +28,16 @@ from schemas.platform_export import (
     ExportSession as ExportSessionDTO,
     PlatformExportPacket,
 )
-from services.export_ingest.mappers import map_attendance, map_session, map_survey
-from services.export_ingest.transcript_s3 import TranscriptStore
+from services.export_ingest.mappers import (
+    map_attendance,
+    map_registration,
+    map_session,
+    map_survey,
+)
+from services.export_ingest.transcript_s3 import TranscriptStore, TranscriptStoreError
 from services.export_ingest.vtt import strip_vtt
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,6 +45,7 @@ class IngestCounts:
     sessions_upserted: int
     attendance_upserted: int
     surveys_upserted: int
+    registrations_upserted: int = 0
 
 
 def _apply_fields(row: object, fields: dict) -> None:
@@ -56,6 +66,22 @@ def enrich_session_transcript(
     return session.model_copy(update={"transcript_text": strip_vtt(raw)})
 
 
+def _preserve_warehouse_transcript(fields: dict, existing: ExportSession) -> dict:
+    """Keep VTT-filled text when Platform export sends null transcript fields.
+
+    Platform packets omit transcript_text; the VTT Lambda may already have
+    filled the warehouse row. Blind setattr would wipe it.
+    """
+    out = dict(fields)
+    incoming_text = out.get("transcript_text")
+    if not (incoming_text or "").strip() and (existing.transcript_text or "").strip():
+        out["transcript_text"] = existing.transcript_text
+    incoming_key = out.get("transcript_s3_key")
+    if not (incoming_key or "").strip() and (existing.transcript_s3_key or "").strip():
+        out["transcript_s3_key"] = existing.transcript_s3_key
+    return out
+
+
 async def _upsert_session(
     db: AsyncSession,
     fields: dict,
@@ -73,7 +99,7 @@ async def _upsert_session(
         db.add(row)
         await db.flush()
         return row
-    _apply_fields(existing, fields)
+    _apply_fields(existing, _preserve_warehouse_transcript(fields, existing))
     await db.flush()
     return existing
 
@@ -120,6 +146,72 @@ async def _upsert_attendance(db: AsyncSession, fields: dict) -> ExportAttendance
     return existing
 
 
+async def _upsert_registration(db: AsyncSession, fields: dict) -> ExportRegistration:
+    existing = (
+        await db.execute(
+            select(ExportRegistration).where(
+                ExportRegistration.dedupe_key == fields["dedupe_key"]
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        row = ExportRegistration(**fields)
+        db.add(row)
+        await db.flush()
+        return row
+    _apply_fields(existing, fields)
+    await db.flush()
+    return existing
+
+
+async def _replace_program_attendance_and_registrations(
+    db: AsyncSession,
+    *,
+    attendance_program_ids: set[str],
+    registration_program_ids: set[str] | None,
+) -> None:
+    """Drop prior rows for programs in this packet before CPR-42 re-ingest.
+
+    Old first-JOINED-wins attendance used different dedupe keys than rolled
+    ``platform_event:rollup:…`` rows; leaving them would double-count the
+    report packet. Registrations are only wiped when the packet explicitly
+    includes the registrations section (``[]`` clears; omitted leaves alone
+    so legacy/v1 assemble does not erase CPR-42 data).
+    """
+    if attendance_program_ids:
+        await db.execute(
+            delete(ExportAttendanceEvent).where(
+                ExportAttendanceEvent.platform_tool_program_id.in_(
+                    attendance_program_ids
+                )
+            )
+        )
+    if registration_program_ids:
+        await db.execute(
+            delete(ExportRegistration).where(
+                ExportRegistration.platform_tool_program_id.in_(
+                    registration_program_ids
+                )
+            )
+        )
+
+
+async def _drop_legacy_platform_surveys(
+    db: AsyncSession, campaign_id: int
+) -> None:
+    """Drop pre-CPR-14 rows keyed as submission:{surveyId}:{userId}:{index}.
+
+    Those used source ``platform``. The same response now has a different
+    dedupe key, so leaving them would double the report-packet count.
+    """
+    await db.execute(
+        delete(ExportSurveyResponse).where(
+            ExportSurveyResponse.campaign_id == campaign_id,
+            ExportSurveyResponse.source == "platform",
+        )
+    )
+
+
 async def _upsert_survey(db: AsyncSession, fields: dict) -> ExportSurveyResponse:
     existing = (
         await db.execute(
@@ -154,10 +246,35 @@ async def upsert_packet(
 
     for session in packet.sessions:
         if transcript_store is not None:
-            session = enrich_session_transcript(session, transcript_store)
+            try:
+                session = enrich_session_transcript(session, transcript_store)
+            except TranscriptStoreError as exc:
+                # Missing/denied VTT must not abort attendance/survey upsert;
+                # preserve path keeps any warehouse text already filled by VTT Lambda.
+                log.warning(
+                    "transcript enrich skipped program=%s: %s",
+                    session.platform_tool_program_id,
+                    exc,
+                )
         await _upsert_session(
             db, map_session(session, default_campaign_id=campaign_id)
         )
+
+    attendance_program_ids = {
+        *(s.platform_tool_program_id for s in packet.sessions),
+        *(e.platform_tool_program_id for e in packet.attendance),
+    }
+    registration_program_ids: set[str] | None = None
+    if packet.registrations is not None:
+        registration_program_ids = {
+            *attendance_program_ids,
+            *(r.platform_tool_program_id for r in packet.registrations),
+        }
+    await _replace_program_attendance_and_registrations(
+        db,
+        attendance_program_ids=attendance_program_ids,
+        registration_program_ids=registration_program_ids,
+    )
 
     for event in packet.attendance:
         await _ensure_session_stub(
@@ -169,6 +286,18 @@ async def upsert_packet(
             db, map_attendance(event, default_campaign_id=campaign_id)
         )
 
+    if packet.registrations is not None:
+        for reg in packet.registrations:
+            await _ensure_session_stub(
+                db,
+                platform_tool_program_id=reg.platform_tool_program_id,
+                campaign_id=campaign_id,
+            )
+            await _upsert_registration(
+                db, map_registration(reg, default_campaign_id=campaign_id)
+            )
+
+    await _drop_legacy_platform_surveys(db, campaign_id)
     for survey in packet.survey_responses:
         await _upsert_survey(
             db, map_survey(survey, default_campaign_id=campaign_id)
@@ -178,6 +307,9 @@ async def upsert_packet(
         sessions_upserted=len(packet.sessions),
         attendance_upserted=len(packet.attendance),
         surveys_upserted=len(packet.survey_responses),
+        registrations_upserted=(
+            len(packet.registrations) if packet.registrations is not None else 0
+        ),
     )
 
 

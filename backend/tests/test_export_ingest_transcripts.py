@@ -107,3 +107,61 @@ async def test_ingest_fills_transcript_text_from_store(db_session: AsyncSession)
     assert session.transcript_s3_key == SAMPLE_KEY
     assert session.transcript_text is not None
     assert "Thank you for joining us." in session.transcript_text
+
+
+@pytest.mark.asyncio
+async def test_ingest_preserves_existing_transcript_when_packet_text_null(
+    db_session: AsyncSession,
+):
+    """API ingest without a transcript store must not wipe VTT-filled text."""
+    raw = json.loads(
+        (FIXTURES / "campaign_42_packet.json").read_text(encoding="utf-8")
+    )
+    packet = PlatformExportPacket.model_validate(raw)
+    db_session.add(Campaign(id=packet.campaign_id, name="Campaign 42"))
+    program_id = packet.sessions[0].platform_tool_program_id
+    db_session.add(
+        ExportSession(
+            platform_tool_program_id=program_id,
+            campaign_id=packet.campaign_id,
+            transcript_s3_key=SAMPLE_KEY,
+            transcript_text="Dr. Smith: kept from VTT Lambda",
+        )
+    )
+    await db_session.flush()
+
+    await ingest_packet(db_session, packet, transcript_store=None)
+    await db_session.commit()
+
+    session = (
+        await db_session.execute(
+            select(ExportSession).where(
+                ExportSession.platform_tool_program_id == program_id
+            )
+        )
+    ).scalar_one()
+    assert session.transcript_text == "Dr. Smith: kept from VTT Lambda"
+    assert session.transcript_s3_key == SAMPLE_KEY
+
+
+class _FailingStore:
+    def get_vtt(self, key: str) -> str:
+        raise TranscriptStoreError(f"denied: {key}")
+
+
+@pytest.mark.asyncio
+async def test_ingest_continues_when_transcript_store_fails(
+    db_session: AsyncSession,
+):
+    raw = json.loads(
+        (FIXTURES / "campaign_42_packet.json").read_text(encoding="utf-8")
+    )
+    packet = PlatformExportPacket.model_validate(raw)
+    db_session.add(Campaign(id=packet.campaign_id, name="Campaign 42"))
+    await db_session.flush()
+
+    await ingest_packet(db_session, packet, transcript_store=_FailingStore())
+    await db_session.commit()
+
+    session = (await db_session.execute(select(ExportSession))).scalar_one()
+    assert session.platform_tool_program_id == packet.sessions[0].platform_tool_program_id

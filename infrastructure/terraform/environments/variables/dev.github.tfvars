@@ -38,7 +38,7 @@ enable_waf               = true
 # Overridden per deploy by workflow (-var api_image)
 api_image = "233636046512.dkr.ecr.us-east-1.amazonaws.com/contenthub-dev-api:1.0.0"
 
-rds_instance_class    = "db.t4g.small"
+rds_instance_class    = "db.t3.small"
 rds_engine_version    = "15.17"
 rds_allocated_storage = 20
 rds_multi_az          = false
@@ -71,14 +71,16 @@ sync_jobs_enabled = {
   # + backfill_projection + match_series_playlists + seed_tag_namespace +
   # reconcile_drift). See sync_jobs.tf comment for op details.
   wordpress_projection_ops = true
-  # CPR-13 Zoom export ingest — keep OFF until CPR-12 M2M + export API ready.
-  platform_export_ingest = false
+  # CPR-41 — daily export-ingest backstop (weekday 14:00 UTC).
+  platform_export_ingest = true
   # CPR-9 S3 VTT → warehouse. Platform-tool wires notify after this ARN exists.
   vtt_object_ingest = true
 }
 
 # Same bucket platform-tool notifies on (prefix zoom-recordings/, suffix .vtt).
 platform_export_transcript_bucket = "cht-dev-session-assets"
+# CPR-41: also wired onto the Hub API ECS task for POST .../export-ingest.
+platform_export_base_url = "https://devapp.communityhealth.media"
 
 # Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-dev / cht-dev-cognito-m2m-export.
