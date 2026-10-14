@@ -81,14 +81,15 @@ sync_jobs_enabled = {
   # completes for WPR-2. Flip to true after atomic release so daily
   # reconcile_drift cron protects prod.
   wordpress_projection_ops = false
-  # CPR-41 — enable after platform_export_base_url is set for prod.
-  platform_export_ingest = false
-  # CPR-9 S3 VTT → warehouse. Enable after dev smoke; then wire platform notify.
-  vtt_object_ingest = false
+  # CPR-41 — weekday export-ingest backstop (14:00 UTC).
+  platform_export_ingest = true
+  # CPR-9 S3 VTT → warehouse. Platform-tool wires notify after this ARN exists.
+  vtt_object_ingest = true
 }
 
-# cht-platform-session-assets once vtt_object_ingest is enabled in prod.
 platform_export_transcript_bucket = "cht-platform-session-assets"
+platform_export_base_url          = "https://app.communityhealth.media"
+platform_export_m2m_secret_arn    = "cht-prod-cognito-m2m-contenthub"
 
 # Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-prod / cht-prod-cognito-m2m-export.
