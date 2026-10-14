@@ -90,12 +90,13 @@ sync_jobs_enabled = {
 # cht-platform-session-assets once vtt_object_ingest is enabled in prod.
 platform_export_transcript_bucket = "cht-platform-session-assets"
 
-# Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub` only.
+# Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-prod / cht-prod-cognito-m2m-export.
-# Reports caller client stays off until a later prod enablement.
+# Reports caller: cht-reports-m2m-prod / cht-prod-cognito-m2m-reports
+# (hub/reports.read + platform/reports.notify).
 cognito_user_pool_id      = "us-east-1_whXKKxAdX"
 cognito_auth_domain       = "chm-platform.auth.us-east-1.amazoncognito.com"
-enable_reports_m2m_client = false
+enable_reports_m2m_client = true
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
 wordpress_ingress_cidr_blocks = []
