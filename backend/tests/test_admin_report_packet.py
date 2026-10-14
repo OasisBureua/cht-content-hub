@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from unittest.mock import patch
 
@@ -40,12 +41,69 @@ async def test_report_packet_requires_api_key(http_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_report_packet_logs_request_id_and_campaign_on_401(
+    http_client: AsyncClient, caplog: pytest.LogCaptureFixture
+):
+    caplog.set_level(logging.WARNING, logger="contenthub.report_packet")
+    response = await http_client.get(
+        "/api/campaigns/1/report-packet",
+        headers={"X-Request-Id": "report-401"},
+    )
+    assert response.status_code == 401
+    records = [r for r in caplog.records if r.getMessage() == "report-packet error"]
+    assert records
+    assert records[-1].request_id == "report-401"
+    assert str(records[-1].campaign_id) == "1"
+    assert records[-1].status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_report_packet_404_for_missing_campaign(client: AsyncClient):
     response = await client.get(
         "/api/campaigns/999999/report-packet",
         headers=admin_headers(),
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_report_packet_logs_request_id_and_campaign_on_404(
+    client: AsyncClient, caplog: pytest.LogCaptureFixture
+):
+    caplog.set_level(logging.WARNING, logger="contenthub.report_packet")
+    response = await client.get(
+        "/api/campaigns/999999/report-packet",
+        headers=admin_headers(**{"X-Request-Id": "report-404"}),
+    )
+    assert response.status_code == 404
+    records = [r for r in caplog.records if r.getMessage() == "report-packet error"]
+    assert records
+    assert records[-1].request_id == "report-404"
+    assert records[-1].campaign_id == 999999
+    assert records[-1].status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_report_packet_logs_request_id_and_campaign_on_success(
+    client: AsyncClient, caplog: pytest.LogCaptureFixture
+):
+    caplog.set_level(logging.INFO, logger="contenthub.report_packet")
+    create = await client.post(
+        "/api/admin/campaigns",
+        headers=admin_headers(),
+        json={"name": "Log Campaign"},
+    )
+    campaign_id = create.json()["id"]
+    response = await client.get(
+        f"/api/campaigns/{campaign_id}/report-packet",
+        headers=admin_headers(**{"X-Request-Id": "report-200"}),
+    )
+    assert response.status_code == 200
+    records = [r for r in caplog.records if r.getMessage() == "report-packet ok"]
+    assert records
+    assert records[-1].request_id == "report-200"
+    assert records[-1].campaign_id == campaign_id
+    assert records[-1].status_code == 200
 
 
 @pytest.mark.asyncio

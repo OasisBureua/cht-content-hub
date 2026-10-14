@@ -93,9 +93,8 @@ scopes it needs:
 Hub terraform does **not** create `cht-platform-m2m-*`.
 
 Reports has no Cognito stack, so Hub parks `cht-reports-m2m-{env}` next to the
-`hub` RS (`enable_reports_m2m_client`; **dev on, prod off**). That is a
-**create** — the client and `cht-{env}-cognito-m2m-reports` do not exist in AWS
-today. Do not import; do not `removed { destroy = false }` on platform.
+`hub` RS (`enable_reports_m2m_client`; **dev and prod on**). That is a
+**create** — do not import; do not `removed { destroy = false }` on platform.
 
 JSON in SM: `{ "client_id", "client_secret", "token_url", "scope": "hub/reports.read" }`.
 The client is also allowed `platform/reports.notify` (CPR-35: report-ready
@@ -133,7 +132,7 @@ Platform defines the scope and looks the client up by name.
 | `HUB_M2M_RESOURCE` | Resource-server identifier, default `hub` |
 | `HUB_M2M_AUDIENCE` | Optional `aud` / `client_id` check |
 | `HUB_M2M_TEST_SECRET` | Tests only (HS256). Never set in AWS |
-| `enable_reports_m2m_client` | Create `cht-reports-m2m-{env}` + `cht-{env}-cognito-m2m-reports` (`hub/reports.read`). Dev on, prod off |
+| `enable_reports_m2m_client` | Create `cht-reports-m2m-{env}` + `cht-{env}-cognito-m2m-reports` (`hub/reports.read` + `platform/reports.notify`). Dev and prod on |
 
 `vtt_object_ingest`: `PLATFORM_EXPORT_TRANSCRIPT_BUCKET` only.
 
