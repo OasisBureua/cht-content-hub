@@ -84,11 +84,11 @@ platform_export_base_url = "https://devapp.communityhealth.media"
 
 # Shared CHT Cognito pool (cht-dev-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-dev / cht-dev-cognito-m2m-export.
-# Reports caller: cht-reports-m2m-dev / cht-dev-cognito-m2m-reports (create, not import).
+# Reports caller lives in cht-reports TF (do not recreate here).
 cognito_user_pool_id           = "us-east-1_J51gzfO0I"
 cognito_auth_domain            = "chm-dev.auth.us-east-1.amazoncognito.com"
 platform_export_m2m_secret_arn = "cht-dev-cognito-m2m-export"
-enable_reports_m2m_client      = true
+enable_reports_m2m_client      = false
 
 # Platform integration secrets are NOT stored here (committed file).
 # Add GitHub Environment "development" secrets → TF_VAR_* on deploy.

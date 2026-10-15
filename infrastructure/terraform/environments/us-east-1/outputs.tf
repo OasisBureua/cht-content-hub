@@ -147,16 +147,16 @@ output "ecr_dr_registry_url" {
 }
 
 output "reports_m2m_client_id" {
-  description = "cht-reports-m2m-{env} client ID (null when enable_reports_m2m_client is false)"
-  value       = local.reports_m2m_enabled ? aws_cognito_user_pool_client.reports_m2m[0].id : null
+  description = "Moved to cht-reports. Always null."
+  value       = null
 }
 
 output "reports_m2m_secret_name" {
-  description = "SM name cht-{env}-cognito-m2m-reports"
-  value       = local.reports_m2m_enabled ? aws_secretsmanager_secret.reports_m2m[0].name : null
+  description = "Moved to cht-reports. Always null."
+  value       = null
 }
 
 output "reports_m2m_secret_arn" {
-  description = "SM ARN for reports → Hub M2M (hub/reports.read)"
-  value       = local.reports_m2m_enabled ? aws_secretsmanager_secret.reports_m2m[0].arn : null
+  description = "Moved to cht-reports. Always null."
+  value       = null
 }
