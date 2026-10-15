@@ -93,11 +93,10 @@ platform_export_m2m_secret_arn    = "cht-prod-cognito-m2m-contenthub"
 
 # Shared CHT Cognito pool (cht-platform-users). Creates resource server `hub`.
 # Outbound stays cht-contenthub-m2m-prod / cht-prod-cognito-m2m-export.
-# Reports caller: cht-reports-m2m-prod / cht-prod-cognito-m2m-reports
-# (hub/reports.read + platform/reports.notify).
+# Reports caller lives in cht-reports TF (do not recreate here).
 cognito_user_pool_id      = "us-east-1_whXKKxAdX"
 cognito_auth_domain       = "chm-platform.auth.us-east-1.amazoncognito.com"
-enable_reports_m2m_client = true
+enable_reports_m2m_client = false
 
 # WordPress webhook ingress — dev only (see dev.github.tfvars). Empty on prod.
 wordpress_ingress_cidr_blocks = []
