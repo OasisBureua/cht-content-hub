@@ -87,19 +87,19 @@ scopes it needs:
 | Client | Owner | Allowed Hub scopes |
 |---|---|---|
 | `cht-platform-m2m-{env}` | Platform TF | `hub/catalog.read`, `hub/admin.read\|create\|update\|delete` |
-| `cht-reports-m2m-{env}` | Hub TF (parked until reports has TF) | `hub/reports.read`, `platform/reports.notify` |
+| `cht-reports-m2m-{env}` | cht-reports TF | `hub/reports.read`, `platform/reports.notify`, `companion/generate.invoke` |
 | Companion / DaaS | that product | only the Hub scopes they use |
 
-Hub terraform does **not** create `cht-platform-m2m-*`.
+Hub terraform does **not** create `cht-platform-m2m-*` or `cht-reports-m2m-*`.
 
-Reports has no Cognito stack, so Hub parks `cht-reports-m2m-{env}` next to the
-`hub` RS (`enable_reports_m2m_client`; **dev and prod on**). That is a
-**create** — do not import; do not `removed { destroy = false }` on platform.
+cht-reports owns `cht-reports-m2m-{env}` + SM `cht-{env}-cognito-m2m-reports`
+(imported from Hub; do not recreate). Hub still owns the `hub` RS, including
+`hub/reports.read`.
 
 JSON in SM: `{ "client_id", "client_secret", "token_url", "scope": "hub/reports.read" }`.
 The client is also allowed `platform/reports.notify` (CPR-35: report-ready
-email); cht-reports requests that scope by name, so the SM `scope` is unchanged.
-Platform defines the scope and looks the client up by name.
+email) and `companion/generate.invoke`; cht-reports requests those by name,
+so the SM `scope` is unchanged. Platform / Companion own those RS scopes.
 
 ---
 
@@ -111,6 +111,7 @@ Platform defines the scope and looks the client up by name.
 | Platform admin | `hub` | `hub/admin.create` / `.update` / `.delete` |
 | cht-reports | `hub` | `hub/reports.read` |
 | cht-reports report-ready | `platform` | `platform/reports.notify` |
+| cht-reports generate | `companion` | `companion/generate.invoke` |
 | Hub export ingest | `platform` | `platform/export.read` |
 | Hub cache-clear | `platform` | `platform/cache.clear` (target) |
 
@@ -125,14 +126,14 @@ Platform defines the scope and looks the client up by name.
 
 | Input | Purpose |
 |---|---|
-| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS (and reports caller if flagged) |
+| `cognito_user_pool_id` | Shared CHT pool. When set, apply creates the `hub` RS |
 | `cognito_auth_domain` | Host for token URL |
 | `HUB_M2M_ISSUER` | Token `iss` (`https://issuer-cognito-idp.us-east-1.amazonaws.com/<poolId>`). Decode also aliases `cognito-idp`. |
 | `HUB_M2M_JWKS_URL` | `https://cognito-idp.us-east-1.amazonaws.com/<poolId>/.well-known/jwks.json` |
 | `HUB_M2M_RESOURCE` | Resource-server identifier, default `hub` |
 | `HUB_M2M_AUDIENCE` | Optional `aud` / `client_id` check |
 | `HUB_M2M_TEST_SECRET` | Tests only (HS256). Never set in AWS |
-| `enable_reports_m2m_client` | Create `cht-reports-m2m-{env}` + `cht-{env}-cognito-m2m-reports` (`hub/reports.read` + `platform/reports.notify`). Dev and prod on |
+| `enable_reports_m2m_client` | Deprecated. Always false. Client lives in cht-reports. |
 
 `vtt_object_ingest`: `PLATFORM_EXPORT_TRANSCRIPT_BUCKET` only.
 
@@ -180,14 +181,15 @@ Platform **does**:
 5. Keep `platform` resource server + scopes for **inbound** Hub calls
    (`platform/export.read`). Hub’s client requests those, not `hub/…`.
 
-cht-reports: Hub parks `cht-reports-m2m-{env}` with `hub/reports.read` and
-`platform/reports.notify` (`enable_reports_m2m_client`). Platform does not
-create that client.
+cht-reports owns `cht-reports-m2m-{env}` with `hub/reports.read`,
+`platform/reports.notify`, and `companion/generate.invoke`. Hub and
+Platform do not create that client.
 
 ## 8. Cutover
 
 1. Merge/apply Hub → `hub` RS appears in Cognito. Outbound stays the export client.
 2. Platform’s client allowed `hub/catalog` + `hub/admin`; reports client
-   (`cht-reports-m2m-{env}`) allowed `hub/reports.read` only; they send Bearer.
+   (`cht-reports-m2m-{env}`, owned by cht-reports) allowed `hub/reports.read`
+   plus `platform/reports.notify` and `companion/generate.invoke`; they send Bearer.
 3. Keep Hub export pointed at `cht-*-cognito-m2m-export`.
 4. Drop unused `PUBLIC_API_KEY` / `INTERNAL_CACHE_SECRET` after callers are on M2M.

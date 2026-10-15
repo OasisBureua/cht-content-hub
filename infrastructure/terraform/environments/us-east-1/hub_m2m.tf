@@ -1,7 +1,7 @@
 # Hub's Cognito resource server on the shared CHT pool.
 # Does not create Hub's outbound client (create_m2m_client = false).
-# Optionally parks cht-reports-m2m (hub/reports.read) until reports has its own TF.
-# Does not create cht-platform-m2m (platform TF). No-op until cognito_user_pool_id is set.
+# Does not create cht-reports-m2m (cht-reports TF) or cht-platform-m2m (platform TF).
+# No-op until cognito_user_pool_id is set.
 
 locals {
   hub_m2m_scopes = [
@@ -30,15 +30,6 @@ locals {
 
   hub_m2m_secret_name = contains(["prod", "platform"], var.environment) ? "cht-prod-cognito-m2m-hub" : "cht-${var.environment}-cognito-m2m-hub"
 
-  reports_m2m_env_label   = contains(["prod", "platform"], var.environment) ? "prod" : var.environment
-  reports_m2m_enabled     = var.cognito_user_pool_id != "" && var.enable_reports_m2m_client
-  reports_m2m_client_name = "cht-reports-m2m-${local.reports_m2m_env_label}"
-  reports_m2m_secret_name = "cht-${local.reports_m2m_env_label}-cognito-m2m-reports"
-  reports_m2m_scope       = "hub/reports.read"
-  # CPR-35: same client tells platform a report version is ready (email).
-  # Platform's TF defines this scope on its "platform" resource server.
-  reports_m2m_platform_notify_scope = "platform/reports.notify"
-
   outbound_m2m_secret_iam_arn = (
     var.platform_export_m2m_secret_arn == "" ? "" :
     startswith(var.platform_export_m2m_secret_arn, "arn:")
@@ -63,53 +54,36 @@ module "hub_cognito" {
   environment         = var.environment
 }
 
-# Reports → Hub. Create (nothing to import: client + secret are not in AWS).
-# Allowed scopes: hub/reports.read (RS already defines reports.read) and
-# platform/reports.notify for cht-reports → platform report-ready (CPR-35).
-# The secret's `scope` stays hub/reports.read (the worker's default token);
-# the worker requests the platform scope by name.
-resource "aws_cognito_user_pool_client" "reports_m2m" {
-  count = local.reports_m2m_enabled ? 1 : 0
+# cht-reports now owns cht-reports-m2m-* + cht-{env}-cognito-m2m-reports.
+# Drop them from Hub state without destroying the live client/secret.
+# Apply this Hub change BEFORE cht-reports first applies the imported client.
+removed {
+  from = aws_cognito_user_pool_client.reports_m2m[0]
 
-  name         = local.reports_m2m_client_name
-  user_pool_id = var.cognito_user_pool_id
-
-  generate_secret                      = true
-  allowed_oauth_flows_user_pool_client = true
-  allowed_oauth_flows                  = ["client_credentials"]
-  allowed_oauth_scopes                 = [local.reports_m2m_scope, local.reports_m2m_platform_notify_scope]
-  supported_identity_providers         = ["COGNITO"]
-  prevent_user_existence_errors        = "ENABLED"
-
-  token_validity_units {
-    access_token = "hours"
-  }
-  access_token_validity = 1
-
-  depends_on = [module.hub_cognito]
-}
-
-resource "aws_secretsmanager_secret" "reports_m2m" {
-  count = local.reports_m2m_enabled ? 1 : 0
-
-  name                    = local.reports_m2m_secret_name
-  description             = "Cognito M2M for cht-reports → Hub (${local.reports_m2m_scope}). Client ${local.reports_m2m_client_name}."
-  recovery_window_in_days = var.environment == "prod" ? 30 : 7
-
-  tags = {
-    Name        = local.reports_m2m_secret_name
-    Environment = var.environment
+  lifecycle {
+    destroy = false
   }
 }
 
-resource "aws_secretsmanager_secret_version" "reports_m2m" {
-  count = local.reports_m2m_enabled ? 1 : 0
+removed {
+  from = aws_secretsmanager_secret.reports_m2m[0]
 
-  secret_id = aws_secretsmanager_secret.reports_m2m[0].id
-  secret_string = jsonencode({
-    client_id     = aws_cognito_user_pool_client.reports_m2m[0].id
-    client_secret = aws_cognito_user_pool_client.reports_m2m[0].client_secret
-    token_url     = local.hub_m2m_token_url
-    scope         = local.reports_m2m_scope
-  })
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_secretsmanager_secret_version.reports_m2m[0]
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+check "reports_m2m_not_in_hub" {
+  assert {
+    condition     = !var.enable_reports_m2m_client
+    error_message = "cht-reports owns cht-reports-m2m-*. Leave enable_reports_m2m_client = false. Hub still owns the hub RS including hub/reports.read."
+  }
 }
