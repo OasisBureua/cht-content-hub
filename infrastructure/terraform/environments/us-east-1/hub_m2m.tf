@@ -58,7 +58,7 @@ module "hub_cognito" {
 # Drop them from Hub state without destroying the live client/secret.
 # Apply this Hub change BEFORE cht-reports first applies the imported client.
 removed {
-  from = aws_cognito_user_pool_client.reports_m2m[0]
+  from = aws_cognito_user_pool_client.reports_m2m
 
   lifecycle {
     destroy = false
@@ -66,7 +66,7 @@ removed {
 }
 
 removed {
-  from = aws_secretsmanager_secret.reports_m2m[0]
+  from = aws_secretsmanager_secret.reports_m2m
 
   lifecycle {
     destroy = false
@@ -74,7 +74,7 @@ removed {
 }
 
 removed {
-  from = aws_secretsmanager_secret_version.reports_m2m[0]
+  from = aws_secretsmanager_secret_version.reports_m2m
 
   lifecycle {
     destroy = false
