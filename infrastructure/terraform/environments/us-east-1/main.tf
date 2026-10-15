@@ -66,9 +66,9 @@ module "ecr_replication" {
   source = "../../modules/compute/ecr-replication"
 
   destination_region = var.ecr_replication_destination_region
-  # Account-global rule: must list every prefix in use (cht-platform-* + contenthub-*).
+  # Account-global rule: must list every prefix in use (cht-platform-* + contenthub-* + cht-companion*).
   # See modules/compute/ecr-replication/main.tf singleton warning.
-  repository_prefixes = ["contenthub-", "cht-platform-"]
+  repository_prefixes = ["contenthub-", "cht-platform-", "cht-companion"]
   repository_names    = local.ecr_replication_repository_names
 }
 
