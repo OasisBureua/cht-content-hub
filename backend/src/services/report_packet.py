@@ -70,6 +70,7 @@ from schemas.report_packet import (
     ReportPacketSurveyOut,
     ReportPacketSurveyQuestionOut,
     ReportPacketTemplateOut,
+    ReportInputsOut,
     SourceCompletenessOut,
     SourceStatus,
 )
@@ -308,6 +309,60 @@ async def build_report_packet(
             else None
         ),
         input_completeness=input_completeness,
+    )
+
+
+class _StoredTranscriptMarker:
+    """Reports a stored transcript as present without downloading it."""
+
+    def get_vtt(self, key: str) -> str:
+        return "stored"
+
+
+async def build_report_inputs(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None = None,
+    window_end: date | None = None,
+    sources: list[str] | None = None,
+) -> ReportInputsOut:
+    """CPR-51: per-source counts and freshness for the Generate preview.
+
+    Built from the same packet cht-reports receives, so the preview and the
+    report agree. Never downloads transcripts.
+    """
+    packet = await build_report_packet(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+        sources=sources,
+        transcript_store=_StoredTranscriptMarker(),
+    )
+    completeness = dict(packet.input_completeness)
+    sessions_entry = completeness.get("sessions")
+    if sessions_entry is not None:
+        with_transcript = sum(1 for s in packet.sessions if s.transcript_text.strip())
+        completeness["transcripts"] = SourceCompletenessOut(
+            fetched_at=sessions_entry.fetched_at if with_transcript else None,
+            row_count=with_transcript,
+            status=SourceStatus.OK if with_transcript else SourceStatus.MISSING,
+        )
+    with_profile = (
+        sum(1 for a in packet.attendees if a.specialty or a.institution)
+        if packet.attended_count is not None
+        else None
+    )
+    return ReportInputsOut(
+        campaign_id=packet.campaign_id,
+        window_start=packet.window_start,
+        window_end=packet.window_end,
+        sources=packet.sources,
+        input_completeness=completeness,
+        registered_count=packet.registered_count,
+        attended_count=packet.attended_count,
+        attendees_with_profile=with_profile,
     )
 
 
