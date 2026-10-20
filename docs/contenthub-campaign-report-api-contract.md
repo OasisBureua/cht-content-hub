@@ -87,6 +87,7 @@ After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.
 ### Reports (CHT server-to-server)
 - `POST /campaigns/{id}/report/generate`
 - `POST /campaigns/{id}/executive-report/generate`
+- `GET /campaigns/{id}/report-inputs` — Generate card preview (CPR-51). Optional query: `windowStart`, `windowEnd` (ISO dates) and repeated `sources` (omitted means all sections). Built from the same packet as `GET /api/campaigns/{id}/report-packet`, so preview and report agree. Returns `campaignId`, `windowStart`, `windowEnd`, `sources`, `inputCompleteness`, `registeredCount`, `attendedCount` and `attendeesWithProfile` (attendees with a specialty or institution); the three counts are null when attendance is off. `inputCompleteness` maps each source to `fetchedAt`, `rowCount` and `status` (`ok`, `missing`, `error`), using the packet's keys: `template` is always present, and `transcripts` is added when sessions are requested. The `transcripts` entry counts sessions with transcript text or a stored transcript key; transcripts are not downloaded, so an unreadable stored key still counts. 404 for an unknown campaign.
 
 Browser-facing (CHT only):
 - `GET /api/admin/content-hub/campaigns/:id/report` → CHT orchestrates steps above
