@@ -7,6 +7,7 @@ POST .../report/generate. HubSpot sync stays on CHT → PATCH campaign.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -41,12 +42,14 @@ from schemas.campaigns import (
     TemplateOut,
 )
 from schemas.platform_export import ExportIngestRunOut
+from schemas.report_packet import ReportInputsOut
 from services import (
     campaign_integrations,
     campaign_kols,
     campaign_reports,
     campaigns,
     platform_data,
+    report_packet,
 )
 from services.export_ingest.ingest import (
     ingest_campaign,
@@ -105,6 +108,25 @@ async def set_campaign_kols(
 ) -> CampaignKolListOut:
     """Replace the campaign's attached KOLs. They feed the report packet's kols."""
     return await campaign_kols.set_campaign_kols(db, campaign_id, payload.kol_ids)
+
+
+@router.get("/campaigns/{campaign_id}/report-inputs", response_model=ReportInputsOut)
+async def get_campaign_report_inputs(
+    campaign_id: int,
+    _key: Annotated[str, Depends(verify_admin_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    window_start: date | None = Query(default=None, alias="windowStart"),
+    window_end: date | None = Query(default=None, alias="windowEnd"),
+    sources: list[str] = Query(default=[]),
+) -> ReportInputsOut:
+    """What Generate would find per source, for the Generate card (CPR-51)."""
+    return await report_packet.build_report_inputs(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+        sources=sources or None,
+    )
 
 
 @router.post("/campaigns", response_model=CampaignOut, status_code=status.HTTP_201_CREATED)

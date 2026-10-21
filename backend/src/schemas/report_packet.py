@@ -128,3 +128,22 @@ class ReportInputPacketOut(ApiModel):
     avg_minutes_watched: float | None = None
     attendees: list[ReportPacketAttendeeOut] = Field(default_factory=list)
     input_completeness: dict[str, SourceCompletenessOut]
+
+
+class ReportInputsOut(ApiModel):
+    """CPR-51 — what Generate would find for a campaign and window.
+
+    ``input_completeness`` uses the packet's keys and rules, plus
+    ``transcripts`` (sessions with a transcript) when sessions are requested.
+    """
+
+    campaign_id: int
+    window_start: date | None = None
+    window_end: date | None = None
+    sources: list[str]
+    input_completeness: dict[str, SourceCompletenessOut]
+    # Null when the attendance source is off, like the packet.
+    registered_count: int | None = None
+    attended_count: int | None = None
+    # Attendees with a specialty or institution; the rest print "Not provided".
+    attendees_with_profile: int | None = None
