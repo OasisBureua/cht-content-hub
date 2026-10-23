@@ -211,15 +211,24 @@ async def build_report_packet(
             row_count=row.row_count or 0,
             status=SourceStatus.OK if row.status == "available" else SourceStatus.MISSING,
         )
-    # Requested social platforms with no in-window snapshot still need a
-    # missing marker so the report note is accurate.
-    for platform_key in ("linkedin", "meta", "youtube"):
-        if wants_source(requested, platform_key) and platform_key not in input_completeness:
-            input_completeness[platform_key] = SourceCompletenessOut(
-                fetched_at=None,
-                row_count=0,
-                status=SourceStatus.MISSING,
-            )
+    # Requested social platforms with no in-window snapshot still get an
+    # entry: error when the latest sync failed (CPR-15), otherwise missing.
+    without_snapshot = [
+        platform_key
+        for platform_key in ("linkedin", "meta", "youtube")
+        if wants_source(requested, platform_key) and platform_key not in input_completeness
+    ]
+    latest_runs = (
+        await platform_data.latest_sync_runs(db, campaign_id) if without_snapshot else {}
+    )
+    for platform_key in without_snapshot:
+        run = latest_runs.get(platform_key)
+        failed = run is not None and run.status == "error"
+        input_completeness[platform_key] = SourceCompletenessOut(
+            fetched_at=run.finished_at if failed else None,
+            row_count=0,
+            status=SourceStatus.ERROR if failed else SourceStatus.MISSING,
+        )
 
     if wants_source(requested, "sessions"):
         input_completeness["sessions"] = SourceCompletenessOut(

@@ -115,16 +115,10 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Initialize database tables.
-
-    ``reports.*`` is owned by Alembic ``0025_reports_schema``. Creating those
-    tables here would run before ``CREATE SCHEMA reports`` and would skip the
-    locked indexes.
-    """
-    tables = [t for t in Base.metadata.sorted_tables if t.schema != "reports"]
+    """Initialize database tables."""
 
     def _create(sync_conn) -> None:
-        Base.metadata.create_all(sync_conn, tables=tables)
+        Base.metadata.create_all(sync_conn)
 
     async with engine.begin() as conn:
         await conn.run_sync(_create)

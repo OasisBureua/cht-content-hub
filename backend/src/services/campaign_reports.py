@@ -177,7 +177,7 @@ async def build_analytics_report(db: AsyncSession, campaign_id: int) -> Analytic
 async def build_executive_report(db: AsyncSession, campaign_id: int) -> ExecutiveReportOut:
     campaign_out = await campaign_service.get_campaign(db, campaign_id)
     stored = campaign_out.executive_report_data or {}
-    latest = await platform_data.latest_by_platform(db, campaign_id)
+    latest = await platform_data.latest_by_platform(db, campaign_id, with_rows=False)
 
     config = ExecutiveReportConfigOut(
         overview_text=str(stored.get("overviewText", "")),

@@ -21,13 +21,15 @@ from schemas.campaigns import (
 
 _PLATFORM_NOTES = {
     Platform.LINKEDIN: (
-        "LinkedIn Ads: set accessToken + adAccountId (or env vars) and "
-        "campaignMap.linkedinCampaignIds per Hub campaign."
+        "LinkedIn Ads: set accessToken, or LINKEDIN_ADS_REFRESH_TOKEN with the app client "
+        "id/secret (or env vars), and campaignMap.linkedinCampaignIds per Hub campaign. "
+        "Unmapped campaigns are not synced."
     ),
     Platform.META: "Configure Meta Marketing API credentials or upload CSV.",
     Platform.YOUTUBE: (
-        "YouTube Data API: set apiKey + channelId/channelHandle (or env vars). "
-        "Optional campaignMap.youtubeVideoIds to scope videos."
+        "YouTube Data API: set YOUTUBE_API_KEY. The daily sync reads every upload on the "
+        "CHM channels; a campaign shows the videos linked to it (shoot, CHM Content ID, "
+        "or campaignMap.youtubeVideoIds)."
     ),
     Platform.LIVESTREAM: "Configure livestream provider or upload CSV.",
     Platform.SURVEY: "Configure survey export source or upload CSV.",
@@ -37,12 +39,16 @@ _PLATFORM_NOTES = {
 def _env_credentials_ready(platform: Platform) -> bool:
     settings = get_settings()
     if platform == Platform.LINKEDIN:
-        return bool(settings.linkedin_ads_access_token and settings.linkedin_ad_account_id)
-    if platform == Platform.YOUTUBE:
         return bool(
-            settings.youtube_api_key
-            and (settings.youtube_channel_id or settings.youtube_channel_handle)
+            settings.linkedin_ads_access_token
+            or (
+                settings.linkedin_ads_refresh_token
+                and settings.linkedin_ads_client_id
+                and settings.linkedin_ads_client_secret
+            )
         )
+    if platform == Platform.YOUTUBE:
+        return bool(settings.youtube_api_key)
     return False
 
 

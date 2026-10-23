@@ -38,13 +38,12 @@ resource "aws_secretsmanager_secret_version" "app" {
     linkedin_org_urn           = var.linkedin_org_urn
     linkedin_ad_account_id     = var.linkedin_ad_account_id
     linkedin_ads_access_token  = var.linkedin_ads_access_token
+    linkedin_ads_refresh_token = var.linkedin_ads_refresh_token
     linkedin_ads_client_id     = var.linkedin_ads_client_id
     linkedin_ads_client_secret = var.linkedin_ads_client_secret
     linkedin_ads_redirect_uri  = var.linkedin_ads_redirect_uri
     linkedin_ads_scopes        = var.linkedin_ads_scopes
     youtube_api_key            = var.youtube_api_key
-    youtube_channel_id         = var.youtube_channel_id
-    youtube_channel_handle     = var.youtube_channel_handle
     x_bearer_token             = var.x_bearer_token
     x_account_handle           = var.x_account_handle
     wordpress_webhook_secret   = var.wordpress_webhook_secret

@@ -146,11 +146,13 @@ class CampaignPlatformData(Base):
 
 
 class PlatformSyncRun(Base):
+    """One sync attempt. ``campaign_id`` is null for source-wide syncs (CPR-15)."""
+
     __tablename__ = "platform_sync_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    campaign_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True
+    campaign_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=True, index=True
     )
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
     trigger: Mapped[str] = mapped_column(String(16), nullable=False)

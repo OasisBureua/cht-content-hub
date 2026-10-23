@@ -5,8 +5,9 @@ read time by `/api/public/clips` to attach view/like/comment counts to
 each clip response.
 
 Sources:
-- "webhook" — branded posts synced from ops-console
-- "direct"  — official channel posts fetched directly by MediaHub
+- "webhook"      — branded posts synced from ops-console (MediaHub, until July 2026)
+- "direct"       — official channel posts fetched directly by MediaHub
+- "youtube_api"  — channel uploads read by the Hub's daily sync (CPR-15)
 """
 
 from __future__ import annotations
@@ -74,6 +75,23 @@ class Post(Base):
 
     source: Mapped[str] = mapped_column(String(20), default="webhook")
     channel: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+
+    # CPR-15: the provider account the post lives on (YouTube channel ID,
+    # LinkedIn ad account), other IDs LinkedIn uses for the same post
+    # (share / ugcPost / activity URNs), and for an ad, the organic post it
+    # promotes. Excluded posts are left out of reports.
+    provider_account_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    alt_ids: Mapped[Optional[list[str]]] = mapped_column(StringArray(), nullable=True)
+    promotes_post_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        ForeignKey("posts.id", ondelete="SET NULL", name="fk_posts_promotes_post"),
+        nullable=True,
+    )
+    excluded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     # SCRUM-75: curator-locked tags. When True, the playlist doctor-tagger
     # skips this row's tag mutation on its daily run.
