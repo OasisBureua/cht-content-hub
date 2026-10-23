@@ -144,6 +144,20 @@ locals {
       sqs_trigger                    = false
       reserved_concurrent_executions = 1
     }
+    # CPR-15 — YouTube / LinkedIn Ads posts + daily metrics, then post →
+    # campaign links. Off by default; enable via
+    # sync_jobs_enabled.platform_metrics_sync. 13:30 UTC (~9:30am ET) stays
+    # inside the 08:00–20:00 ET lightswitch window; non-prod databases are
+    # off at weekends, so non-prod runs on weekdays only.
+    platform_metrics_sync = {
+      enabled                        = lookup(var.sync_jobs_enabled, "platform_metrics_sync", false)
+      handler                        = "jobs.platform_metrics_sync.handler.handler"
+      timeout                        = 900
+      memory_size                    = 512
+      schedule_expression            = contains(["prod", "platform"], var.environment) ? "cron(30 13 * * ? *)" : "cron(30 13 ? * MON-FRI *)"
+      sqs_trigger                    = false
+      reserved_concurrent_executions = 1
+    }
     # CPR-9 — S3 ObjectCreated on zoom-recordings/*.vtt → warehouse text.
     # Direct S3 notify (not SQS). Hub owns lambda:AddPermission; platform-tool
     # owns the bucket notification. This job owns GetObject + row update.

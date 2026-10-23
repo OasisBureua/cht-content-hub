@@ -100,9 +100,11 @@ async def fetch_playlist_title(
     if client is None:
         client = httpx.AsyncClient(timeout=15.0)
     try:
+        # Key in a header: request URLs are logged (httpx INFO).
         r = await client.get(
             _YT_PLAYLISTS_URL,
-            params={"part": "snippet", "id": playlist_id, "key": api_key},
+            params={"part": "snippet", "id": playlist_id},
+            headers={"X-Goog-Api-Key": api_key},
         )
         r.raise_for_status()
         data = r.json()
@@ -133,11 +135,12 @@ async def fetch_playlist_video_ids(
                 "part": "contentDetails",
                 "playlistId": playlist_id,
                 "maxResults": 50,
-                "key": api_key,
             }
             if page_token:
                 params["pageToken"] = page_token
-            r = await client.get(_YT_PLAYLIST_ITEMS_URL, params=params)
+            r = await client.get(
+                _YT_PLAYLIST_ITEMS_URL, params=params, headers={"X-Goog-Api-Key": api_key}
+            )
             r.raise_for_status()
             data = r.json()
             for item in data.get("items", []):

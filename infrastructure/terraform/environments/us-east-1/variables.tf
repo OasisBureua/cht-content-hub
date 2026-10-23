@@ -291,6 +291,12 @@ variable "linkedin_ads_access_token" {
   default   = ""
 }
 
+variable "linkedin_ads_refresh_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
 variable "linkedin_ads_client_id" {
   type      = string
   sensitive = true
@@ -317,16 +323,6 @@ variable "youtube_api_key" {
   type      = string
   sensitive = true
   default   = ""
-}
-
-variable "youtube_channel_id" {
-  type    = string
-  default = ""
-}
-
-variable "youtube_channel_handle" {
-  type    = string
-  default = ""
 }
 
 variable "x_bearer_token" {

@@ -248,12 +248,12 @@ async def test_platform_sync_requires_integration(client: AsyncClient):
     create = await client.post(
         "/api/admin/campaigns",
         headers=admin_headers(),
-        json={"name": "Sync Test", "platforms": ["linkedin"]},
+        json={"name": "Sync Test", "platforms": ["meta"]},
     )
     campaign_id = create.json()["id"]
 
     sync = await client.post(
-        f"/api/admin/campaigns/{campaign_id}/platforms/linkedin/sync",
+        f"/api/admin/campaigns/{campaign_id}/platforms/meta/sync",
         headers=admin_headers(),
     )
     assert sync.status_code == 400
@@ -261,11 +261,11 @@ async def test_platform_sync_requires_integration(client: AsyncClient):
     await client.patch(
         "/api/admin/integrations",
         headers=admin_headers(),
-        json={"platforms": {"linkedin": {"stub": True, "enabled": True}}},
+        json={"platforms": {"meta": {"stub": True, "enabled": True}}},
     )
 
     sync = await client.post(
-        f"/api/admin/campaigns/{campaign_id}/platforms/linkedin/sync",
+        f"/api/admin/campaigns/{campaign_id}/platforms/meta/sync",
         headers=admin_headers(),
     )
     assert sync.status_code == 200

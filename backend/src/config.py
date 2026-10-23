@@ -7,6 +7,21 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# LinkedIn Marketing API version header (YYYYMM); each version lives at least a year.
+DEFAULT_LINKEDIN_VERSION = "202610"
+
+DEFAULT_YOUTUBE_CHANNEL_IDS = ",".join(
+    [
+        "UCCB0N8VIIexXP10t_HDabQA",  # Community Health Media (official)
+        "UCccCoIWnkTIkOPcsEs3jPwQ",  # Oncology Perspectives
+        "UCfmXULzaDotYcrqPoA-mgNg",  # Innovative Oncology News
+        "UCbQlTmmR6dZr7nkE8urkfKQ",  # The Oncology Brief
+        "UCv_dImELp0vKHffz1-BkaHQ",  # Precision Cancer News
+        "UC7XOMftXbiD2XfTfXWrtI8w",  # Oncology Exchange
+    ]
+)
+OFFICIAL_YOUTUBE_CHANNEL_ID = "UCCB0N8VIIexXP10t_HDabQA"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -53,13 +68,41 @@ class Settings(BaseSettings):
         default="",
         validation_alias="LINKEDIN_AD_ACCOUNT_ID",
     )
+    linkedin_ads_api_version: str = Field(
+        default=DEFAULT_LINKEDIN_VERSION,
+        validation_alias="LINKEDIN_ADS_API_VERSION",
+    )
+    # With the app credentials below, runs trade this for a fresh access token.
+    linkedin_ads_refresh_token: str = Field(
+        default="",
+        validation_alias="LINKEDIN_ADS_REFRESH_TOKEN",
+    )
+    # App credentials: token refresh and expiry lookup (introspection).
+    linkedin_ads_client_id: str = Field(default="", validation_alias="LINKEDIN_ADS_CLIENT_ID")
+    linkedin_ads_client_secret: str = Field(
+        default="",
+        validation_alias="LINKEDIN_ADS_CLIENT_SECRET",
+    )
+    # Days of ad analytics each daily sync re-reads (LinkedIn revises recent days).
+    linkedin_ads_lookback_days: int = Field(
+        default=7,
+        validation_alias="LINKEDIN_ADS_LOOKBACK_DAYS",
+    )
+    # The daily sync logs a warning once the token is this close to expiring
+    # (a refresh token lasts about a year and needs a person to renew it).
+    linkedin_ads_token_warn_days: int = Field(
+        default=30,
+        validation_alias="LINKEDIN_ADS_TOKEN_WARN_DAYS",
+    )
 
     # YouTube (Data API v3 — views per video)
     youtube_api_key: str = Field(default="", validation_alias="YOUTUBE_API_KEY")
-    youtube_channel_id: str = Field(default="", validation_alias="YOUTUBE_CHANNEL_ID")
-    youtube_channel_handle: str = Field(
-        default="",
-        validation_alias="YOUTUBE_CHANNEL_HANDLE",
+    # CPR-15: channels whose uploads the daily sync reads (comma-separated
+    # channel IDs). Defaults to CHM's official channel and the five branded
+    # channels.
+    youtube_channel_ids: str = Field(
+        default=DEFAULT_YOUTUBE_CHANNEL_IDS,
+        validation_alias="YOUTUBE_CHANNEL_IDS",
     )
 
     # WordPress webhook — shared secret with Andrew's wp-config.php, used for

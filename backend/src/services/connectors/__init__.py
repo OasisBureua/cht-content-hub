@@ -1,12 +1,6 @@
-"""Platform API connectors for campaign report sync."""
+"""Platform API connectors (YouTube, LinkedIn Ads)."""
 
-from services.connectors.common import ConnectorError, FetchResult
-from services.connectors.linkedin_ads import fetch_linkedin_ads_metrics
-from services.connectors.youtube import fetch_youtube_metrics
+from services.connectors.common import ConnectorError
+from services.connectors.linkedin_ads import linkedin_token_expires_at
 
-__all__ = [
-    "ConnectorError",
-    "FetchResult",
-    "fetch_linkedin_ads_metrics",
-    "fetch_youtube_metrics",
-]
+__all__ = ["ConnectorError", "linkedin_token_expires_at"]

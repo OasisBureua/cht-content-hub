@@ -137,8 +137,6 @@ Prod deploy runs when a **`release/*` PR merges to `main`**, or via manual **Dep
 | `LINKEDIN_SCOPES` | `TF_VAR_linkedin_scopes` | inline in `dev.tfvars` or export |
 | `LINKEDIN_ORG_URN` | `TF_VAR_linkedin_org_urn` | inline in `dev.tfvars` or export |
 | `YOUTUBE_API_KEY` | `TF_VAR_youtube_api_key` | inline in `dev.tfvars` or export |
-| `YOUTUBE_CHANNEL_ID` | `TF_VAR_youtube_channel_id` | inline in `dev.tfvars` or export |
-| `YOUTUBE_CHANNEL_HANDLE` | `TF_VAR_youtube_channel_handle` | inline in `dev.tfvars` or export |
 | `X_BEARER_TOKEN` | `TF_VAR_x_bearer_token` | inline in `dev.tfvars` or export |
 | `X_ACCOUNT_HANDLE` | `TF_VAR_x_account_handle` | inline in `dev.tfvars` or export |
 | `WORDPRESS_WEBHOOK_SECRET` | `TF_VAR_wordpress_webhook_secret` | inline in `dev.tfvars` or export |
