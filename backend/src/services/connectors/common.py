@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -11,23 +9,6 @@ import httpx
 
 class ConnectorError(Exception):
     """Raised when a platform API call fails or credentials are incomplete."""
-
-
-class ConnectorNotMapped(ConnectorError):
-    """The campaign has no campaignMap entry for this platform (CPR-15).
-
-    Connectors never fall back to the whole channel or ad account.
-    """
-
-
-class ConnectorNoData(ConnectorError):
-    """The mapped videos or ad campaigns returned nothing for the period."""
-
-
-@dataclass(frozen=True)
-class FetchResult:
-    rows: list[dict[str, str]]
-    raw: dict[str, Any]
 
 
 def response_json(response: httpx.Response, service: str) -> Any:
@@ -52,20 +33,6 @@ def integration_or_env(
     if value is not None and str(value).strip():
         return str(value).strip()
     return env_value.strip()
-
-
-def reporting_period(
-    start: date | None,
-    end: date | None,
-    *,
-    default_days: int = 30,
-) -> tuple[date, date]:
-    today = date.today()
-    period_end = end or today
-    period_start = start or (period_end - timedelta(days=default_days))
-    if period_start > period_end:
-        raise ConnectorError("reporting period start must be on or before end")
-    return period_start, period_end
 
 
 def campaign_platform_config(

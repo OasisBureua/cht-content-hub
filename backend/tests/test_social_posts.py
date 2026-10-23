@@ -113,7 +113,7 @@ async def test_full_youtube_sync_stores_posts_snapshot_and_shoot(db_session: Asy
 
     stats = await social_posts.sync_youtube(db_session, trigger="schedule", now=NOW)
 
-    assert (stats.error, stats.videos, stats.created, stats.updated) == (None, 4, 3, 1)
+    assert (stats.error, stats.posts, stats.created, stats.updated) == (None, 4, 3, 1)
     v1, v3, legacy = [await _post(db_session, vid) for vid in ("v1", "v3", "old1")]
     assert (v1.source, v1.provider_account_id, v1.view_count, v1.duration_seconds) == (
         "youtube_api", "UCaaa", 100, 300
@@ -322,3 +322,137 @@ async def test_admin_maps_a_shoot_to_a_campaign_and_relinks(
     assert (
         await client.patch("/api/admin/shoots/nope/campaign", headers=api_headers(), json={"campaignId": None})
     ).status_code == 404
+
+
+class FakeLinkedIn:
+    """Ad campaigns, creatives (one per reference shape) and daily analytics."""
+
+    def __init__(self):
+        self.analytics_ranges: list[str] = []
+        self.analytics_creatives: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/adCampaigns"):
+            return httpx.Response(200, json={"elements": [
+                {"id": 111, "name": "RIG-26-02_VEP_SPL2 boost", "status": "ACTIVE"},
+                {"id": 222, "name": "Always-on", "status": "ACTIVE"},
+            ]})
+        if path.endswith("/creatives"):
+            return httpx.Response(200, json={"elements": [
+                {"id": "urn:li:sponsoredCreative:1", "campaign": "urn:li:sponsoredCampaign:111",
+                 "content": {"reference": "urn:li:share:7001"}, "intendedStatus": "ACTIVE", "name": "Boost"},
+                {"id": "urn:li:sponsoredCreative:2", "campaign": "urn:li:sponsoredCampaign:222",
+                 "content": {"videoAd": {"reference": "urn:li:ugcPost:7002"}}, "intendedStatus": "ACTIVE"},
+                {"id": "urn:li:sponsoredCreative:3", "campaign": "urn:li:sponsoredCampaign:222",
+                 "content": {"textAd": {"headline": "Register"}}},
+            ]})
+        assert path.endswith("/adAnalytics")
+        url = str(request.url)
+        self.analytics_ranges.append(url.split("dateRange=")[1].split("&")[0])
+        self.analytics_creatives.append(url.split("creatives=List(")[1].split(")")[0])
+        elements = []
+        for creative, day, impressions in (("1", 20, 100), ("1", 21, 50), ("2", 21, 10)):
+            elements.append({
+                "pivotValues": [f"urn:li:sponsoredCreative:{creative}"],
+                "dateRange": {"start": {"year": 2026, "month": 10, "day": day}},
+                "impressions": impressions, "clicks": 1, "videoViews": 4, "videoCompletions": 1,
+                "costInLocalCurrency": "2.5",
+            })
+        return httpx.Response(200, json={"elements": elements})
+
+
+@pytest.fixture
+def linkedin(monkeypatch) -> FakeLinkedIn:
+    fake = FakeLinkedIn()
+    monkeypatch.setenv("LINKEDIN_AD_ACCOUNT_ID", "515103342")
+    from config import get_settings
+
+    get_settings.cache_clear()
+
+    async def token(*_args):
+        return "token", None
+
+    monkeypatch.setattr("services.social_posts.linkedin_ads_access_token", token)
+    monkeypatch.setattr(
+        social_posts,
+        "_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(lambda r: fake(r))),
+    )
+    yield fake
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_linkedin_ads_become_posts_linked_to_what_they_promote(
+    client: AsyncClient, db_session: AsyncSession, linkedin
+):
+    tagged = await _campaign(client, "Veppanu", ["linkedin"])
+    mapped = await _campaign(client, "Always-on campaign", ["linkedin"])
+    campaign = await db_session.get(Campaign, tagged)
+    campaign.tags = ["RIG-26-02_VEP_SPL2"]
+    # The organic post the second creative boosts, known by its activity URN
+    # with the ugcPost URN as an alternate ID.
+    db_session.add(Post(id="organic-2", platform="linkedin", provider_post_id="urn:li:activity:9002",
+                        alt_ids=["urn:li:ugcPost:7002"], source="direct"))
+    await client.patch(
+        "/api/admin/integrations",
+        headers=api_headers(),
+        json={"platforms": {"linkedin": {"campaignMap": {str(mapped): {"linkedinCampaignIds": ["222"]}}}}},
+    )
+    await db_session.flush()
+
+    stats = await social_posts.sync_linkedin_ads(db_session, trigger="schedule", now=NOW)
+    assert (stats.error, stats.posts, stats.created, stats.promoted_found, stats.metric_rows) == (None, 3, 3, 1, 3)
+    assert linkedin.analytics_ranges == ["(start:(year:2026,month:4,day:26),end:(year:2026,month:10,day:23))"]
+
+    ads = {
+        post.provider_post_id: post
+        for post in (await db_session.execute(select(Post).where(Post.source == "linkedin_ads"))).scalars()
+    }
+    boost, boosted_existing, text_ad = (ads[f"urn:li:sponsoredCreative:{i}"] for i in (1, 2, 3))
+    assert (boost.title, boost.content_url, boost.alt_ids) == (
+        "Boost", "https://www.linkedin.com/feed/update/urn:li:share:7001/", ["urn:li:share:7001"]
+    )
+    assert boost.promotes_post_id is None  # its organic post is not in the Hub yet
+    assert boosted_existing.promotes_post_id == "organic-2"
+    assert (text_ad.title, text_ad.promotes_post_id, text_ad.platform_metadata["creativeType"]) == (
+        "Register", None, "textAd"
+    )
+
+    # Second run: only the lookback window is re-read.
+    await social_posts.sync_linkedin_ads(db_session, trigger="schedule", now=NOW)
+    assert linkedin.analytics_ranges[-1] == "(start:(year:2026,month:10,day:16),end:(year:2026,month:10,day:23))"
+
+    await post_links.relink(db_session, now=NOW)
+    links = await _links(db_session)
+    assert links[(boost.id, tagged)] == ("content_id", "active")
+    assert links[(boosted_existing.id, mapped)] == ("campaign_map", "active")
+    assert links[(text_ad.id, mapped)] == ("campaign_map", "active")
+    assert links[("organic-2", mapped)] == ("promoted_post", "active")
+
+    packet = await client.get(
+        f"/api/campaigns/{tagged}/report-packet",
+        headers=api_headers(),
+        params={"sources": ["linkedin"], "windowStart": "2026-10-21", "windowEnd": "2026-10-31"},
+    )
+    row = next(s for s in packet.json()["platformSlices"] if s["platform"] == "linkedin")["rows"][0]
+    assert (row["creative"], row["impressions"], row["cost"], row["first day"], row["last day"]) == (
+        "1", "50", "2.50", "2026-10-21", "2026-10-21"
+    )
+    full = await client.get(
+        f"/api/campaigns/{tagged}/report-packet", headers=api_headers(), params={"sources": ["linkedin"]}
+    )
+    row = next(s for s in full.json()["platformSlices"] if s["platform"] == "linkedin")["rows"][0]
+    assert (row["impressions"], row["video views"], row["completion rate"], row["ad campaign"]) == (
+        "150", "8", "0.25", "RIG-26-02_VEP_SPL2 boost"
+    )
+
+    linkedin.analytics_creatives.clear()
+    sync = await client.post(f"/api/admin/campaigns/{mapped}/platforms/linkedin/sync", headers=api_headers())
+    assert sync.status_code == 200
+    assert sync.json()["rowCount"] == 1  # the text ad has no activity
+    assert sorted(linkedin.analytics_creatives[0].split(",")) == [
+        "urn%3Ali%3AsponsoredCreative%3A2",
+        "urn%3Ali%3AsponsoredCreative%3A3",
+    ]

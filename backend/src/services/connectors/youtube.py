@@ -112,9 +112,14 @@ def _video(item: dict[str, Any]) -> YouTubeVideo:
     )
 
 
-async def _get(client: httpx.AsyncClient, path: str, params: dict[str, Any], what: str) -> Any:
+async def _get(
+    client: httpx.AsyncClient, path: str, params: dict[str, Any], what: str, *, api_key: str
+) -> Any:
+    # The key goes in a header: request URLs are logged (httpx INFO).
     try:
-        response = await client.get(f"{YOUTUBE_API}/{path}", params=params)
+        response = await client.get(
+            f"{YOUTUBE_API}/{path}", params=params, headers={"X-Goog-Api-Key": api_key}
+        )
     except httpx.HTTPError as exc:
         raise request_failed(what, exc) from exc
     if response.status_code >= 400:
@@ -129,10 +134,12 @@ async def list_playlist_video_ids(
     ids: list[str] = []
     page_token = ""
     while True:
-        params = {"part": "contentDetails", "playlistId": playlist_id, "maxResults": _PAGE, "key": api_key}
+        params = {"part": "contentDetails", "playlistId": playlist_id, "maxResults": _PAGE}
         if page_token:
             params["pageToken"] = page_token
-        payload = await _get(client, "playlistItems", params, "YouTube playlistItems.list")
+        payload = await _get(
+            client, "playlistItems", params, "YouTube playlistItems.list", api_key=api_key
+        )
         for entry in payload.get("items") or []:
             video_id = (entry.get("contentDetails") or {}).get("videoId")
             if video_id:
@@ -155,9 +162,9 @@ async def fetch_videos(
             {
                 "part": "snippet,statistics,contentDetails",
                 "id": ",".join(unique[offset : offset + _PAGE]),
-                "key": api_key,
             },
             "YouTube videos.list",
+            api_key=api_key,
         )
         videos.extend(_video(item) for item in payload.get("items") or [])
     return videos

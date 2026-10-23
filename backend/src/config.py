@@ -83,6 +83,11 @@ class Settings(BaseSettings):
         default="",
         validation_alias="LINKEDIN_ADS_CLIENT_SECRET",
     )
+    # Days of ad analytics each daily sync re-reads (LinkedIn revises recent days).
+    linkedin_ads_lookback_days: int = Field(
+        default=7,
+        validation_alias="LINKEDIN_ADS_LOOKBACK_DAYS",
+    )
     # The daily sync logs a warning once the token is this close to expiring
     # (a refresh token lasts about a year and needs a person to renew it).
     linkedin_ads_token_warn_days: int = Field(

@@ -1,33 +1,26 @@
-"""LinkedIn Ads analytics connector (Marketing API /rest/adAnalytics).
+"""LinkedIn Ads connector (Marketing API, versioned ``/rest``).
 
-CPR-15: only the ad campaigns mapped to the Hub campaign
-(``campaignMap[hubCampaignId].linkedinCampaignIds``) are read; there is no
-account-wide fallback. Performance data is kept by LinkedIn for ten years
-(daily detail for six months), so a mapped campaign can be backfilled.
+CPR-15: the daily sync reads every ad campaign and creative in the ad
+account, then daily analytics per creative. Each creative becomes a post in
+the Hub that points to the organic post it promotes (``content.reference``).
+LinkedIn keeps daily analytics for six months, so the first run can backfill
+that far.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 
-from config import DEFAULT_LINKEDIN_VERSION
 from services.connectors.common import (
     ConnectorError,
-    ConnectorNoData,
-    ConnectorNotMapped,
-    FetchResult,
-    mapped_ids,
-    metric_str,
-    reporting_period,
     request_failed,
     response_json,
-    safe_rate,
 )
 
 log = logging.getLogger(__name__)
@@ -36,38 +29,59 @@ LINKEDIN_REST = "https://api.linkedin.com/rest"
 LINKEDIN_INTROSPECT = "https://www.linkedin.com/oauth/v2/introspectToken"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 
-# adAnalytics returns only impressions and clicks unless fields are named (max 20).
-_ANALYTICS_FIELDS = [
-    "dateRange",
-    "pivotValues",
-    "impressions",
-    "clicks",
-    "landingPageClicks",
-    "totalEngagements",
-    "reactions",
-    "comments",
-    "shares",
-    "follows",
-    "videoStarts",
-    "videoViews",
-    "videoCompletions",
-    "averageDwellTime",
-    "costInLocalCurrency",
-]
+_PAGE_SIZE = 100
+# adAnalytics takes a list of creatives per call; keep URLs short.
+_CREATIVES_PER_CALL = 20
 
-# (row key, element field) for plain counts.
-_COUNTS = [
-    ("impressions", "impressions"),
-    ("clicks", "clicks"),
-    ("landing page clicks", "landingPageClicks"),
-    ("engagements", "totalEngagements"),
-    ("reactions", "reactions"),
-    ("comments", "comments"),
-    ("shares", "shares"),
-    ("follows", "follows"),
-    ("video starts", "videoStarts"),
-    ("video views", "videoViews"),
-]
+# adAnalytics returns only impressions and clicks unless fields are named (max 20).
+METRIC_FIELDS = {
+    "impressions": "impressions",
+    "clicks": "clicks",
+    "landingPageClicks": "landing_page_clicks",
+    "totalEngagements": "engagements",
+    "reactions": "reactions",
+    "comments": "comments",
+    "shares": "shares",
+    "follows": "follows",
+    "videoStarts": "video_starts",
+    "videoViews": "video_views",
+    "videoFirstQuartileCompletions": "video_25",
+    "videoMidpointCompletions": "video_50",
+    "videoThirdQuartileCompletions": "video_75",
+    "videoCompletions": "video_completions",
+    "costInLocalCurrency": "cost",
+}
+_ANALYTICS_FIELDS = ["dateRange", "pivotValues", *METRIC_FIELDS]
+
+# Post URN kinds a creative can promote.
+POST_URN_KINDS = ("share", "ugcPost", "activity", "post")
+
+
+@dataclass(frozen=True)
+class AdCampaign:
+    id: str
+    name: str
+    status: str
+    type: str
+
+
+@dataclass(frozen=True)
+class Creative:
+    urn: str
+    campaign_id: str
+    name: str
+    status: str
+    content_type: str
+    # The organic post the creative promotes (share / ugcPost URN), if any.
+    reference: str | None
+    created_at: datetime | None
+
+
+@dataclass
+class CreativeDay:
+    creative_urn: str
+    day: date
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 def _linkedin_headers(access_token: str, api_version: str) -> dict[str, str]:
@@ -78,13 +92,6 @@ def _linkedin_headers(access_token: str, api_version: str) -> dict[str, str]:
     }
 
 
-def _campaign_urn(campaign_id: str) -> str:
-    value = campaign_id.strip()
-    if value.startswith("urn:"):
-        return value
-    return f"urn:li:sponsoredCampaign:{value}"
-
-
 def _date_range_param(start: date, end: date) -> str:
     return (
         f"(start:(year:{start.year},month:{start.month},day:{start.day}),"
@@ -92,125 +99,163 @@ def _date_range_param(start: date, end: date) -> str:
     )
 
 
-def _element_label(element: dict[str, Any]) -> str:
-    pivot_values = element.get("pivotValues") or []
-    if pivot_values:
-        urn = str(pivot_values[0])
-        if ":" in urn:
-            return urn.rsplit(":", 1)[-1]
-        return urn
-    return "aggregate"
+def _urn_id(urn: str) -> str:
+    return urn.rsplit(":", 1)[-1]
 
 
-def _element_to_row(element: dict[str, Any]) -> dict[str, str]:
-    impressions = float(element.get("impressions") or 0)
-    clicks = float(element.get("clicks") or 0)
-    video_views = float(element.get("videoViews") or 0)
-    completions = float(element.get("videoCompletions") or 0)
-
-    row: dict[str, str] = {"campaign": _element_label(element)}
-    for key, field in _COUNTS:
-        row[key] = metric_str(float(element.get(field) or 0))
-    row["completion rate"] = safe_rate(completions, video_views)
-    row["ctr"] = safe_rate(clicks, impressions)
-    row["dwell time"] = metric_str(float(element.get("averageDwellTime") or 0))
-    row["cost"] = f"{float(element.get('costInLocalCurrency') or 0):.2f}"
-
-    start = (element.get("dateRange") or {}).get("start") or {}
-    if start:
-        row["date"] = (
-            f"{start.get('year')}-{int(start.get('month', 0)):02d}-"
-            f"{int(start.get('day', 0)):02d}"
-        )
-    return row
+def normalize_post_urn(value: str | None) -> str | None:
+    """``urn:li:share:1`` / ``ugcPost`` / ``activity`` from a URN or a post URL."""
+    if not value:
+        return None
+    text = unquote(str(value)).strip()
+    start = text.find("urn:li:")
+    if start < 0:
+        return None
+    urn = text[start:].split("/")[0].split("?")[0].rstrip(",)")
+    parts = urn.split(":")
+    if len(parts) != 4 or parts[2] not in POST_URN_KINDS or not parts[3]:
+        return None
+    return urn
 
 
-def mapped_linkedin_campaign_ids(integration: dict[str, Any], campaign_id: int) -> list[str]:
-    linkedin_campaign_ids = mapped_ids(integration, campaign_id, "linkedinCampaignIds")
-    if not linkedin_campaign_ids:
-        raise ConnectorNotMapped(
-            f"No LinkedIn ad campaigns mapped to campaign {campaign_id} "
-            "(campaignMap.linkedinCampaignIds)"
-        )
-    return linkedin_campaign_ids
+def post_url(urn: str) -> str:
+    return f"https://www.linkedin.com/feed/update/{urn}/"
 
 
-async def fetch_linkedin_ads_metrics(
-    *,
-    access_token: str,
-    ad_account_id: str,
-    campaign_id: int,
-    integration: dict[str, Any],
-    reporting_period_start: date | None,
-    reporting_period_end: date | None,
-    api_version: str = DEFAULT_LINKEDIN_VERSION,
-    client: httpx.AsyncClient | None = None,
-) -> FetchResult:
-    if not access_token:
-        raise ConnectorError(
-            "LinkedIn Ads access token missing — set LINKEDIN_ADS_ACCESS_TOKEN "
-            "or integration accessToken"
-        )
-    linkedin_campaign_ids = mapped_linkedin_campaign_ids(integration, campaign_id)
-
-    period_start, period_end = reporting_period(
-        reporting_period_start, reporting_period_end
-    )
-    encoded = ",".join(quote(_campaign_urn(cid), safe="") for cid in linkedin_campaign_ids)
-    granularity = "DAILY" if period_start != period_end else "ALL"
-    # Rest.li syntax: List(...) and (start:(...)) stay literal and URNs are
-    # encoded once, so the query is built by hand. A params dict would
-    # percent-encode it again and LinkedIn would reject the URNs.
-    url = (
-        f"{LINKEDIN_REST}/adAnalytics?q=analytics&pivot=CAMPAIGN"
-        f"&timeGranularity={granularity}"
-        f"&dateRange={_date_range_param(period_start, period_end)}"
-        f"&campaigns=List({encoded})"
-        f"&fields={','.join(_ANALYTICS_FIELDS)}"
-    )
-
-    own_client = client is None
-    if own_client:
-        client = httpx.AsyncClient(timeout=30.0)
-
+async def _get_json(
+    client: httpx.AsyncClient, url: str, *, access_token: str, api_version: str, what: str
+) -> dict[str, Any]:
     try:
         response = await client.get(url, headers=_linkedin_headers(access_token, api_version))
     except httpx.HTTPError as exc:
-        raise request_failed("LinkedIn Ads", exc) from exc
-    finally:
-        if own_client:
-            await client.aclose()
-
+        raise request_failed(what, exc) from exc
     if response.status_code == 401:
         raise ConnectorError(
-            "LinkedIn Ads access token expired or invalid — generate a new token "
-            "and update LINKEDIN_ADS_ACCESS_TOKEN"
+            "LinkedIn Ads access token expired or invalid — renew LINKEDIN_ADS_REFRESH_TOKEN"
         )
     if response.status_code >= 400:
-        raise ConnectorError(
-            f"LinkedIn Ads API error {response.status_code}: {response.text[:500]}"
-        )
+        raise ConnectorError(f"{what} error {response.status_code}: {response.text[:500]}")
+    return response_json(response, what)
 
-    payload = response_json(response, "LinkedIn Ads")
-    elements = payload.get("elements") or []
-    rows = [_element_to_row(element) for element in elements]
-    if not rows:
-        raise ConnectorNoData(
-            "LinkedIn Ads returned no activity for the mapped campaigns in this period"
-        )
 
-    return FetchResult(
-        rows=rows,
-        raw={
-            "connector": "linkedin_ads",
-            "apiVersion": api_version,
-            "adAccountId": ad_account_id,
-            "linkedinCampaignIds": linkedin_campaign_ids,
-            "periodStart": period_start.isoformat(),
-            "periodEnd": period_end.isoformat(),
-            "elementCount": len(elements),
-        },
+async def _paged(
+    client: httpx.AsyncClient, url: str, *, access_token: str, api_version: str, what: str
+) -> list[dict[str, Any]]:
+    """Follow ``metadata.nextPageToken`` (cursor paging on versioned finders)."""
+    elements: list[dict[str, Any]] = []
+    page_token = ""
+    while True:
+        page_url = url + (f"&pageToken={quote(page_token, safe='')}" if page_token else "")
+        payload = await _get_json(
+            client, page_url, access_token=access_token, api_version=api_version, what=what
+        )
+        elements.extend(payload.get("elements") or [])
+        page_token = (payload.get("metadata") or {}).get("nextPageToken") or ""
+        if not page_token:
+            return elements
+
+
+async def list_ad_campaigns(
+    *, access_token: str, ad_account_id: str, api_version: str, client: httpx.AsyncClient
+) -> list[AdCampaign]:
+    elements = await _paged(
+        client,
+        f"{LINKEDIN_REST}/adAccounts/{ad_account_id}/adCampaigns?q=search&pageSize={_PAGE_SIZE}",
+        access_token=access_token,
+        api_version=api_version,
+        what="LinkedIn adCampaigns",
     )
+    return [
+        AdCampaign(
+            id=str(element.get("id") or ""),
+            name=element.get("name") or "",
+            status=element.get("status") or "",
+            type=element.get("type") or "",
+        )
+        for element in elements
+    ]
+
+
+def creative_from_element(element: dict[str, Any]) -> Creative:
+    """The promoted post is ``content.reference``, or nested in the ad type:
+    ``content.videoAd.reference`` (ugcPost), ``standardUpdateAd`` (share),
+    ``documentAd`` and so on. Spotlight, follow, text and similar ads promote
+    no post.
+    """
+    content = element.get("content") or {}
+    if "reference" in content:
+        content_type, reference = "reference", normalize_post_urn(content.get("reference"))
+    else:
+        content_type = next(iter(content), "unknown")
+        nested = content.get(content_type)
+        reference = normalize_post_urn(nested.get("reference")) if isinstance(nested, dict) else None
+    created = element.get("createdAt")
+    return Creative(
+        urn=str(element.get("id") or ""),
+        campaign_id=_urn_id(str(element.get("campaign") or "")),
+        name=element.get("name") or ((content.get("textAd") or {}).get("headline") or ""),
+        status=element.get("intendedStatus") or element.get("status") or "",
+        content_type=content_type,
+        reference=reference,
+        created_at=datetime.fromtimestamp(created / 1000, tz=timezone.utc) if created else None,
+    )
+
+
+async def list_creatives(
+    *, access_token: str, ad_account_id: str, api_version: str, client: httpx.AsyncClient
+) -> list[Creative]:
+    elements = await _paged(
+        client,
+        f"{LINKEDIN_REST}/adAccounts/{ad_account_id}/creatives?q=criteria&pageSize={_PAGE_SIZE}",
+        access_token=access_token,
+        api_version=api_version,
+        what="LinkedIn creatives",
+    )
+    return [creative_from_element(element) for element in elements if element.get("id")]
+
+
+async def fetch_creative_days(
+    *,
+    access_token: str,
+    creative_urns: list[str],
+    start: date,
+    end: date,
+    api_version: str,
+    client: httpx.AsyncClient,
+) -> list[CreativeDay]:
+    """Daily analytics per creative; days without activity are not returned."""
+    days: list[CreativeDay] = []
+    for offset in range(0, len(creative_urns), _CREATIVES_PER_CALL):
+        chunk = creative_urns[offset : offset + _CREATIVES_PER_CALL]
+        encoded = ",".join(quote(urn, safe="") for urn in chunk)
+        # Rest.li syntax: List(...) and (start:(...)) stay literal and URNs are
+        # encoded once, so the query is built by hand. A params dict would
+        # percent-encode it again and LinkedIn would reject the URNs.
+        url = (
+            f"{LINKEDIN_REST}/adAnalytics?q=analytics&pivot=CREATIVE&timeGranularity=DAILY"
+            f"&dateRange={_date_range_param(start, end)}"
+            f"&creatives=List({encoded})"
+            f"&fields={','.join(_ANALYTICS_FIELDS)}"
+        )
+        payload = await _get_json(
+            client, url, access_token=access_token, api_version=api_version, what="LinkedIn adAnalytics"
+        )
+        for element in payload.get("elements") or []:
+            pivots = element.get("pivotValues") or []
+            begin = (element.get("dateRange") or {}).get("start") or {}
+            if not pivots or not begin:
+                continue
+            days.append(
+                CreativeDay(
+                    creative_urn=str(pivots[0]),
+                    day=date(int(begin["year"]), int(begin["month"]), int(begin["day"])),
+                    metrics={
+                        name: float(element.get(field) or 0)
+                        for field, name in METRIC_FIELDS.items()
+                    },
+                )
+            )
+    return days
 
 
 async def linkedin_token_expires_at(

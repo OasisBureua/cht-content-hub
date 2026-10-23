@@ -18,8 +18,8 @@ CHT Admin UI (/admin/content-hub)
 
 Content Hub (background + storage)
     ├─ On-demand: POST .../campaigns/{id}/platforms/{platform}/sync
-    └─ Postgres: posts + post_campaign_links + post_metrics_daily (YouTube),
-       campaign_platform_data (LinkedIn Ads, CSV uploads), hubspot_raw_data on campaign
+    └─ Postgres: posts + post_campaign_links + post_metrics_daily (YouTube, LinkedIn Ads),
+       campaign_platform_data (CSV uploads), hubspot_raw_data on campaign
     └─ Daily: platform_metrics_sync Lambda (CPR-15, off by default)
 ```
 
@@ -28,8 +28,7 @@ Content Hub (background + storage)
 | Concern | Owner |
 |---|---|
 | Campaign CRUD, templates | Content Hub |
-| YouTube metrics | Content Hub: channel uploads in `posts`, daily counts in `post_metrics_daily`, linked to campaigns in `post_campaign_links` (CPR-15) |
-| LinkedIn Ads metrics | Content Hub API connector, stored in `campaign_platform_data` |
+| YouTube and LinkedIn Ads metrics | Content Hub: posts in `posts`, metrics in `post_metrics_daily`, linked to campaigns in `post_campaign_links` (CPR-15) |
 | Platform connector credentials (non-HubSpot) | Content Hub (`integration_settings`) |
 | Daily platform resync | Content Hub `platform_metrics_sync` Lambda (CPR-15). Off by default; enable with `sync_jobs_enabled.platform_metrics_sync`. |
 | Manual platform refresh | Content Hub (`POST .../sync`) |
@@ -46,7 +45,7 @@ Content Hub (background + storage)
 |---|---|
 | Admin clicks Sync / Refresh | Hub pulls from platform → updates `campaign_platform_data`. HubSpot sync via CHT → PATCH campaign. |
 | Admin opens report | CHT reads stored state from Hub → `POST .../report/generate`. No live platform calls. |
-| Daily resync | When enabled, `platform_metrics_sync` stores every YouTube upload's counts for the UTC day, relinks posts to campaigns, and stores one LinkedIn Ads snapshot per mapped campaign. |
+| Daily resync | When enabled, `platform_metrics_sync` stores every YouTube upload's counts for the UTC day and every LinkedIn ad's recent daily metrics, then relinks posts to campaigns. |
 
 ---
 
@@ -76,7 +75,7 @@ After Hub writes: `POST /api/internal/cache/clear?scope=contenthub` on CHT.
 
 ### Platform data
 - `GET /campaigns/{id}/platform-data` — sync status per platform
-- `POST /campaigns/{id}/platforms/{platform}/sync` — on-demand pull. YouTube: relinks, then refreshes the campaign's linked videos. LinkedIn Ads when `enabled: true` and not `stub`. 400 when the campaign has no linked YouTube posts or no LinkedIn mapping, 404 when they return no data, 502 when the platform call fails. Every attempt is logged in `platform_sync_runs` (`success`, `unmapped`, `no_data`, `not_enabled`, `error`).
+- `POST /campaigns/{id}/platforms/{platform}/sync` — on-demand pull. YouTube and LinkedIn: relinks, then refreshes the campaign's linked posts. 400 when nothing is linked, 404 when the linked posts have no metrics, 502 when the platform call fails. Other platforms take CSV uploads. Every attempt is logged in `platform_sync_runs` (`success`, `unmapped`, `no_data`, `not_enabled`, `error`).
 - `POST /campaigns/{id}/sync-all`
 
 ### CSV bootstrap (fallback)
@@ -138,29 +137,27 @@ Migration: `0006_campaign_platform_data` (consolidates csv_uploads + snapshots)
 
 ### Phase 2 — Sync engine
 - [x] LinkedIn Ads and YouTube connectors (`services/connectors/linkedin_ads.py`, `services/connectors/youtube.py`)
-- [ ] Meta API sync (CSV upload only; `_fetch_connector_rows` rejects other platforms)
+- [ ] Meta API sync (CSV upload only; `run_platform_sync` rejects platforms without a connector)
 - [x] Daily resync: `platform_metrics_sync` Lambda (CPR-15), off by default
 - [x] `campaign_reports.py` builds the analytics and executive reports from stored rows
 
 ### Social posts (CPR-15)
 
-Every social post the Hub knows is a `posts` row. A campaign's YouTube numbers come from the posts linked to it.
+Every social post the Hub knows is a `posts` row. A campaign's YouTube and LinkedIn Ads numbers come from the posts linked to it.
 
 - **YouTube sync:** Data API v3 with `YOUTUBE_API_KEY`. The daily job lists every upload on the channels in `YOUTUBE_CHANNEL_IDS` (default: CHM's official channel and the five branded channels), every YouTube post already in the Hub, and every video in a shoot's playlist. It upserts them into `posts` (new rows: source `youtube_api`) and stores the day's lifetime views, likes and comments in `post_metrics_daily` (source `youtube`, basis `lifetime_snapshot`). The legacy `posts` counts are kept current for the public clips API. A video in a shoot playlist gets that shoot when it has none. About 60 quota units a day of the 10,000 default. Watch time and retention need the YouTube Analytics API with a channel-owner login, which is not used.
-- **Links:** `post_campaign_links` (post, campaign, Platform program when the campaign has one, CHM Content ID, method, confidence, status `active` / `suggested` / `removed`, created/removed by and at). The linker (`services/post_links.py`) runs after each daily sync and on Sync. Rules, strongest first: `campaign_map` (`campaignMap[campaign].youtubeVideoIds`), `content_id` (a v1.1 CHM Content ID in the post's title, description or URL that appears in exactly one campaign's tags, name or program name), `wordpress_embed` (the same, in a WordPress article that embeds the video), `shoot` (the post's shoot is mapped to the campaign), `promoted_post` (an ad takes the links of the post it promotes). Manual links are never changed or revived, and a link a person removed stays removed. An automatic link that no rule supports any more is marked removed by `linker`.
-- **Reads:** platform-data, the analytics report and the report packet build the YouTube snapshot from the campaign's linked posts: each post's latest metrics row inside the window, one row per video (`video id`, `title`, `published`, `url`, `views`, `likes`, `comments`, `duration`). A YouTube CSV upload is used instead only when it is newer.
-- **Sync now** (`POST .../platforms/youtube/sync`): relinks, then refreshes the campaign's linked videos. New uploads arrive with the daily sync.
-- **Sync runs:** source-wide syncs are logged in `platform_sync_runs` with no campaign.
+- **LinkedIn Ads sync:** Marketing API (`LINKEDIN_ADS_API_VERSION`, default `202610`) on `LINKEDIN_AD_ACCOUNT_ID`. Every creative becomes a post (source `linkedin_ads`, `provider_post_id` = `urn:li:sponsoredCreative:…`) with its ad campaign in `platform_metadata`. A creative that boosts a post keeps that post's URN in `alt_ids` and points to it with `promotes_post_id` when the organic post is in the Hub under any of its URNs (share, ugcPost, activity). Text and other non-post ads have no promoted post. Daily analytics per creative (impressions, clicks, landing page clicks, engagements, reactions, comments, shares, follows, video starts, views, 25/50/75% and completions, cost) go to `post_metrics_daily` (source `linkedin_ads`, basis `daily`). Each run re-reads the last `LINKEDIN_ADS_LOOKBACK_DAYS` (default 7), which LinkedIn still revises; the first run backfills six months, the limit of LinkedIn's daily data.
+- **Links:** `post_campaign_links` (post, campaign, Platform program when the campaign has one, CHM Content ID, method, confidence, status `active` / `suggested` / `removed`, created/removed by and at). The linker (`services/post_links.py`) runs after each daily sync, on Sync, and when a shoot's campaign changes. Rules, strongest first: `campaign_map` (`campaignMap[campaign].youtubeVideoIds`, and every ad in `campaignMap[campaign].linkedinCampaignIds`), `content_id` (a v1.1 CHM Content ID in the post's title, description, URL or LinkedIn ad campaign name that appears in exactly one campaign's tags, name or program name), `wordpress_embed` (the same, in a WordPress article that embeds the video), `shoot` (the post's shoot is mapped to the campaign), `promoted_post` (an ad and the post it promotes share their links). Manual links are never changed or revived, and a link a person removed stays removed. An automatic link that no rule supports any more is marked removed by `linker`.
+- **Shoot mapping:** `GET /shoots` lists shoots with their campaign and post count; `PATCH /shoots/{id}/campaign` `{"campaignId": 37}` (or `null`) sets it and relinks.
+- **Reads:** platform-data, the analytics report and the report packet build each platform's snapshot from the campaign's linked posts, using metrics rows dated inside the window. YouTube: each video's latest row (`video id`, `title`, `published`, `url`, `views`, `likes`, `comments`, `duration`). LinkedIn: each ad's days summed (`creative`, `name`, `ad campaign`, `promotes`, the counts above, `completion rate`, `ctr`, `cost`, `first day`, `last day`). A CSV upload for the same platform is used instead only when it is newer.
+- **Sync now** (`POST .../platforms/{youtube|linkedin}/sync`): relinks, then refreshes the campaign's linked posts. New posts arrive with the daily sync.
+- **Sync runs:** source-wide syncs are logged in `platform_sync_runs` with no campaign. A failed one makes report inputs show that platform as `error` for campaigns with no snapshot in the window.
 
-### LinkedIn Ads connector (CPR-15)
+### LinkedIn Ads credentials (CPR-15)
 
-LinkedIn Ads reads only the ad campaigns a Hub campaign is mapped to; there is no account-wide fallback.
-
-- **Mapping:** `PATCH /integrations` with `{"platforms": {"linkedin": {"enabled": true, "campaignMap": {"<hubCampaignId>": {"linkedinCampaignIds": ["..."]}}}}}`. The patch merges top-level keys only, so send the whole `campaignMap`.
-- **LinkedIn Ads:** `/rest/adAnalytics` with `LINKEDIN_ADS_API_VERSION` (default `202610`; each version is supported for at least a year). Daily metrics per mapped ad campaign: impressions, clicks, landing page clicks, engagements, reactions, comments, shares, follows, video starts/views/completions, dwell time, cost.
 - **LinkedIn credentials:** set `LINKEDIN_ADS_REFRESH_TOKEN` with `LINKEDIN_ADS_CLIENT_ID` / `LINKEDIN_ADS_CLIENT_SECRET`, or a static `LINKEDIN_ADS_ACCESS_TOKEN` (or integration `accessToken`) without them.
 - **LinkedIn token expiry:** with `LINKEDIN_ADS_REFRESH_TOKEN` set, each sync trades it for a fresh 60-day access token, so only the refresh token (about a year) needs replacing by hand. Without it, the static access token lasts 60 days. Each `platform_metrics_sync` run logs `linkedin_ads_token_expiring days_left=N` once the token that expires first (the refresh token, or the static access token read through introspection with the client id/secret) is within `LINKEDIN_ADS_TOKEN_WARN_DAYS` (default 30); the run result also carries `linkedin_token_days_left`. A CloudWatch metric filter on that log line drives the `linkedin-ads-token-expiring` alarm, and `platform_metrics_sync_errors` drives the `platform-metrics-sync-errors` alarm (`platform_metrics_sync.tf`; console only, no SNS yet). To renew, re-authorize with an account that can read the ad account and update the `LINKEDIN_ADS_REFRESH_TOKEN` GitHub environment secret. An expired or revoked token makes the sync fail, and report inputs show LinkedIn as `error`.
-- **Report inputs:** a requested social platform with no snapshot in the window is `error` when its latest sync failed, otherwise `missing`.
+- **Report inputs:** a requested social platform with no snapshot in the window is `error` when its latest sync (the campaign's or the daily one) failed, otherwise `missing`.
 
 ### Phase 3 — Polish
 - [ ] AI insights (`POST .../insights` returns a placeholder string, not a model)

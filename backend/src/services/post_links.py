@@ -3,14 +3,17 @@
 Rules, strongest first; a post's link to a campaign records the first rule
 that found it:
 
-1. ``campaign_map`` — integration ``campaignMap[campaign].youtubeVideoIds``.
+1. ``campaign_map`` — integration ``campaignMap[campaign].youtubeVideoIds``
+   (videos) and ``linkedinCampaignIds`` (every ad in those ad campaigns).
 2. ``content_id`` — a CHM Content ID (``RIG-26-02_VEP_SPL2``) in the post's
-   title, description or URL that belongs to exactly one campaign. A
-   campaign's IDs come from its tags, name and program name.
+   title, description or URL, or its LinkedIn ad campaign's name, that
+   belongs to exactly one campaign. A campaign's IDs come from its tags,
+   name and program name.
 3. ``wordpress_embed`` — the same, read from the WordPress articles that
    embed the YouTube video.
 4. ``shoot`` — the post's shoot is mapped to a campaign.
-5. ``promoted_post`` — an ad gets the links of the organic post it promotes.
+5. ``promoted_post`` — an ad and the organic post it promotes share their
+   links from rules 1–4.
 
 ``EXTRA_RULES`` lets other sources add proposals (HubSpot campaign tags,
 CPR-56). Manual links are never changed: a manual link, active or removed,
@@ -121,17 +124,28 @@ async def _rule_proposals(db: AsyncSession, ctx: LinkContext) -> list[Proposal]:
 
     # 1. campaignMap
     youtube_config = await db.get(IntegrationSetting, "youtube")
-    integration = youtube_config.value_json if youtube_config else {}
+    linkedin_config = await db.get(IntegrationSetting, "linkedin")
+    youtube_map = youtube_config.value_json if youtube_config else {}
+    linkedin_map = linkedin_config.value_json if linkedin_config else {}
+    ads_by_campaign: dict[str, list[Post]] = {}
+    for post in ctx.posts:
+        ad_campaign = (post.platform_metadata or {}).get("adCampaignId")
+        if post.platform == "linkedin" and ad_campaign:
+            ads_by_campaign.setdefault(str(ad_campaign), []).append(post)
     for campaign_id in campaign_ids:
-        for video_id in mapped_ids(integration, campaign_id, "youtubeVideoIds"):
+        for video_id in mapped_ids(youtube_map, campaign_id, "youtubeVideoIds"):
             post = youtube_posts.get(video_id)
             if post is not None:
                 proposals.append(Proposal(post.id, campaign_id, LINK_CAMPAIGN_MAP))
+        for ad_campaign in mapped_ids(linkedin_map, campaign_id, "linkedinCampaignIds"):
+            for post in ads_by_campaign.get(ad_campaign.rsplit(":", 1)[-1], []):
+                proposals.append(Proposal(post.id, campaign_id, LINK_CAMPAIGN_MAP))
 
-    # 2. Content ID in the post
+    # 2. Content ID in the post (or its ad campaign's name)
     by_content_id = _campaign_content_ids(ctx.campaigns)
     for post in ctx.posts:
-        for cid in content_ids(post.title, post.description, post.content_url):
+        ad_campaign_name = (post.platform_metadata or {}).get("adCampaignName")
+        for cid in content_ids(post.title, post.description, post.content_url, ad_campaign_name):
             if cid in by_content_id:
                 proposals.append(Proposal(post.id, by_content_id[cid], LINK_CONTENT_ID, cid))
 
@@ -174,16 +188,20 @@ async def _rule_proposals(db: AsyncSession, ctx: LinkContext) -> list[Proposal]:
 
 
 def _promoted(posts: list[Post], proposals: list[Proposal]) -> list[Proposal]:
-    """Ads take the campaigns of the organic post they promote."""
+    """An ad and the organic post it promotes take each other's campaigns."""
     by_post: dict[str, list[Proposal]] = {}
     for proposal in proposals:
         by_post.setdefault(proposal.post_id, []).append(proposal)
-    return [
-        Proposal(ad.id, proposal.campaign_id, LINK_PROMOTED_POST, proposal.chm_content_id)
-        for ad in posts
-        if ad.promotes_post_id
-        for proposal in by_post.get(ad.promotes_post_id, [])
-    ]
+    shared: list[Proposal] = []
+    for ad in posts:
+        if not ad.promotes_post_id:
+            continue
+        for source, target in ((ad.promotes_post_id, ad.id), (ad.id, ad.promotes_post_id)):
+            shared += [
+                Proposal(target, proposal.campaign_id, LINK_PROMOTED_POST, proposal.chm_content_id)
+                for proposal in by_post.get(source, [])
+            ]
+    return shared
 
 
 async def _single_programs(db: AsyncSession) -> dict[int, str]:

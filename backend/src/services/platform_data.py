@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -25,16 +25,7 @@ from schemas.campaigns import (
     PlatformSyncResultOut,
     PlatformSyncStatus,
 )
-from services.connectors.common import integration_or_env
-from services.connectors.linkedin_ads import mapped_linkedin_campaign_ids
-from services.connectors.linkedin_auth import linkedin_ads_access_token
 from services import post_links, social_posts
-from services.connectors import (
-    ConnectorError,
-    ConnectorNoData,
-    ConnectorNotMapped,
-    fetch_linkedin_ads_metrics,
-)
 
 _PLATFORM_LABELS = {
     Platform.LINKEDIN: "LinkedIn",
@@ -273,39 +264,6 @@ async def _integration_config(db: AsyncSession, platform: str) -> dict | None:
     return row.value_json
 
 
-async def _fetch_connector_rows(
-    *,
-    platform: str,
-    campaign: Campaign,
-    integration: dict[str, Any],
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    settings = get_settings()
-
-    if platform == Platform.LINKEDIN.value:
-        # Unmapped campaigns stay unmapped even when the token is broken.
-        mapped_linkedin_campaign_ids(integration, campaign.id)
-        access_token, _ = await linkedin_ads_access_token(settings, integration)
-        result = await fetch_linkedin_ads_metrics(
-            access_token=access_token,
-            ad_account_id=integration_or_env(
-                integration,
-                integration_key="adAccountId",
-                env_value=settings.linkedin_ad_account_id,
-            ),
-            campaign_id=campaign.id,
-            integration=integration,
-            reporting_period_start=campaign.reporting_period_start,
-            reporting_period_end=campaign.reporting_period_end,
-            api_version=settings.linkedin_ads_api_version,
-        )
-        return result.rows, result.raw
-
-    raise HTTPException(
-        status_code=400,
-        detail=f"API sync for {platform} is not implemented — upload CSV instead",
-    )
-
-
 SyncOutcomeStatus = Literal["ok", "unmapped", "no_data", "error", "not_enabled"]
 
 
@@ -345,37 +303,45 @@ async def _log_failed_run(
     await db.flush()
 
 
-async def _sync_linked_youtube(
-    db: AsyncSession, campaign: Campaign, *, trigger: str, started: datetime
-) -> SyncOutcome:
-    """CPR-15: relink, refresh the campaign's linked videos, return today's snapshot.
+# CPR-15: platforms whose campaign numbers come from linked posts.
+_POST_PLATFORMS = {
+    Platform.YOUTUBE.value: ("YouTube posts", None),
+    Platform.LINKEDIN.value: ("LinkedIn ads", social_posts.POST_SOURCE_LINKEDIN_ADS),
+}
 
-    New uploads are found by the daily sync; this refreshes what is linked.
+
+async def _sync_linked_posts(
+    db: AsyncSession, campaign: Campaign, platform: str, *, trigger: str, started: datetime
+) -> SyncOutcome:
+    """CPR-15: relink, refresh the campaign's linked posts, return its snapshot.
+
+    New posts are found by the daily sync; this refreshes what is linked.
     """
-    platform = Platform.YOUTUBE.value
+    label, source = _POST_PLATFORMS[platform]
     await post_links.relink(db)
-    video_ids = await social_posts.linked_provider_ids(db, campaign.id, platform)
-    if not video_ids:
-        detail = f"No YouTube posts linked to campaign {campaign.id}"
+    ids = await social_posts.linked_provider_ids(db, campaign.id, platform, source=source)
+    if not ids:
+        detail = f"No {label} linked to campaign {campaign.id}"
         await _log_failed_run(
             db, campaign_id=campaign.id, platform=platform, trigger=trigger,
             started=started, status="unmapped", error=detail,
         )
         return SyncOutcome("unmapped", detail=detail)
 
-    stats = await social_posts.sync_youtube(db, trigger=trigger, video_ids=video_ids, log_run=False)
-    if stats.error or not stats.videos:
+    if platform == Platform.YOUTUBE.value:
+        stats = await social_posts.sync_youtube(db, trigger=trigger, video_ids=ids, log_run=False)
+    else:
+        stats = await social_posts.sync_linkedin_ads(db, trigger=trigger, creative_urns=ids, log_run=False)
+    snapshot = (await social_posts.campaign_post_snapshots(db, campaign.id)).get(platform)
+    if stats.error or snapshot is None:
         status = "error" if stats.error else "no_data"
-        detail = stats.error or (
-            "None of the linked YouTube videos were returned (private, deleted, or wrong IDs)"
-        )
+        detail = stats.error or f"The {label} linked to campaign {campaign.id} have no metrics"
         await _log_failed_run(
             db, campaign_id=campaign.id, platform=platform, trigger=trigger,
             started=started, status=status, error=detail,
         )
         return SyncOutcome(status, detail=detail)
 
-    snapshot = (await social_posts.campaign_post_snapshots(db, campaign.id))[platform]
     await _log_sync_run(
         db,
         campaign_id=campaign.id,
@@ -406,14 +372,16 @@ async def run_platform_sync(
     *,
     trigger: str,
 ) -> SyncOutcome:
-    """Fetch and store one platform for one campaign; every attempt is logged.
+    """Refresh one platform for one campaign; every attempt is logged.
 
-    CPR-15: an unmapped campaign is ``unmapped`` and a mapped campaign with no
-    activity is ``no_data``. Neither counts as an error.
+    CPR-15: YouTube and LinkedIn Ads come from linked posts. A campaign with
+    nothing linked is ``unmapped`` and one whose posts have no metrics is
+    ``no_data``. Neither counts as an error. Other platforms take CSV uploads
+    (or a stub connector in tests).
     """
     started = datetime.now(timezone.utc)
-    if platform == Platform.YOUTUBE.value:
-        return await _sync_linked_youtube(db, campaign, trigger=trigger, started=started)
+    if platform in _POST_PLATFORMS:
+        return await _sync_linked_posts(db, campaign, platform, trigger=trigger, started=started)
     config = await _integration_config(db, platform)
     if config is None or (not config.get("stub") and not config.get("enabled")):
         detail = (
@@ -431,60 +399,19 @@ async def run_platform_sync(
             error=detail,
         )
         return SyncOutcome("not_enabled", detail=detail)
-
-    if config.get("stub"):
-        rows = config.get("stubRows") or [
-            {"impressions": "0", "clicks": "0", "source": "stub-sync"},
-        ]
-        raw: dict[str, Any] = {"connector": platform, "stub": True}
-    else:
-        try:
-            rows, raw = await _fetch_connector_rows(
-                platform=platform,
-                campaign=campaign,
-                integration=config,
-            )
-        except ConnectorNotMapped as exc:
-            await _log_failed_run(
-                db,
-                campaign_id=campaign.id,
-                platform=platform,
-                trigger=trigger,
-                started=started,
-                status="unmapped",
-                error=str(exc),
-            )
-            return SyncOutcome("unmapped", detail=str(exc))
-        except ConnectorNoData as exc:
-            await _log_failed_run(
-                db,
-                campaign_id=campaign.id,
-                platform=platform,
-                trigger=trigger,
-                started=started,
-                status="no_data",
-                error=str(exc),
-            )
-            return SyncOutcome("no_data", detail=str(exc))
-        except ConnectorError as exc:
-            await _log_failed_run(
-                db,
-                campaign_id=campaign.id,
-                platform=platform,
-                trigger=trigger,
-                started=started,
-                status="error",
-                error=str(exc),
-            )
-            return SyncOutcome("error", detail=str(exc))
+    if not config.get("stub"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"API sync for {platform} is not implemented — upload CSV instead",
+        )
 
     record = await upsert_platform_data(
         db,
         campaign_id=campaign.id,
         platform=platform,
-        rows=rows,
+        rows=config.get("stubRows") or [{"impressions": "0", "clicks": "0", "source": "stub-sync"}],
         source="api",
-        raw=raw,
+        raw={"connector": platform, "stub": True},
         trigger=trigger,
     )
     campaign.updated_at = datetime.now(timezone.utc)
@@ -530,7 +457,11 @@ async def sync_platform(
 
 
 async def latest_sync_runs(db: AsyncSession, campaign_id: int) -> dict[str, PlatformSyncRun]:
-    """Most recent sync attempt per platform for a campaign."""
+    """Most recent sync attempt per platform for a campaign.
+
+    Source-wide syncs (no campaign, CPR-15) count too: a failed daily
+    YouTube or LinkedIn Ads sync is the campaign's latest attempt.
+    """
     ranked = (
         select(
             PlatformSyncRun.id,
@@ -541,7 +472,9 @@ async def latest_sync_runs(db: AsyncSession, campaign_id: int) -> dict[str, Plat
             )
             .label("rank"),
         )
-        .where(PlatformSyncRun.campaign_id == campaign_id)
+        .where(
+            or_(PlatformSyncRun.campaign_id == campaign_id, PlatformSyncRun.campaign_id.is_(None))
+        )
         .subquery()
     )
     runs = (

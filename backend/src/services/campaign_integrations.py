@@ -21,9 +21,10 @@ from schemas.campaigns import (
 
 _PLATFORM_NOTES = {
     Platform.LINKEDIN: (
-        "LinkedIn Ads: set accessToken, or LINKEDIN_ADS_REFRESH_TOKEN with the app client "
-        "id/secret (or env vars), and campaignMap.linkedinCampaignIds per Hub campaign. "
-        "Unmapped campaigns are not synced."
+        "LinkedIn Ads: set LINKEDIN_ADS_REFRESH_TOKEN with the app client id/secret and "
+        "LINKEDIN_AD_ACCOUNT_ID. The daily sync reads every ad; a campaign shows the ads "
+        "linked to it (CHM Content ID in the ad campaign name, campaignMap.linkedinCampaignIds, "
+        "or the post they promote)."
     ),
     Platform.META: "Configure Meta Marketing API credentials or upload CSV.",
     Platform.YOUTUBE: (
