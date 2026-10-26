@@ -1,12 +1,14 @@
-"""Daily social metrics sync (CPR-15).
+"""Daily social metrics sync (CPR-15 + CPR-56).
 
-One source-wide sync per platform, then the linker:
+One source-wide sync per platform, then HubSpot snapshot backfill, then the linker:
 
 - YouTube: every upload on the CHM channels in ``posts`` with today's
   lifetime counts in ``post_metrics_daily``.
 - LinkedIn Ads: every creative in the ad account as a post pointing to the
   organic post it promotes, with daily metrics for the last few days (six
   months on the first run).
+- HubSpot (CPR-56): re-ingest SOCIAL from stored ``campaign.hubspot_raw_data``
+  (no HubSpot HTTP) so campaigns synced before ingest existed get posts/links.
 - The linker recomputes automatic post → campaign links. Campaign reports
   read both platforms from their linked posts.
 
@@ -24,7 +26,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from services import platform_data, post_links, social_posts
+from services import hubspot_social_ingest, platform_data, post_links, social_posts
 from services.connectors import ConnectorError, linkedin_token_expires_at
 from services.connectors.linkedin_auth import linkedin_ads_access_token
 
@@ -38,6 +40,7 @@ class PlatformMetricsSyncStats:
     errors: list[str] = field(default_factory=list)
     youtube: social_posts.SourceSyncStats | None = None
     linkedin: social_posts.SourceSyncStats | None = None
+    hubspot: hubspot_social_ingest.HubSpotBackfillStats | None = None
     links: post_links.RelinkStats | None = None
     linkedin_token_days_left: int | None = None
     linkedin_token_expiring: bool = False
@@ -62,6 +65,14 @@ async def sync_platform_metrics(
         if result.error:
             stats.errors.append(f"{platform}: {result.error}")
         await db.commit()
+
+    # CPR-56: backfill from stored snapshots after YT/LI, before relink.
+    stats.hubspot = await hubspot_social_ingest.ingest_all_campaigns_with_hubspot(
+        db, now=now
+    )
+    for err in stats.hubspot.errors:
+        stats.errors.append(f"hubspot: {err}")
+    await db.commit()
 
     stats.links = await post_links.relink(db, now=now)
     await db.commit()

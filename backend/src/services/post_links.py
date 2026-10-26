@@ -15,11 +15,11 @@ that found it:
 5. ``promoted_post`` — an ad and the organic post it promotes share their
    links from rules 1–4.
 
-``EXTRA_RULES`` lets other sources add proposals (HubSpot campaign tags,
-CPR-56). Manual links are never changed: a manual link, active or removed,
-blocks any automatic link for the same post and campaign. An automatic link
-that no rule supports any more is marked removed by ``linker``; a link a
-person removed stays removed.
+``EXTRA_RULES`` lets other sources add proposals (CPR-56 HubSpot campaign
+GUID map via ``hubspot_campaign``). Manual links are never changed: a manual
+link, active or removed, blocks any automatic link for the same post and
+campaign. An automatic link that no rule supports any more is marked removed
+by ``linker``; a link a person removed stays removed.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from models.social import (
     LINK_ACTIVE,
     LINK_CAMPAIGN_MAP,
     LINK_CONTENT_ID,
+    LINK_HUBSPOT_CAMPAIGN,
     LINK_MANUAL,
     LINK_PROMOTED_POST,
     LINK_REMOVED,
@@ -64,6 +65,7 @@ _CONFIDENCE = {
     LINK_WORDPRESS_EMBED: 0.9,
     LINK_SHOOT: 0.9,
     LINK_PROMOTED_POST: 1.0,
+    LINK_HUBSPOT_CAMPAIGN: 1.0,
 }
 
 
@@ -221,6 +223,10 @@ async def _single_programs(db: AsyncSession) -> dict[int, str]:
 async def relink(db: AsyncSession, *, now: datetime | None = None) -> RelinkStats:
     """Recompute automatic links for every post."""
     now = now or datetime.now(timezone.utc)
+    # CPR-56: ensure HubSpot GUID EXTRA_RULE is registered (lazy, no cycle at import).
+    from services import hubspot_social_ingest as _hubspot_social_ingest  # noqa: PLC0415
+
+    _hubspot_social_ingest.register_hubspot_link_rule()
     ctx = LinkContext(
         posts=list((await db.execute(select(Post).where(Post.excluded.is_(False)))).scalars()),
         campaigns=list((await db.execute(select(Campaign))).scalars()),
