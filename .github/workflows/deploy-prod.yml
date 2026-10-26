@@ -318,8 +318,6 @@ jobs:
           LINKEDIN_ADS_REDIRECT_URI: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
           LINKEDIN_ADS_SCOPES: ${{ secrets.LINKEDIN_ADS_SCOPES }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
-          YOUTUBE_CHANNEL_HANDLE: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           X_ACCOUNT_HANDLE: ${{ secrets.X_ACCOUNT_HANDLE }}
           WORDPRESS_WEBHOOK_SECRET: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}
@@ -364,13 +362,12 @@ jobs:
           TF_VAR_linkedin_org_urn: ${{ secrets.LINKEDIN_ORG_URN }}
           TF_VAR_linkedin_ad_account_id: ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
           TF_VAR_linkedin_ads_access_token: ${{ secrets.LINKEDIN_ADS_ACCESS_TOKEN }}
+          TF_VAR_linkedin_ads_refresh_token: ${{ secrets.LINKEDIN_ADS_REFRESH_TOKEN }}
           TF_VAR_linkedin_ads_client_id: ${{ secrets.LINKEDIN_ADS_CLIENT_ID }}
           TF_VAR_linkedin_ads_client_secret: ${{ secrets.LINKEDIN_ADS_CLIENT_SECRET }}
           TF_VAR_linkedin_ads_redirect_uri: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
           TF_VAR_linkedin_ads_scopes: ${{ secrets.LINKEDIN_ADS_SCOPES }}
           TF_VAR_youtube_api_key: ${{ secrets.YOUTUBE_API_KEY }}
-          TF_VAR_youtube_channel_id: ${{ secrets.YOUTUBE_CHANNEL_ID }}
-          TF_VAR_youtube_channel_handle: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
           TF_VAR_x_bearer_token: ${{ secrets.X_BEARER_TOKEN }}
           TF_VAR_x_account_handle: ${{ secrets.X_ACCOUNT_HANDLE }}
           TF_VAR_wordpress_webhook_secret: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}
@@ -412,13 +409,12 @@ jobs:
           TF_VAR_linkedin_org_urn: ${{ secrets.LINKEDIN_ORG_URN }}
           TF_VAR_linkedin_ad_account_id: ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
           TF_VAR_linkedin_ads_access_token: ${{ secrets.LINKEDIN_ADS_ACCESS_TOKEN }}
+          TF_VAR_linkedin_ads_refresh_token: ${{ secrets.LINKEDIN_ADS_REFRESH_TOKEN }}
           TF_VAR_linkedin_ads_client_id: ${{ secrets.LINKEDIN_ADS_CLIENT_ID }}
           TF_VAR_linkedin_ads_client_secret: ${{ secrets.LINKEDIN_ADS_CLIENT_SECRET }}
           TF_VAR_linkedin_ads_redirect_uri: ${{ secrets.LINKEDIN_ADS_REDIRECT_URI }}
           TF_VAR_linkedin_ads_scopes: ${{ secrets.LINKEDIN_ADS_SCOPES }}
           TF_VAR_youtube_api_key: ${{ secrets.YOUTUBE_API_KEY }}
-          TF_VAR_youtube_channel_id: ${{ secrets.YOUTUBE_CHANNEL_ID }}
-          TF_VAR_youtube_channel_handle: ${{ secrets.YOUTUBE_CHANNEL_HANDLE }}
           TF_VAR_x_bearer_token: ${{ secrets.X_BEARER_TOKEN }}
           TF_VAR_x_account_handle: ${{ secrets.X_ACCOUNT_HANDLE }}
           TF_VAR_wordpress_webhook_secret: ${{ secrets.WORDPRESS_WEBHOOK_SECRET }}

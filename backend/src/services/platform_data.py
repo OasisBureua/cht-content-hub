@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from config import get_settings
 from models.campaign import (
@@ -23,7 +25,7 @@ from schemas.campaigns import (
     PlatformSyncResultOut,
     PlatformSyncStatus,
 )
-from services.connectors import ConnectorError, fetch_linkedin_ads_metrics, fetch_youtube_metrics
+from services import post_links, social_posts
 
 _PLATFORM_LABELS = {
     Platform.LINKEDIN: "LinkedIn",
@@ -64,47 +66,65 @@ async def _get_campaign_row(db: AsyncSession, campaign_id: int) -> Campaign:
     return campaign
 
 
-async def _all_rows_for_campaign(
-    db: AsyncSession, campaign_id: int
-) -> list[CampaignPlatformData]:
-    return list(
-        (
-            await db.execute(
-                select(CampaignPlatformData)
-                .where(CampaignPlatformData.campaign_id == campaign_id)
-                .order_by(
-                    CampaignPlatformData.platform,
-                    CampaignPlatformData.fetch_date.desc(),
-                    CampaignPlatformData.synced_at.desc(),
-                )
-            )
-        ).scalars()
-    )
-
-
 async def latest_by_platform(
     db: AsyncSession,
     campaign_id: int,
     *,
     window_start: date | None = None,
     window_end: date | None = None,
+    with_rows: bool = True,
 ) -> dict[str, CampaignPlatformData]:
     """Most recent fetch_date (then synced_at) per platform.
 
     CPR-44: when a date window is set, only snapshots whose ``fetch_date``
     falls inside the window are considered; otherwise the global latest.
+    ``with_rows=False`` skips loading the ``rows`` / ``raw`` JSON.
+
+    CPR-15: YouTube comes from the campaign's linked posts
+    (``social_posts.campaign_post_snapshots``). A stored row (CSV upload)
+    is used instead only when its fetch_date is newer.
     """
-    latest: dict[str, CampaignPlatformData] = {}
-    for row in await _all_rows_for_campaign(db, campaign_id):
-        if window_start is not None or window_end is not None:
-            day = row.fetch_date
-            if window_start is not None and day < window_start:
-                continue
-            if window_end is not None and day > window_end:
-                continue
-        if row.platform not in latest:
-            latest[row.platform] = row
-    return latest
+    filters = [CampaignPlatformData.campaign_id == campaign_id]
+    if window_start is not None:
+        filters.append(CampaignPlatformData.fetch_date >= window_start)
+    if window_end is not None:
+        filters.append(CampaignPlatformData.fetch_date <= window_end)
+    ranked = (
+        select(
+            CampaignPlatformData.id,
+            func.row_number()
+            .over(
+                partition_by=CampaignPlatformData.platform,
+                order_by=(
+                    CampaignPlatformData.fetch_date.desc(),
+                    CampaignPlatformData.synced_at.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .where(*filters)
+        .subquery()
+    )
+    query = (
+        select(CampaignPlatformData)
+        .join(ranked, CampaignPlatformData.id == ranked.c.id)
+        .where(ranked.c.rank == 1)
+        .order_by(CampaignPlatformData.platform)
+    )
+    if not with_rows:
+        query = query.options(
+            defer(CampaignPlatformData.rows, raiseload=True),
+            defer(CampaignPlatformData.raw, raiseload=True),
+        )
+    latest = {row.platform: row for row in (await db.execute(query)).scalars()}
+    from_posts = await social_posts.campaign_post_snapshots(
+        db, campaign_id, window_start=window_start, window_end=window_end
+    )
+    for platform, snapshot in from_posts.items():
+        stored = latest.get(platform)
+        if stored is None or stored.fetch_date <= snapshot.fetch_date:
+            latest[platform] = snapshot
+    return dict(sorted(latest.items()))
 
 
 def _row_to_out(row: CampaignPlatformData | None, *, campaign_id: int, platform: str) -> PlatformSnapshotOut:
@@ -136,7 +156,7 @@ def _row_to_out(row: CampaignPlatformData | None, *, campaign_id: int, platform:
 async def _log_sync_run(
     db: AsyncSession,
     *,
-    campaign_id: int,
+    campaign_id: int | None,
     platform: str,
     trigger: str,
     started_at: datetime,
@@ -229,7 +249,7 @@ async def upsert_platform_data(
 
 async def list_platform_data(db: AsyncSession, campaign_id: int) -> PlatformDataListOut:
     campaign = await _get_campaign_row(db, campaign_id)
-    latest = await latest_by_platform(db, campaign_id)
+    latest = await latest_by_platform(db, campaign_id, with_rows=False)
     items = [
         _row_to_out(latest.get(platform_value), campaign_id=campaign_id, platform=platform_value)
         for platform_value in campaign.platforms
@@ -244,82 +264,30 @@ async def _integration_config(db: AsyncSession, platform: str) -> dict | None:
     return row.value_json
 
 
-def _integration_or_env(
-    integration: dict[str, Any],
-    *,
-    integration_key: str,
-    env_value: str,
-) -> str:
-    value = integration.get(integration_key)
-    if value is not None and str(value).strip():
-        return str(value).strip()
-    return env_value.strip()
+SyncOutcomeStatus = Literal["ok", "unmapped", "no_data", "error", "not_enabled"]
 
 
-async def _fetch_connector_rows(
-    *,
-    platform: str,
-    campaign: Campaign,
-    integration: dict[str, Any],
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    settings = get_settings()
+@dataclass(frozen=True)
+class SyncOutcome:
+    """Result of one platform sync.
 
-    if platform == Platform.LINKEDIN.value:
-        result = await fetch_linkedin_ads_metrics(
-            access_token=_integration_or_env(
-                integration,
-                integration_key="accessToken",
-                env_value=settings.linkedin_ads_access_token,
-            ),
-            ad_account_id=_integration_or_env(
-                integration,
-                integration_key="adAccountId",
-                env_value=settings.linkedin_ad_account_id,
-            ),
-            campaign_id=campaign.id,
-            integration=integration,
-            reporting_period_start=campaign.reporting_period_start,
-            reporting_period_end=campaign.reporting_period_end,
-        )
-        return result.rows, result.raw
+    ``status`` is also what the run log records, except ``ok`` is stored as
+    ``success``.
+    """
 
-    if platform == Platform.YOUTUBE.value:
-        result = await fetch_youtube_metrics(
-            api_key=_integration_or_env(
-                integration,
-                integration_key="apiKey",
-                env_value=settings.youtube_api_key,
-            ),
-            channel_id=_integration_or_env(
-                integration,
-                integration_key="channelId",
-                env_value=settings.youtube_channel_id,
-            ),
-            channel_handle=_integration_or_env(
-                integration,
-                integration_key="channelHandle",
-                env_value=settings.youtube_channel_handle,
-            ),
-            campaign_id=campaign.id,
-            integration=integration,
-            reporting_period_start=campaign.reporting_period_start,
-            reporting_period_end=campaign.reporting_period_end,
-        )
-        return result.rows, result.raw
-
-    raise HTTPException(
-        status_code=400,
-        detail=f"API sync for {platform} is not implemented — upload CSV instead",
-    )
+    status: SyncOutcomeStatus
+    result: PlatformSyncResultOut | None = None
+    detail: str | None = None
 
 
-async def _fail_sync(
+async def _log_failed_run(
     db: AsyncSession,
     *,
     campaign_id: int,
     platform: str,
     trigger: str,
     started: datetime,
+    status: str,
     error: str,
 ) -> None:
     await _log_sync_run(
@@ -329,10 +297,138 @@ async def _fail_sync(
         trigger=trigger,
         started_at=started,
         finished_at=datetime.now(timezone.utc),
-        status="error",
+        status=status,
         error=error,
     )
     await db.flush()
+
+
+# CPR-15: platforms whose campaign numbers come from linked posts.
+_POST_PLATFORMS = {
+    Platform.YOUTUBE.value: ("YouTube posts", None),
+    Platform.LINKEDIN.value: ("LinkedIn ads", social_posts.POST_SOURCE_LINKEDIN_ADS),
+}
+
+
+async def _sync_linked_posts(
+    db: AsyncSession, campaign: Campaign, platform: str, *, trigger: str, started: datetime
+) -> SyncOutcome:
+    """CPR-15: relink, refresh the campaign's linked posts, return its snapshot.
+
+    New posts are found by the daily sync; this refreshes what is linked.
+    """
+    label, source = _POST_PLATFORMS[platform]
+    await post_links.relink(db)
+    ids = await social_posts.linked_provider_ids(db, campaign.id, platform, source=source)
+    if not ids:
+        detail = f"No {label} linked to campaign {campaign.id}"
+        await _log_failed_run(
+            db, campaign_id=campaign.id, platform=platform, trigger=trigger,
+            started=started, status="unmapped", error=detail,
+        )
+        return SyncOutcome("unmapped", detail=detail)
+
+    if platform == Platform.YOUTUBE.value:
+        stats = await social_posts.sync_youtube(db, trigger=trigger, video_ids=ids, log_run=False)
+    else:
+        stats = await social_posts.sync_linkedin_ads(db, trigger=trigger, creative_urns=ids, log_run=False)
+    snapshot = (await social_posts.campaign_post_snapshots(db, campaign.id)).get(platform)
+    if stats.error or snapshot is None:
+        status = "error" if stats.error else "no_data"
+        detail = stats.error or f"The {label} linked to campaign {campaign.id} have no metrics"
+        await _log_failed_run(
+            db, campaign_id=campaign.id, platform=platform, trigger=trigger,
+            started=started, status=status, error=detail,
+        )
+        return SyncOutcome(status, detail=detail)
+
+    await _log_sync_run(
+        db,
+        campaign_id=campaign.id,
+        platform=platform,
+        trigger=trigger,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+        status="success",
+    )
+    campaign.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return SyncOutcome(
+        "ok",
+        result=PlatformSyncResultOut(
+            platform=platform,
+            fetch_date=snapshot.fetch_date,
+            status=PlatformSyncStatus.AVAILABLE,
+            synced_at=snapshot.synced_at,
+            row_count=snapshot.row_count,
+        ),
+    )
+
+
+async def run_platform_sync(
+    db: AsyncSession,
+    campaign: Campaign,
+    platform: str,
+    *,
+    trigger: str,
+) -> SyncOutcome:
+    """Refresh one platform for one campaign; every attempt is logged.
+
+    CPR-15: YouTube and LinkedIn Ads come from linked posts. A campaign with
+    nothing linked is ``unmapped`` and one whose posts have no metrics is
+    ``no_data``. Neither counts as an error. Other platforms take CSV uploads
+    (or a stub connector in tests).
+    """
+    started = datetime.now(timezone.utc)
+    if platform in _POST_PLATFORMS:
+        return await _sync_linked_posts(db, campaign, platform, trigger=trigger, started=started)
+    config = await _integration_config(db, platform)
+    if config is None or (not config.get("stub") and not config.get("enabled")):
+        detail = (
+            f"{platform} connector not configured"
+            if config is None
+            else f"{platform} connector not enabled"
+        )
+        await _log_failed_run(
+            db,
+            campaign_id=campaign.id,
+            platform=platform,
+            trigger=trigger,
+            started=started,
+            status="not_enabled",
+            error=detail,
+        )
+        return SyncOutcome("not_enabled", detail=detail)
+    if not config.get("stub"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"API sync for {platform} is not implemented — upload CSV instead",
+        )
+
+    record = await upsert_platform_data(
+        db,
+        campaign_id=campaign.id,
+        platform=platform,
+        rows=config.get("stubRows") or [{"impressions": "0", "clicks": "0", "source": "stub-sync"}],
+        source="api",
+        raw={"connector": platform, "stub": True},
+        trigger=trigger,
+    )
+    campaign.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return SyncOutcome(
+        "ok",
+        result=PlatformSyncResultOut(
+            platform=platform,
+            fetch_date=record.fetch_date,
+            status=PlatformSyncStatus(record.status),
+            synced_at=record.synced_at,
+            row_count=record.row_count,
+        ),
+    )
+
+
+_OUTCOME_HTTP_STATUS = {"not_enabled": 400, "unmapped": 400, "no_data": 404, "error": 502}
 
 
 async def sync_platform(
@@ -349,84 +445,46 @@ async def sync_platform(
             detail=f"Platform {platform} is not enabled on this campaign",
         )
 
-    started = datetime.now(timezone.utc)
-    config = await _integration_config(db, platform)
-    if config is None:
-        await _fail_sync(
-            db,
-            campaign_id=campaign_id,
-            platform=platform,
-            trigger=trigger,
-            started=started,
-            error=f"{platform} connector not configured",
-        )
+    outcome = await run_platform_sync(db, campaign, platform, trigger=trigger)
+    if outcome.result is None:
+        # get_db rolls back on the HTTPException; keep the failed run logged.
+        await db.commit()
         raise HTTPException(
-            status_code=400,
-            detail=f"{platform} connector not configured — upload CSV or configure integration",
+            status_code=_OUTCOME_HTTP_STATUS[outcome.status],
+            detail=outcome.detail,
         )
+    return outcome.result
 
-    if not config.get("stub") and not config.get("enabled"):
-        await _fail_sync(
-            db,
-            campaign_id=campaign_id,
-            platform=platform,
-            trigger=trigger,
-            started=started,
-            error=f"{platform} connector not enabled",
-        )
-        raise HTTPException(status_code=400, detail=f"{platform} connector not enabled")
 
-    if config.get("stub"):
-        stub_rows = config.get("stubRows") or [
-            {"impressions": "0", "clicks": "0", "source": "stub-sync"},
-        ]
-        record = await upsert_platform_data(
-            db,
-            campaign_id=campaign_id,
-            platform=platform,
-            rows=stub_rows,
-            source="api",
-            raw={"connector": platform, "stub": True},
-            trigger=trigger,
-        )
-    else:
-        try:
-            rows, raw = await _fetch_connector_rows(
-                platform=platform,
-                campaign=campaign,
-                integration=config,
+async def latest_sync_runs(db: AsyncSession, campaign_id: int) -> dict[str, PlatformSyncRun]:
+    """Most recent sync attempt per platform for a campaign.
+
+    Source-wide syncs (no campaign, CPR-15) count too: a failed daily
+    YouTube or LinkedIn Ads sync is the campaign's latest attempt.
+    """
+    ranked = (
+        select(
+            PlatformSyncRun.id,
+            func.row_number()
+            .over(
+                partition_by=PlatformSyncRun.platform,
+                order_by=(PlatformSyncRun.started_at.desc(), PlatformSyncRun.id.desc()),
             )
-        except ConnectorError as exc:
-            await _fail_sync(
-                db,
-                campaign_id=campaign_id,
-                platform=platform,
-                trigger=trigger,
-                started=started,
-                error=str(exc),
-            )
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-        record = await upsert_platform_data(
-            db,
-            campaign_id=campaign_id,
-            platform=platform,
-            rows=rows,
-            source="api",
-            raw=raw,
-            trigger=trigger,
+            .label("rank"),
         )
-
-    campaign.updated_at = datetime.now(timezone.utc)
-    await db.flush()
-
-    return PlatformSyncResultOut(
-        platform=platform,
-        fetch_date=record.fetch_date,
-        status=PlatformSyncStatus(record.status),
-        synced_at=record.synced_at,
-        row_count=record.row_count,
+        .where(
+            or_(PlatformSyncRun.campaign_id == campaign_id, PlatformSyncRun.campaign_id.is_(None))
+        )
+        .subquery()
     )
+    runs = (
+        await db.execute(
+            select(PlatformSyncRun)
+            .join(ranked, PlatformSyncRun.id == ranked.c.id)
+            .where(ranked.c.rank == 1)
+        )
+    ).scalars()
+    return {run.platform: run for run in runs}
 
 
 async def sync_all_platforms(

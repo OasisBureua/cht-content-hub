@@ -58,6 +58,20 @@ def ensure_lambda_secrets() -> None:
         if loaded_export:
             log.info("Loaded PLATFORM_EXPORT_* from app Secrets Manager")
 
+        # CPR-15: platform_metrics_sync calls YouTube and LinkedIn Ads.
+        _connector_env_from_secret = {
+            "YOUTUBE_API_KEY": "youtube_api_key",
+            "LINKEDIN_ADS_ACCESS_TOKEN": "linkedin_ads_access_token",
+            "LINKEDIN_ADS_REFRESH_TOKEN": "linkedin_ads_refresh_token",
+            "LINKEDIN_AD_ACCOUNT_ID": "linkedin_ad_account_id",
+            "LINKEDIN_ADS_CLIENT_ID": "linkedin_ads_client_id",
+            "LINKEDIN_ADS_CLIENT_SECRET": "linkedin_ads_client_secret",
+        }
+        for env_name, secret_key in _connector_env_from_secret.items():
+            value = payload.get(secret_key, "")
+            if value and not os.environ.get(env_name):
+                os.environ[env_name] = str(value)
+
     # Dedicated Cognito M2M export secret (Uche: cht-dev-cognito-m2m-export).
     m2m_arn = os.environ.get("PLATFORM_EXPORT_M2M_SECRET_ARN", "")
     if m2m_arn:

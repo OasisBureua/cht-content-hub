@@ -41,6 +41,7 @@ from models.wordpress_projection import (
     WordPressSeriesSlugAlias,
     WordPressTag,
 )
+from models.social import PostCampaignLink, PostMetricDaily
 from models.wp_tag_namespace_map import WpTagNamespaceMap
 
 ORM_TABLES = [
@@ -66,6 +67,8 @@ ORM_TABLES = [
     Shoot.__table__,
     Clip.__table__,
     Post.__table__,
+    PostCampaignLink.__table__,
+    PostMetricDaily.__table__,
     TaggerRun.__table__,
     TagDiffRow.__table__,
     # WordPress Layer 2 projected-state tables. Order matters for FK

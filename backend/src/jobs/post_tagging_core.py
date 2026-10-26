@@ -153,14 +153,15 @@ async def fetch_snippet_tags(
         results: dict[str, list[str]] = {}
         for offset in range(0, len(video_ids), _YT_MAX_IDS_PER_CALL):
             chunk = video_ids[offset : offset + _YT_MAX_IDS_PER_CALL]
+            # Key in a header: request URLs are logged (httpx INFO).
             r = await client.get(
                 _YT_VIDEOS_URL,
                 params={
                     "part": "snippet",
                     "id": ",".join(chunk),
-                    "key": api_key,
                     "maxResults": _YT_MAX_IDS_PER_CALL,
                 },
+                headers={"X-Goog-Api-Key": api_key},
             )
             r.raise_for_status()
             data = r.json()

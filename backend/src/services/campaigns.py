@@ -126,7 +126,7 @@ def _platform_data_to_csv_out(row: CampaignPlatformData) -> CsvUploadOut:
 async def list_uploads(db: AsyncSession, campaign_id: int) -> list[CsvUploadOut]:
     """Latest CSV-sourced platform data per platform (bootstrap API)."""
     await _get_campaign_row(db, campaign_id)
-    latest = await platform_data.latest_by_platform(db, campaign_id)
+    latest = await platform_data.latest_by_platform(db, campaign_id, with_rows=False)
     return [
         _platform_data_to_csv_out(row)
         for row in latest.values()
@@ -171,5 +171,5 @@ async def upload_csv(
 
 
 async def count_snapshots_with_data(db: AsyncSession, campaign_id: int) -> int:
-    latest = await platform_data.latest_by_platform(db, campaign_id)
+    latest = await platform_data.latest_by_platform(db, campaign_id, with_rows=False)
     return sum(1 for row in latest.values() if row.status == "available" and row.row_count)
