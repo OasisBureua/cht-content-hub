@@ -76,7 +76,7 @@ from schemas.report_packet import (
 )
 from schemas.report_sources import normalize_requested_sources, wants_source
 from services import campaigns as campaign_service
-from services import platform_data
+from services import platform_data, social_performance
 from services.export_ingest.transcript_s3 import (
     S3TranscriptStore,
     TranscriptStore,
@@ -230,6 +230,17 @@ async def build_report_packet(
             status=SourceStatus.ERROR if failed else SourceStatus.MISSING,
         )
 
+    # CPR-61: linked posts with metrics in the window, across social channels.
+    social = await social_performance.build_social_performance(
+        db,
+        campaign_id,
+        requested=requested,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    if social.completeness is not None:
+        input_completeness["socialPosts"] = social.completeness
+
     if wants_source(requested, "sessions"):
         input_completeness["sessions"] = SourceCompletenessOut(
             fetched_at=sessions_fetched_at,
@@ -298,6 +309,7 @@ async def build_report_packet(
         sources=sources or [],
         hubspot_raw_data=hubspot_raw,
         platform_slices=platform_slices,
+        social_performance=social.performance,
         sessions=sessions,
         attendance=attendance,
         survey_responses=survey_responses,

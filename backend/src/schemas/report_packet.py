@@ -105,6 +105,47 @@ class ReportPacketPlatformSliceOut(ApiModel):
     synced_at: datetime | None = None
 
 
+class SocialPostSummaryOut(ApiModel):
+    """CPR-61 — one linked post in a channel's top list."""
+
+    post_id: str
+    title: str | None = None
+    url: str | None = None
+    posted_at: datetime | None = None
+    paid: bool = False
+    # camelCase metric names (views, impressions, clicks, ...), as in SocialChannelOut.
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class SocialChannelOut(ApiModel):
+    """CPR-61 — one network's totals for the window, split organic / paid.
+
+    Each metric on a post comes from one source (``metric_sources``), so a
+    total never adds the same post's number from two places. Lifetime
+    sources (YouTube, HubSpot) count the latest value inside the window;
+    daily sources (LinkedIn Ads) sum the window's days.
+    """
+
+    channel: str
+    posts: int
+    paid_posts: int = 0
+    organic: dict[str, float] = Field(default_factory=dict)
+    paid: dict[str, float] = Field(default_factory=dict)
+    # "organic.views" -> "youtube", "paid.impressions" -> "linkedin_ads", ...
+    metric_sources: dict[str, str] = Field(default_factory=dict)
+    as_of: date | None = None
+    top_posts: list[SocialPostSummaryOut] = Field(default_factory=list)
+
+
+class SocialPerformanceOut(ApiModel):
+    """CPR-61 — social performance of the campaign's linked posts."""
+
+    linked_posts: int
+    posts_with_metrics: int
+    channels: list[SocialChannelOut]
+    notes: list[str] = Field(default_factory=list)
+
+
 class ReportInputPacketOut(ApiModel):
     campaign_id: int
     campaign_name: str
@@ -127,6 +168,8 @@ class ReportInputPacketOut(ApiModel):
     attended_count: int | None = None
     avg_minutes_watched: float | None = None
     attendees: list[ReportPacketAttendeeOut] = Field(default_factory=list)
+    # CPR-61: null when no requested social channel has metrics in the window.
+    social_performance: SocialPerformanceOut | None = None
     input_completeness: dict[str, SourceCompletenessOut]
 
 
