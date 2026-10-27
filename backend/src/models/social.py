@@ -32,6 +32,7 @@ LINK_CONTENT_ID = "content_id"
 LINK_WORDPRESS_EMBED = "wordpress_embed"
 LINK_SHOOT = "shoot"
 LINK_PROMOTED_POST = "promoted_post"
+LINK_HUBSPOT_CAMPAIGN = "hubspot_campaign"  # CPR-56: HubSpot campaign GUID map
 
 LINK_ACTIVE = "active"
 LINK_SUGGESTED = "suggested"

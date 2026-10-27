@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -21,7 +22,9 @@ from schemas.campaigns import (
     Platform,
     ReportType,
 )
-from services import platform_data
+from services import hubspot_social_ingest, platform_data
+
+log = logging.getLogger(__name__)
 
 
 def _campaign_to_out(campaign: Campaign) -> CampaignOut:
@@ -91,7 +94,9 @@ async def update_campaign(
     db: AsyncSession, campaign_id: int, payload: CampaignUpdate
 ) -> CampaignOut:
     campaign = await _get_campaign_row(db, campaign_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    hubspot_raw_touched = "hubspot_raw_data" in updates
+    for key, value in updates.items():
         if key == "platform_campaign_id":
             value = _blank_to_none(value)
         elif hasattr(value, "value"):
@@ -100,6 +105,24 @@ async def update_campaign(
     campaign.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(campaign)
+
+    # CPR-56: Platform Sync Now PATCHes hubspot_raw_data → upsert social posts.
+    # Savepoint isolates ingest: a flush/DB (or any) error rolls back only the
+    # ingest work so get_db's commit still persists hubspot_raw_data. Without
+    # this, a DB error leaves PendingRollbackError and the PATCH 500s / loses
+    # the snapshot; a non-DB error after partial flush would commit half-ingest.
+    if hubspot_raw_touched:
+        try:
+            async with db.begin_nested():
+                await hubspot_social_ingest.ingest_campaign_hubspot_social(
+                    db, campaign
+                )
+        except Exception:
+            log.exception(
+                "hubspot_social_ingest_failed campaign_id=%s (PATCH still succeeds)",
+                campaign.id,
+            )
+
     return _campaign_to_out(campaign)
 
 
