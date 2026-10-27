@@ -227,6 +227,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The runner image no longer ships python3.12; the Lambda runtime is 3.12.
+      - name: Setup Python for sync-lambda build
+        if: needs.changes.outputs.deploy_sync == 'true' || needs.changes.outputs.deploy_infra == 'true' || needs.changes.outputs.deploy_api == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Build sync-lambda deployment package
         if: needs.changes.outputs.deploy_sync == 'true' || needs.changes.outputs.deploy_infra == 'true' || needs.changes.outputs.deploy_api == 'true'
         run: |
