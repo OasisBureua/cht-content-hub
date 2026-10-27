@@ -94,6 +94,18 @@ class RelinkStats:
     by_method: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass
+class ApplyProposalStats:
+    """Result of ``apply_proposals`` (create / reactivate only; no removals)."""
+
+    created: int = 0
+    reactivated: int = 0
+    updated: int = 0
+    skipped_person: int = 0
+    skipped_other_method: int = 0
+    by_method: dict[str, int] = field(default_factory=dict)
+
+
 ExtraRule = Callable[[AsyncSession, LinkContext], Awaitable[list[Proposal]]]
 EXTRA_RULES: list[ExtraRule] = []
 
@@ -220,6 +232,93 @@ async def _single_programs(db: AsyncSession) -> dict[int, str]:
     return {cid: next(iter(ids)) for cid, ids in programs.items() if len(ids) == 1}
 
 
+async def apply_proposals(
+    db: AsyncSession,
+    proposals: list[Proposal],
+    *,
+    overwrite_method: bool = True,
+) -> ApplyProposalStats:
+    """Create / reactivate automatic links for ``proposals`` (shared by relink + HubSpot).
+
+    Manual and person-removed links are never changed. When
+    ``overwrite_method`` is False, an active link owned by another automatic
+    rule (e.g. ``content_id``) is left alone so HubSpot ingest cannot churn
+    ``method`` nightly against ``relink``.
+    """
+    stats = ApplyProposalStats()
+    if not proposals:
+        return stats
+
+    programs = await _single_programs(db)
+    post_ids = {p.post_id for p in proposals}
+    campaign_ids = {p.campaign_id for p in proposals}
+    existing = {
+        (link.post_id, link.campaign_id): link
+        for link in (
+            await db.execute(
+                select(PostCampaignLink).where(
+                    PostCampaignLink.post_id.in_(post_ids),
+                    PostCampaignLink.campaign_id.in_(campaign_ids),
+                )
+            )
+        ).scalars()
+    }
+
+    for proposal in proposals:
+        key = (proposal.post_id, proposal.campaign_id)
+        link = existing.get(key)
+        program_id = programs.get(proposal.campaign_id)
+        if link is None:
+            link = PostCampaignLink(
+                post_id=proposal.post_id,
+                campaign_id=proposal.campaign_id,
+                platform_program_id=program_id,
+                chm_content_id=proposal.chm_content_id,
+                method=proposal.method,
+                confidence=_CONFIDENCE.get(proposal.method),
+                status=LINK_ACTIVE,
+                created_by=LINKER,
+            )
+            db.add(link)
+            existing[key] = link
+            stats.created += 1
+            stats.by_method[proposal.method] = (
+                stats.by_method.get(proposal.method, 0) + 1
+            )
+            continue
+        if link.method == LINK_MANUAL:
+            continue
+        if link.status == LINK_REMOVED and link.removed_by != LINKER:
+            stats.skipped_person += 1
+            continue
+        if (
+            not overwrite_method
+            and link.status == LINK_ACTIVE
+            and link.method != proposal.method
+        ):
+            stats.skipped_other_method += 1
+            continue
+        if link.status != LINK_ACTIVE:
+            link.status = LINK_ACTIVE
+            link.removed_by = None
+            link.removed_at = None
+            stats.reactivated += 1
+        elif (link.method, link.chm_content_id, link.platform_program_id) != (
+            proposal.method,
+            proposal.chm_content_id,
+            program_id,
+        ):
+            stats.updated += 1
+        link.method = proposal.method
+        link.chm_content_id = proposal.chm_content_id
+        link.platform_program_id = program_id
+        link.confidence = _CONFIDENCE.get(proposal.method)
+        stats.by_method[proposal.method] = stats.by_method.get(proposal.method, 0) + 1
+
+    await db.flush()
+    return stats
+
+
 async def relink(db: AsyncSession, *, now: datetime | None = None) -> RelinkStats:
     """Recompute automatic links for every post."""
     now = now or datetime.now(timezone.utc)
@@ -240,7 +339,6 @@ async def relink(db: AsyncSession, *, now: datetime | None = None) -> RelinkStat
     for proposal in proposals:
         wanted.setdefault((proposal.post_id, proposal.campaign_id), proposal)
 
-    programs = await _single_programs(db)
     existing = {
         (link.post_id, link.campaign_id): link
         for link in (await db.execute(select(PostCampaignLink))).scalars()
@@ -256,47 +354,14 @@ async def relink(db: AsyncSession, *, now: datetime | None = None) -> RelinkStat
             link.removed_at = now
             stats.removed += 1
 
-    for key, proposal in wanted.items():
-        link = existing.get(key)
-        program_id = programs.get(proposal.campaign_id)
-        if link is None:
-            db.add(
-                PostCampaignLink(
-                    post_id=proposal.post_id,
-                    campaign_id=proposal.campaign_id,
-                    platform_program_id=program_id,
-                    chm_content_id=proposal.chm_content_id,
-                    method=proposal.method,
-                    confidence=_CONFIDENCE.get(proposal.method),
-                    status=LINK_ACTIVE,
-                    created_by=LINKER,
-                )
-            )
-            stats.created += 1
-            stats.by_method[proposal.method] = stats.by_method.get(proposal.method, 0) + 1
-        elif link.method == LINK_MANUAL:
-            continue
-        elif link.status == LINK_REMOVED and link.removed_by != LINKER:
-            continue  # a person removed it
-        else:
-            if link.status != LINK_ACTIVE:
-                link.status = LINK_ACTIVE
-                link.removed_by = None
-                link.removed_at = None
-                stats.reactivated += 1
-            elif (link.method, link.chm_content_id, link.platform_program_id) != (
-                proposal.method,
-                proposal.chm_content_id,
-                program_id,
-            ):
-                stats.updated += 1
-            link.method = proposal.method
-            link.chm_content_id = proposal.chm_content_id
-            link.platform_program_id = program_id
-            link.confidence = _CONFIDENCE.get(proposal.method)
-            stats.by_method[proposal.method] = stats.by_method.get(proposal.method, 0) + 1
+    applied = await apply_proposals(
+        db, list(wanted.values()), overwrite_method=True
+    )
+    stats.created = applied.created
+    stats.reactivated = applied.reactivated
+    stats.updated = applied.updated
+    stats.by_method = applied.by_method
 
-    await db.flush()
     stats.active = (
         await db.execute(
             select(func.count()).select_from(PostCampaignLink).where(

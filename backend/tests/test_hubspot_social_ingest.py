@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import api_headers
@@ -16,6 +16,7 @@ from models.post import Post
 from models.social import (
     BASIS_LIFETIME,
     LINK_ACTIVE,
+    LINK_CONTENT_ID,
     LINK_HUBSPOT_CAMPAIGN,
     LINK_REMOVED,
     PostCampaignLink,
@@ -92,6 +93,19 @@ def test_platform_from_network() -> None:
     assert hs.platform_from_network(None, "LinkedInCompanyPage:99") == "linkedin"
     assert hs.platform_from_network(None, "FacebookPage:1") == "facebook"
     assert hs.platform_from_network(None, None) == "hubspot"
+
+
+def test_as_int_tolerates_nan_and_infinity() -> None:
+    """Infinity/NaN must coerce to 0 (OverflowError is not a ValueError)."""
+    assert hs._as_int(5) == 5
+    assert hs._as_int("12.9") == 12
+    assert hs._as_int(float("nan")) == 0
+    assert hs._as_int(float("inf")) == 0
+    assert hs._as_int(float("-inf")) == 0
+    assert hs._as_int("Infinity") == 0
+    assert hs._as_int("-Infinity") == 0
+    assert hs._as_int("NaN") == 0
+    assert hs._as_int("not-a-number") == 0
 
 
 def test_posts_from_normalized_social_posts() -> None:
@@ -274,7 +288,42 @@ def test_dedupes_duplicate_provider_ids() -> None:
         }
     )
     assert len(posts) == 1
-    assert posts[0].total_clicks == 1
+    assert posts[0].total_clicks == 9
+    assert posts[0].linkedin_clicks == 9
+
+
+def test_merges_same_broadcast_id_across_networks() -> None:
+    """Same HubSpot broadcast id with two network labels → one merged row."""
+    posts = hs.posts_from_hubspot_raw(
+        {
+            "socialPosts": [
+                {
+                    "id": "bcast-1",
+                    "name": "As LinkedIn",
+                    "network": "LinkedIn",
+                    "linkedinClicks": 5,
+                    "facebookClicks": 0,
+                    "twitterClicks": 0,
+                    "totalClicks": 5,
+                },
+                {
+                    "id": "bcast-1",
+                    "name": "As Facebook",
+                    "network": "Facebook",
+                    "linkedinClicks": 0,
+                    "facebookClicks": 2,
+                    "twitterClicks": 0,
+                    "totalClicks": 2,
+                },
+            ]
+        }
+    )
+    assert len(posts) == 1
+    assert posts[0].provider_post_id == "bcast-1"
+    assert posts[0].platform == "linkedin"
+    assert posts[0].linkedin_clicks == 5
+    assert posts[0].facebook_clicks == 2
+    assert posts[0].total_clicks == 7
 
 
 # --- Chunk 2: upsert posts + post_metrics_daily ---
@@ -393,7 +442,9 @@ async def test_ingest_soft_noop_without_social(db_session: AsyncSession) -> None
 
 
 @pytest.mark.asyncio
-async def test_ingest_uses_utc_today_when_period_end_missing(db_session: AsyncSession) -> None:
+async def test_ingest_uses_hubspot_synced_at_when_period_end_missing(
+    db_session: AsyncSession,
+) -> None:
     raw = {
         "hubspotCampaignId": "6169fb82-1c1d-448f-9a65-9a92bea0b1e9",
         "socialPosts": [
@@ -408,11 +459,206 @@ async def test_ingest_uses_utc_today_when_period_end_missing(db_session: AsyncSe
             }
         ],
     }
+    synced = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
     campaign = await _campaign_with_social(db_session, raw=raw)
-    stats = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    campaign.hubspot_synced_at = synced
+    await db_session.flush()
+
+    # Job clock is later; freshness must follow hubspot_synced_at, not NOW.
+    job_now = datetime(2026, 10, 26, 17, tzinfo=timezone.utc)
+    stats = await hs.ingest_campaign_hubspot_social(
+        db_session, campaign, now=job_now
+    )
     assert stats.metric_rows == 1
     metric = (await db_session.execute(select(PostMetricDaily))).scalar_one()
-    assert metric.metric_date == date(2026, 10, 26)
+    assert metric.metric_date == date(2026, 9, 1)
+    assert hs._ensure_aware(metric.fetched_at) == synced
+    post = (await db_session.execute(select(Post))).scalar_one()
+    assert hs._ensure_aware(post.stats_synced_at) == synced
+
+
+@pytest.mark.asyncio
+async def test_ingest_metrics_only_on_non_hubspot_post(
+    db_session: AsyncSession,
+) -> None:
+    """Matching webhook/direct post keeps its fields; HubSpot only adds metrics."""
+    guid = "6169fb82-1c1d-448f-9a65-9a92bea0b1e9"
+    existing = Post(
+        id="webhook-owned",
+        platform="linkedin",
+        provider_post_id="387450805",
+        source="linkedin_webhook",
+        title="Original webhook title",
+        content_url="https://www.linkedin.com/feed/update/original",
+        posted_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        platform_metadata={"fromWebhook": True},
+        share_count=0,
+        impression_count=0,
+    )
+    campaign = await _campaign_with_social(db_session, guid=guid)
+    db_session.add(existing)
+    await db_session.flush()
+
+    stats = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    assert stats.updated >= 1
+
+    refreshed = (
+        await db_session.execute(select(Post).where(Post.id == existing.id))
+    ).scalar_one()
+    assert refreshed.source == "linkedin_webhook"
+    assert refreshed.title == "Original webhook title"
+    assert refreshed.content_url == "https://www.linkedin.com/feed/update/original"
+    assert refreshed.platform_metadata == {"fromWebhook": True}
+    assert guid not in hs._post_hubspot_guids(refreshed)
+
+    metric = (
+        await db_session.execute(
+            select(PostMetricDaily).where(
+                PostMetricDaily.post_id == existing.id,
+                PostMetricDaily.source == hs.METRICS_SOURCE_HUBSPOT,
+            )
+        )
+    ).scalar_one()
+    assert metric.metrics["clicks"] == 5
+
+    hubspot_links = list(
+        (
+            await db_session.execute(
+                select(PostCampaignLink).where(
+                    PostCampaignLink.post_id == existing.id,
+                    PostCampaignLink.method == LINK_HUBSPOT_CAMPAIGN,
+                )
+            )
+        ).scalars()
+    )
+    assert hubspot_links == []
+
+
+@pytest.mark.asyncio
+async def test_ingest_does_not_steal_content_id_link_method(
+    db_session: AsyncSession,
+) -> None:
+    """HubSpot ingest must not churn method on another rule's link."""
+    campaign = await _campaign_with_social(db_session)
+    await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    link = (
+        await db_session.execute(
+            select(PostCampaignLink).where(PostCampaignLink.campaign_id == campaign.id).limit(1)
+        )
+    ).scalar_one()
+    link.method = LINK_CONTENT_ID
+    link.confidence = 1.0
+    await db_session.flush()
+
+    campaign.hubspot_synced_at = datetime(2026, 10, 22, tzinfo=timezone.utc)
+    await db_session.flush()
+    stats = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    assert stats.links_created == 0
+
+    refreshed = (
+        await db_session.execute(
+            select(PostCampaignLink).where(PostCampaignLink.id == link.id)
+        )
+    ).scalar_one()
+    assert refreshed.method == LINK_CONTENT_ID
+
+
+@pytest.mark.asyncio
+async def test_ingest_clears_guid_when_post_leaves_snapshot(
+    db_session: AsyncSession,
+) -> None:
+    """Broadcast removed from HubSpot campaign drops GUID so relink unlinks."""
+    synced_1 = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+    campaign = await _campaign_with_social(db_session)
+    campaign.hubspot_synced_at = synced_1
+    await db_session.flush()
+
+    first = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    assert first.created == 2
+    assert first.links_created == 2
+
+    # Drop the Facebook broadcast from the stored snapshot and bump sync time.
+    synced_2 = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
+    campaign.hubspot_raw_data = {
+        "hubspotCampaignId": campaign.hubspot_campaign_id,
+        "reportingPeriodEnd": "2026-10-26",
+        "socialPosts": [
+            {
+                "id": "387450805",
+                "name": "LI caption",
+                "network": "LinkedIn",
+                "facebookClicks": 0,
+                "linkedinClicks": 5,
+                "twitterClicks": 0,
+                "totalClicks": 5,
+            }
+        ],
+    }
+    campaign.hubspot_synced_at = synced_2
+    await db_session.flush()
+
+    second = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    assert second.detached == 1
+    assert second.posts == 1
+
+    gone = (
+        await db_session.execute(
+            select(Post).where(Post.provider_post_id == "387358222")
+        )
+    ).scalar_one()
+    assert campaign.hubspot_campaign_id not in hs._post_hubspot_guids(gone)
+
+    kept = (
+        await db_session.execute(
+            select(Post).where(Post.provider_post_id == "387450805")
+        )
+    ).scalar_one()
+    assert campaign.hubspot_campaign_id in hs._post_hubspot_guids(kept)
+
+    await post_links.relink(db_session, now=NOW)
+    active = list(
+        (
+            await db_session.execute(
+                select(PostCampaignLink).where(
+                    PostCampaignLink.campaign_id == campaign.id,
+                    PostCampaignLink.status == LINK_ACTIVE,
+                )
+            )
+        ).scalars()
+    )
+    assert len(active) == 1
+    assert active[0].post_id == kept.id
+
+
+@pytest.mark.asyncio
+async def test_reingest_skips_when_snapshot_unchanged(
+    db_session: AsyncSession,
+) -> None:
+    synced = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+    campaign = await _campaign_with_social(db_session)
+    campaign.hubspot_synced_at = synced
+    await db_session.flush()
+
+    first = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    assert first.skipped is None
+    assert first.created == 2
+
+    later = datetime(2026, 10, 27, 3, 0, tzinfo=timezone.utc)
+    second = await hs.ingest_campaign_hubspot_social(
+        db_session, campaign, now=later
+    )
+    assert second.skipped == "snapshot_unchanged"
+    assert second.created == 0
+    assert second.updated == 0
+
+    posts = list(
+        (
+            await db_session.execute(
+                select(Post).where(Post.source == hs.POST_SOURCE_HUBSPOT)
+            )
+        ).scalars()
+    )
+    assert all(hs._ensure_aware(p.stats_synced_at) == synced for p in posts)
 
 
 # --- Chunk 3: hubspot_campaign links + EXTRA_RULES ---
@@ -633,8 +879,10 @@ async def test_patch_soft_fails_when_ingest_raises(
     db_session.add(campaign)
     await db_session.flush()
 
-    async def boom(*_args, **_kwargs):
-        raise RuntimeError("ingest exploded")
+    async def boom(db, *_args, **_kwargs):
+        # DB abort after the PATCH fields were flushed: without begin_nested,
+        # get_db's commit would raise and hubspot_raw_data would be lost.
+        await db.execute(text("SELECT 1 FROM __hubspot_patch_savepoint_probe__"))
 
     monkeypatch.setattr(hs, "ingest_campaign_hubspot_social", boom)
 
@@ -645,6 +893,14 @@ async def test_patch_soft_fails_when_ingest_raises(
     )
     assert out.id == campaign.id
     assert out.hubspot_raw_data is not None
+    # Ingest rolled back; PATCH snapshot retained; session still usable.
+    assert (
+        await db_session.execute(select(func.count()).select_from(Post))
+    ).scalar_one() == 0
+    await db_session.flush()
+    refreshed = await db_session.get(Campaign, campaign.id)
+    assert refreshed is not None
+    assert refreshed.hubspot_raw_data is not None
 
 
 @pytest.mark.asyncio
@@ -748,7 +1004,10 @@ async def test_backfill_soft_fails_one_campaign_and_continues(
 
     async def flaky(db, campaign, *, now=None):
         if campaign.id == first.id:
-            raise RuntimeError("boom on first")
+            # Real DB abort (not a plain RuntimeError): without begin_nested this
+            # would leave PendingRollbackError and stop every later campaign.
+            # Use a missing relation — works on SQLite and Postgres (unlike 1/0).
+            await db.execute(text("SELECT 1 FROM __hubspot_backfill_savepoint_probe__"))
         return await real(db, campaign, now=now)
 
     monkeypatch.setattr(hs, "ingest_campaign_hubspot_social", flaky)
@@ -767,6 +1026,9 @@ async def test_backfill_soft_fails_one_campaign_and_continues(
     assert other is not None
     assert second.id  # second campaign survived
 
+    # Outer session still healthy enough to flush/commit after a poisoned campaign.
+    await db_session.flush()
+
 
 @pytest.mark.asyncio
 async def test_backfill_idempotent_on_rerun(db_session: AsyncSession) -> None:
@@ -784,6 +1046,65 @@ async def test_backfill_idempotent_on_rerun(db_session: AsyncSession) -> None:
 
 
 # --- Reviewer fixes: identity drift + campaign GUID stamp ---
+
+
+@pytest.mark.asyncio
+async def test_ingest_same_broadcast_id_two_networks_one_link(
+    db_session: AsyncSession,
+) -> None:
+    """Duplicate broadcast id must not insert two post_campaign_links."""
+    campaign = await _campaign_with_social(
+        db_session,
+        raw={
+            "hubspotCampaignId": "6169fb82-1c1d-448f-9a65-9a92bea0b1e9",
+            "reportingPeriodEnd": "2026-10-26",
+            "socialPosts": [
+                {
+                    "id": "same-bcast",
+                    "name": "LI view",
+                    "network": "LinkedIn",
+                    "linkedinClicks": 4,
+                    "facebookClicks": 0,
+                    "twitterClicks": 0,
+                    "totalClicks": 4,
+                },
+                {
+                    "id": "same-bcast",
+                    "name": "FB view",
+                    "network": "Facebook",
+                    "linkedinClicks": 0,
+                    "facebookClicks": 1,
+                    "twitterClicks": 0,
+                    "totalClicks": 1,
+                },
+            ],
+        },
+    )
+    stats = await hs.ingest_campaign_hubspot_social(db_session, campaign, now=NOW)
+    assert stats.posts == 1
+    assert stats.created == 1
+    assert stats.links_created == 1
+    posts = list(
+        (
+            await db_session.execute(
+                select(Post).where(Post.provider_post_id == "same-bcast")
+            )
+        ).scalars()
+    )
+    assert len(posts) == 1
+    links = list(
+        (
+            await db_session.execute(
+                select(PostCampaignLink).where(
+                    PostCampaignLink.campaign_id == campaign.id,
+                    PostCampaignLink.post_id == posts[0].id,
+                )
+            )
+        ).scalars()
+    )
+    assert len(links) == 1
+    assert links[0].method == LINK_HUBSPOT_CAMPAIGN
+    assert links[0].status == LINK_ACTIVE
 
 
 @pytest.mark.asyncio
@@ -939,6 +1260,116 @@ async def test_prior_duplicate_orphan_loses_guid_so_relink_drops_it(
     )
     assert len(active) == 1
     assert active[0].post_id == canon.id
+
+
+@pytest.mark.asyncio
+async def test_shared_guid_proposes_links_to_all_hub_campaigns(
+    db_session: AsyncSession,
+) -> None:
+    """Two Hub campaigns on one HubSpot GUID keep links to both."""
+    guid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    analytics = Campaign(name="Analytics", hubspot_campaign_id=guid, report_type="analytics")
+    combined = Campaign(name="Combined", hubspot_campaign_id=guid, report_type="combined")
+    post = Post(
+        id="shared-guid-post",
+        platform="linkedin",
+        provider_post_id="shared-1",
+        source=hs.POST_SOURCE_HUBSPOT,
+        platform_metadata={
+            "hubspotCampaignId": guid,
+            "hubspotCampaignIds": [guid],
+        },
+        share_count=0,
+        impression_count=0,
+    )
+    db_session.add_all([analytics, combined, post])
+    await db_session.flush()
+
+    proposals = await hs.hubspot_campaign_extra_rule(
+        db_session,
+        post_links.LinkContext(posts=[post], campaigns=[analytics, combined]),
+    )
+    assert {(p.post_id, p.campaign_id) for p in proposals} == {
+        (post.id, analytics.id),
+        (post.id, combined.id),
+    }
+
+    stats = await post_links.relink(db_session, now=NOW)
+    assert stats.by_method.get(LINK_HUBSPOT_CAMPAIGN) == 2
+    active = list(
+        (
+            await db_session.execute(
+                select(PostCampaignLink).where(PostCampaignLink.status == LINK_ACTIVE)
+            )
+        ).scalars()
+    )
+    assert {lnk.campaign_id for lnk in active} == {analytics.id, combined.id}
+
+    # Re-relink must not flip / remove either side.
+    await post_links.relink(db_session, now=NOW)
+    active2 = list(
+        (
+            await db_session.execute(
+                select(PostCampaignLink).where(PostCampaignLink.status == LINK_ACTIVE)
+            )
+        ).scalars()
+    )
+    assert {lnk.campaign_id for lnk in active2} == {analytics.id, combined.id}
+
+
+@pytest.mark.asyncio
+async def test_ingest_accumulates_guids_when_broadcast_in_two_campaigns(
+    db_session: AsyncSession,
+) -> None:
+    """Same broadcast ingested under two HubSpot GUIDs keeps both."""
+    guid_a = "11111111-1111-1111-1111-111111111111"
+    guid_b = "22222222-2222-2222-2222-222222222222"
+    raw_posts = [
+        {
+            "id": "multi-guid-post",
+            "name": "Shared broadcast",
+            "network": "LinkedIn",
+            "linkedinClicks": 3,
+            "facebookClicks": 0,
+            "twitterClicks": 0,
+            "totalClicks": 3,
+        }
+    ]
+    camp_a = await _campaign_with_social(
+        db_session,
+        guid=guid_a,
+        raw={"hubspotCampaignId": guid_a, "reportingPeriodEnd": "2026-10-26", "socialPosts": raw_posts},
+    )
+    camp_b = await _campaign_with_social(
+        db_session,
+        guid=guid_b,
+        raw={"hubspotCampaignId": guid_b, "reportingPeriodEnd": "2026-10-26", "socialPosts": raw_posts},
+    )
+
+    await hs.ingest_campaign_hubspot_social(db_session, camp_a, now=NOW)
+    await hs.ingest_campaign_hubspot_social(db_session, camp_b, now=NOW)
+
+    post = (
+        await db_session.execute(
+            select(Post).where(Post.provider_post_id == "multi-guid-post")
+        )
+    ).scalar_one()
+    meta = post.platform_metadata or {}
+    assert set(meta.get("hubspotCampaignIds") or []) == {guid_a, guid_b}
+    assert meta.get("hubspotCampaignId") == guid_b
+
+    await post_links.relink(db_session, now=NOW)
+    active = list(
+        (
+            await db_session.execute(
+                select(PostCampaignLink).where(
+                    PostCampaignLink.post_id == post.id,
+                    PostCampaignLink.status == LINK_ACTIVE,
+                )
+            )
+        ).scalars()
+    )
+    assert {lnk.campaign_id for lnk in active} == {camp_a.id, camp_b.id}
 
 
 @pytest.mark.asyncio

@@ -189,6 +189,43 @@ async def test_daily_job_syncs_each_source_then_relinks(db_session: AsyncSession
 
 
 @pytest.mark.asyncio
+async def test_daily_job_skips_hubspot_when_platforms_filter_excludes_it(
+    db_session: AsyncSession, monkeypatch
+):
+    """platforms=['youtube'] must not re-ingest HubSpot snapshots."""
+    from jobs.platform_metrics_sync_core import sync_platform_metrics
+
+    calls: list[str] = []
+
+    async def yt(_db, *, trigger, now=None):
+        calls.append("youtube")
+        return social_posts.SourceSyncStats(platform="youtube", posts=1)
+
+    async def li(_db, *, trigger, now=None):
+        calls.append("linkedin")
+        return social_posts.SourceSyncStats(platform="linkedin")
+
+    async def hubspot_must_not_run(*_a, **_k):
+        calls.append("hubspot")
+        raise AssertionError("HubSpot backfill must respect platforms filter")
+
+    monkeypatch.setattr("services.social_posts.sync_youtube", yt)
+    monkeypatch.setattr("services.social_posts.sync_linkedin_ads", li)
+    monkeypatch.setattr(
+        "services.hubspot_social_ingest.ingest_all_campaigns_with_hubspot",
+        hubspot_must_not_run,
+    )
+
+    stats = await sync_platform_metrics(db_session, platforms=["youtube"])
+    assert calls == ["youtube"]
+    assert stats.youtube is not None and stats.youtube.posts == 1
+    assert stats.linkedin is None
+    assert stats.hubspot is None
+    assert stats.links is not None
+    assert stats.errors == []
+
+
+@pytest.mark.asyncio
 async def test_daily_job_dry_run_calls_nothing(db_session: AsyncSession, monkeypatch):
     from jobs.platform_metrics_sync_core import sync_platform_metrics
 

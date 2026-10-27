@@ -1,11 +1,12 @@
-"""platform_metrics_sync — EventBridge Lambda handler (CPR-15).
+"""platform_metrics_sync — EventBridge Lambda handler (CPR-15 + CPR-56).
 
 Weekdays on dev, daily on prod. Syncs YouTube uploads and LinkedIn Ads
-creatives into posts with their metrics, then relinks posts to campaigns.
+creatives into posts with their metrics, backfills HubSpot social from
+stored campaign snapshots, then relinks posts to campaigns.
 Off by default (sync_jobs_enabled.platform_metrics_sync).
 
 Event shape (all optional, for on-demand runs):
-- `platforms`: list[str] — subset of ["youtube", "linkedin"]
+- `platforms`: list[str] — subset of ["youtube", "linkedin", "hubspot"]
 - `dry_run`: bool — do nothing (checks the Lambda can start and reach the DB)
 """
 
@@ -34,6 +35,7 @@ async def _run(event: dict) -> dict:
         "errors": stats.errors[:20],
         "youtube": asdict(stats.youtube) if stats.youtube else None,
         "linkedin": asdict(stats.linkedin) if stats.linkedin else None,
+        "hubspot": asdict(stats.hubspot) if stats.hubspot else None,
         "links": asdict(stats.links) if stats.links else None,
         "linkedin_token_days_left": stats.linkedin_token_days_left,
         "linkedin_token_expiring": stats.linkedin_token_expiring,

@@ -32,7 +32,11 @@ from services.connectors.linkedin_auth import linkedin_ads_access_token
 
 log = logging.getLogger(__name__)
 
-SCHEDULED_PLATFORMS = ("youtube", "linkedin")
+# ``hubspot`` is a snapshot backfill (no HTTP), not a source sync — still
+# filterable so on-demand ``platforms=["youtube"]`` does not re-ingest HubSpot
+# or trip the platform-metrics-sync-errors alarm on HubSpot-only failures.
+SCHEDULED_PLATFORMS = ("youtube", "linkedin", "hubspot")
+_SOURCE_SYNCS = frozenset({"youtube", "linkedin"})
 
 
 @dataclass
@@ -60,6 +64,8 @@ async def sync_platform_metrics(
 
     syncs = {"youtube": social_posts.sync_youtube, "linkedin": social_posts.sync_linkedin_ads}
     for platform in wanted:
+        if platform not in _SOURCE_SYNCS:
+            continue
         result = await syncs[platform](db, trigger="schedule", now=now)
         setattr(stats, platform, result)
         if result.error:
@@ -67,12 +73,13 @@ async def sync_platform_metrics(
         await db.commit()
 
     # CPR-56: backfill from stored snapshots after YT/LI, before relink.
-    stats.hubspot = await hubspot_social_ingest.ingest_all_campaigns_with_hubspot(
-        db, now=now
-    )
-    for err in stats.hubspot.errors:
-        stats.errors.append(f"hubspot: {err}")
-    await db.commit()
+    if "hubspot" in wanted:
+        stats.hubspot = await hubspot_social_ingest.ingest_all_campaigns_with_hubspot(
+            db, now=now
+        )
+        for err in stats.hubspot.errors:
+            stats.errors.append(f"hubspot: {err}")
+        await db.commit()
 
     stats.links = await post_links.relink(db, now=now)
     await db.commit()

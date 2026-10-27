@@ -107,10 +107,16 @@ async def update_campaign(
     await db.refresh(campaign)
 
     # CPR-56: Platform Sync Now PATCHes hubspot_raw_data → upsert social posts.
-    # Soft-fail so a bad snapshot never fails the sync / PATCH response.
+    # Savepoint isolates ingest: a flush/DB (or any) error rolls back only the
+    # ingest work so get_db's commit still persists hubspot_raw_data. Without
+    # this, a DB error leaves PendingRollbackError and the PATCH 500s / loses
+    # the snapshot; a non-DB error after partial flush would commit half-ingest.
     if hubspot_raw_touched:
         try:
-            await hubspot_social_ingest.ingest_campaign_hubspot_social(db, campaign)
+            async with db.begin_nested():
+                await hubspot_social_ingest.ingest_campaign_hubspot_social(
+                    db, campaign
+                )
         except Exception:
             log.exception(
                 "hubspot_social_ingest_failed campaign_id=%s (PATCH still succeeds)",

@@ -1,10 +1,11 @@
 """CPR-56: parse HubSpot social payloads from ``campaign.hubspot_raw_data``.
 
-Platform sync stores SOCIAL_BROADCAST (and optional normalized ``socialPosts``)
-on the campaign. This module turns that JSON into typed rows and upserts
-``posts`` / ``post_metrics_daily`` (links in a later chunk).
+Platform Sync Now stores SOCIAL_BROADCAST (and normalized ``socialPosts``) on
+the campaign. This module upserts ``posts`` / ``post_metrics_daily`` and
+proposes ``hubspot_campaign`` links (via ``post_links.apply_proposals``).
 
-No HubSpot HTTP — snapshot only.
+No HubSpot HTTP — snapshot only. Called from campaign PATCH and the nightly
+``platform_metrics_sync`` backfill.
 """
 
 from __future__ import annotations
@@ -87,12 +88,16 @@ def _as_int(value: Any) -> int:
         return 0
     if isinstance(value, int):
         return value
-    if isinstance(value, float) and value == value:  # not NaN
-        return int(value)
+    if isinstance(value, float):
+        try:
+            return int(value)
+        except (ValueError, OverflowError):
+            # NaN → ValueError; ±Infinity → OverflowError
+            return 0
     if isinstance(value, str) and value.strip():
         try:
             return int(float(value.strip()))
-        except ValueError:
+        except (ValueError, OverflowError):
             return 0
     return 0
 
@@ -232,6 +237,54 @@ def _row_from_social_broadcast_asset(entry: dict[str, Any]) -> HubSpotSocialPost
     )
 
 
+def _merge_hubspot_rows(
+    kept: HubSpotSocialPostRow, incoming: HubSpotSocialPostRow
+) -> HubSpotSocialPostRow:
+    """Merge duplicate broadcast ids (same provider id, possibly different networks)."""
+    fb = max(kept.facebook_clicks, incoming.facebook_clicks)
+    li = max(kept.linkedin_clicks, incoming.linkedin_clicks)
+    tw = max(kept.twitter_clicks, incoming.twitter_clicks)
+    total = max(kept.total_clicks, incoming.total_clicks, fb + li + tw)
+    platform = kept.platform
+    if kept.platform == PLATFORM_HUBSPOT and incoming.platform != PLATFORM_HUBSPOT:
+        platform = incoming.platform
+    network = kept.network_label or incoming.network_label
+    if kept.platform == PLATFORM_HUBSPOT and incoming.network_label:
+        network = incoming.network_label
+    title = kept.title
+    if (not title or title.startswith("Social post ")) and incoming.title:
+        title = incoming.title
+    return HubSpotSocialPostRow(
+        provider_post_id=kept.provider_post_id,
+        platform=platform,
+        title=title[:500],
+        facebook_clicks=fb,
+        linkedin_clicks=li,
+        twitter_clicks=tw,
+        total_clicks=total,
+        content_url=kept.content_url or incoming.content_url,
+        posted_at=kept.posted_at or incoming.posted_at,
+        channel_key=kept.channel_key or incoming.channel_key,
+        network_label=network,
+    )
+
+
+def _dedupe_rows_by_provider_id(
+    rows: list[HubSpotSocialPostRow],
+) -> list[HubSpotSocialPostRow]:
+    """One row per broadcast id — never keep two networks as separate rows."""
+    by_id: dict[str, HubSpotSocialPostRow] = {}
+    order: list[str] = []
+    for row in rows:
+        existing = by_id.get(row.provider_post_id)
+        if existing is None:
+            by_id[row.provider_post_id] = row
+            order.append(row.provider_post_id)
+        else:
+            by_id[row.provider_post_id] = _merge_hubspot_rows(existing, row)
+    return [by_id[pid] for pid in order]
+
+
 def posts_from_hubspot_raw(raw: Any) -> list[HubSpotSocialPostRow]:
     """Prefer normalized ``socialPosts``; else parse ``assetsByType.SOCIAL_BROADCAST``."""
     snap = _as_record(raw)
@@ -241,7 +294,6 @@ def posts_from_hubspot_raw(raw: Any) -> list[HubSpotSocialPostRow]:
     normalized = snap.get("socialPosts")
     if isinstance(normalized, list) and normalized:
         rows: list[HubSpotSocialPostRow] = []
-        seen: set[tuple[str, str]] = set()
         for entry in normalized:
             record = _as_record(entry)
             if record is None:
@@ -249,13 +301,9 @@ def posts_from_hubspot_raw(raw: Any) -> list[HubSpotSocialPostRow]:
             row = _row_from_normalized_social_post(record)
             if row is None:
                 continue
-            key = (row.platform, row.provider_post_id)
-            if key in seen:
-                continue
-            seen.add(key)
             rows.append(row)
         if rows:
-            return rows
+            return _dedupe_rows_by_provider_id(rows)
 
     assets_by_type = _as_record(snap.get("assetsByType")) or {}
     social_raw = assets_by_type.get("SOCIAL_BROADCAST")
@@ -268,7 +316,6 @@ def posts_from_hubspot_raw(raw: Any) -> list[HubSpotSocialPostRow]:
         return []
 
     rows = []
-    seen: set[tuple[str, str]] = set()
     for entry in results:
         record = _as_record(entry)
         if record is None:
@@ -276,12 +323,8 @@ def posts_from_hubspot_raw(raw: Any) -> list[HubSpotSocialPostRow]:
         row = _row_from_social_broadcast_asset(record)
         if row is None:
             continue
-        key = (row.platform, row.provider_post_id)
-        if key in seen:
-            continue
-        seen.add(key)
         rows.append(row)
-    return rows
+    return _dedupe_rows_by_provider_id(rows)
 
 
 def parse_hubspot_social_snapshot(raw: Any) -> HubSpotSocialSnapshot | None:
@@ -314,6 +357,7 @@ class HubSpotIngestStats:
     links_created: int = 0
     links_reactivated: int = 0
     links_skipped_person: int = 0
+    detached: int = 0
     skipped: str | None = None
 
 
@@ -321,6 +365,59 @@ def _utc_today(now: datetime) -> date:
     if now.tzinfo is None:
         return now.date()
     return now.astimezone(timezone.utc).date()
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _ingest_as_of(
+    campaign: Campaign, raw: Any, now: datetime
+) -> datetime:
+    """When HubSpot data was synced — not the wall clock of the ingest job."""
+    if campaign.hubspot_synced_at is not None:
+        return _ensure_aware(campaign.hubspot_synced_at)
+    snap = _as_record(raw) or {}
+    from_snap = _parse_iso_datetime(snap.get("syncedAt") or snap.get("synced_at"))
+    if from_snap is not None:
+        return _ensure_aware(from_snap)
+    return _ensure_aware(now)
+
+
+async def _hubspot_snapshot_already_applied(
+    db: AsyncSession,
+    *,
+    guid: str,
+    provider_ids: set[str],
+    synced_at: datetime,
+) -> bool:
+    """True when every snapshot post already reflects this ``hubspot_synced_at``."""
+    if not provider_ids:
+        return False
+    synced_at = _ensure_aware(synced_at)
+    posts = list(
+        (
+            await db.execute(
+                select(Post).where(Post.provider_post_id.in_(provider_ids))
+            )
+        ).scalars()
+    )
+    by_provider = {
+        p.provider_post_id: p for p in posts if p.provider_post_id
+    }
+    for provider_id in provider_ids:
+        post = by_provider.get(provider_id)
+        if post is None:
+            return False
+        if guid not in _post_hubspot_guids(post):
+            return False
+        if post.stats_synced_at is None:
+            return False
+        if _ensure_aware(post.stats_synced_at) < synced_at:
+            return False
+    return True
 
 
 def _metric_payload(row: HubSpotSocialPostRow) -> dict[str, Any]:
@@ -333,6 +430,15 @@ def _metric_payload(row: HubSpotSocialPostRow) -> dict[str, Any]:
 
 
 def _new_hubspot_post(row: HubSpotSocialPostRow, *, hubspot_campaign_id: str) -> Post:
+    meta: dict[str, Any] = {
+        "channelKey": row.channel_key,
+        "network": row.network_label,
+        "facebookClicks": row.facebook_clicks,
+        "linkedinClicks": row.linkedin_clicks,
+        "twitterClicks": row.twitter_clicks,
+        "totalClicks": row.total_clicks,
+    }
+    _stamp_hubspot_guids(meta, hubspot_campaign_id)
     return Post(
         id=str(uuid.uuid4()),
         platform=row.platform,
@@ -347,15 +453,7 @@ def _new_hubspot_post(row: HubSpotSocialPostRow, *, hubspot_campaign_id: str) ->
         view_count=0,
         like_count=0,
         comment_count=0,
-        platform_metadata={
-            "hubspotCampaignId": hubspot_campaign_id,
-            "channelKey": row.channel_key,
-            "network": row.network_label,
-            "facebookClicks": row.facebook_clicks,
-            "linkedinClicks": row.linkedin_clicks,
-            "twitterClicks": row.twitter_clicks,
-            "totalClicks": row.total_clicks,
-        },
+        platform_metadata=meta,
     )
 
 
@@ -386,12 +484,108 @@ async def _load_posts_for_hubspot_rows(
     return by_exact, by_hubspot_provider_id
 
 
+def _guids_from_meta(meta: dict[str, Any]) -> list[str]:
+    """All HubSpot campaign GUIDs stored on a post (list + legacy single)."""
+    guids: list[str] = []
+    raw_list = meta.get("hubspotCampaignIds") or meta.get("hubspot_campaign_ids")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            guid = _as_str(item)
+            if guid and guid not in guids:
+                guids.append(guid)
+    single = _as_str(meta.get("hubspotCampaignId")) or _as_str(
+        meta.get("hubspot_campaign_id")
+    )
+    if single and single not in guids:
+        guids.append(single)
+    return guids
+
+
+def _stamp_hubspot_guids(meta: dict[str, Any], guid: str) -> dict[str, Any]:
+    """Add ``guid`` without dropping GUIDs from other HubSpot campaigns."""
+    guids = _guids_from_meta(meta)
+    if guid not in guids:
+        guids.append(guid)
+    meta["hubspotCampaignIds"] = guids
+    # Latest ingest target (back-compat for readers of the singular key).
+    meta["hubspotCampaignId"] = guid
+    meta.pop("hubspot_campaign_id", None)
+    meta.pop("hubspot_campaign_ids", None)
+    return meta
+
+
 def _clear_hubspot_campaign_metadata(post: Post) -> None:
     """Stop EXTRA_RULE from re-linking a superseded duplicate row."""
     meta = dict(post.platform_metadata or {})
     meta.pop("hubspotCampaignId", None)
     meta.pop("hubspot_campaign_id", None)
+    meta.pop("hubspotCampaignIds", None)
+    meta.pop("hubspot_campaign_ids", None)
     post.platform_metadata = meta or None
+
+
+def _remove_hubspot_guid_from_metadata(post: Post, guid: str) -> bool:
+    """Drop one campaign GUID from post metadata. Returns True if changed."""
+    meta = dict(post.platform_metadata or {})
+    before = _guids_from_meta(meta)
+    if guid not in before:
+        return False
+    remaining = [g for g in before if g != guid]
+    if remaining:
+        meta["hubspotCampaignIds"] = remaining
+        meta["hubspotCampaignId"] = remaining[-1]
+        meta.pop("hubspot_campaign_id", None)
+        meta.pop("hubspot_campaign_ids", None)
+    else:
+        meta.pop("hubspotCampaignId", None)
+        meta.pop("hubspot_campaign_id", None)
+        meta.pop("hubspotCampaignIds", None)
+        meta.pop("hubspot_campaign_ids", None)
+    post.platform_metadata = meta or None
+    return True
+
+
+async def _detach_posts_no_longer_in_snapshot(
+    db: AsyncSession,
+    *,
+    campaign_id: int,
+    guid: str,
+    keep_provider_ids: set[str],
+) -> int:
+    """Clear this campaign GUID on posts that left the HubSpot snapshot.
+
+    Relink then drops the ``hubspot_campaign`` proposals for those posts.
+    """
+    linked_ids = {
+        link.post_id
+        for link in (
+            await db.execute(
+                select(PostCampaignLink).where(
+                    PostCampaignLink.campaign_id == campaign_id,
+                    PostCampaignLink.method == LINK_HUBSPOT_CAMPAIGN,
+                )
+            )
+        ).scalars()
+    }
+    candidates: dict[str, Post] = {}
+    if linked_ids:
+        for post in (
+            await db.execute(select(Post).where(Post.id.in_(linked_ids)))
+        ).scalars():
+            candidates[post.id] = post
+    for post in (
+        await db.execute(select(Post).where(Post.source == POST_SOURCE_HUBSPOT))
+    ).scalars():
+        if guid in _post_hubspot_guids(post):
+            candidates[post.id] = post
+
+    detached = 0
+    for post in candidates.values():
+        if post.provider_post_id and post.provider_post_id in keep_provider_ids:
+            continue
+        if _remove_hubspot_guid_from_metadata(post, guid):
+            detached += 1
+    return detached
 
 
 def _resolve_post_for_row(
@@ -466,39 +660,48 @@ async def _upsert_hubspot_metrics(
     return len(rows)
 
 
-def _post_hubspot_guid(post: Post) -> str | None:
-    meta = post.platform_metadata or {}
-    return _as_str(meta.get("hubspotCampaignId")) or _as_str(meta.get("hubspot_campaign_id"))
+def _post_hubspot_guids(post: Post) -> list[str]:
+    return _guids_from_meta(dict(post.platform_metadata or {}))
 
 
-def _campaigns_by_hubspot_guid(campaigns: list[Campaign]) -> dict[str, int]:
-    """HubSpot GUID → campaign id (first owner wins; duplicates logged)."""
+def _campaigns_by_hubspot_guid(campaigns: list[Campaign]) -> dict[str, list[int]]:
+    """HubSpot GUID → every Hub campaign id that shares it (stable by id)."""
     owners: dict[str, list[int]] = {}
-    for campaign in campaigns:
+    for campaign in sorted(campaigns, key=lambda c: c.id):
         guid = (campaign.hubspot_campaign_id or "").strip()
         if guid:
             owners.setdefault(guid, []).append(campaign.id)
     for guid, ids in owners.items():
         if len(ids) > 1:
-            log.warning("hubspot_social_ingest_ambiguous_guid %s campaigns=%s", guid, ids)
-    return {guid: ids[0] for guid, ids in owners.items()}
+            log.info(
+                "hubspot_social_ingest_shared_guid %s campaigns=%s "
+                "(linking to all)",
+                guid,
+                ids,
+            )
+    return owners
 
 
 async def hubspot_campaign_extra_rule(
     db: AsyncSession, ctx: post_links.LinkContext
 ) -> list[post_links.Proposal]:
-    """EXTRA_RULE: ``platform_metadata.hubspotCampaignId`` → ``campaigns.hubspot_campaign_id``."""
+    """EXTRA_RULE: post HubSpot GUIDs → every Hub campaign with that GUID."""
     del db  # signature matches ExtraRule; campaigns come from ctx
     by_guid = _campaigns_by_hubspot_guid(ctx.campaigns)
     if not by_guid:
         return []
     proposals: list[post_links.Proposal] = []
+    seen: set[tuple[str, int]] = set()
     for post in ctx.posts:
-        guid = _post_hubspot_guid(post)
-        if guid and guid in by_guid:
-            proposals.append(
-                post_links.Proposal(post.id, by_guid[guid], LINK_HUBSPOT_CAMPAIGN)
-            )
+        for guid in _post_hubspot_guids(post):
+            for campaign_id in by_guid.get(guid, []):
+                key = (post.id, campaign_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                proposals.append(
+                    post_links.Proposal(post.id, campaign_id, LINK_HUBSPOT_CAMPAIGN)
+                )
     return proposals
 
 
@@ -513,54 +716,31 @@ async def _ensure_hubspot_links(
     campaign: Campaign,
     post_ids: list[str],
 ) -> tuple[int, int, int]:
-    """Ensure active ``hubspot_campaign`` links; respect manual / person-removed.
+    """Ensure HubSpot links via shared ``post_links.apply_proposals``.
+
+    Does not steal ``method`` from another automatic rule (e.g. ``content_id``).
+    Sets ``platform_program_id`` the same way ``relink`` does.
 
     Returns (created, reactivated, skipped_person).
     """
     if not post_ids:
         return 0, 0, 0
-    existing = {
-        link.post_id: link
-        for link in (
-            await db.execute(
-                select(PostCampaignLink).where(
-                    PostCampaignLink.campaign_id == campaign.id,
-                    PostCampaignLink.post_id.in_(post_ids),
-                )
-            )
-        ).scalars()
-    }
-    created = reactivated = skipped_person = 0
-    confidence = post_links._CONFIDENCE.get(LINK_HUBSPOT_CAMPAIGN)
+    # Dedupe provider ids while preserving order (defense in depth).
+    seen: set[str] = set()
+    unique_ids: list[str] = []
     for post_id in post_ids:
-        link = existing.get(post_id)
-        if link is None:
-            db.add(
-                PostCampaignLink(
-                    post_id=post_id,
-                    campaign_id=campaign.id,
-                    method=LINK_HUBSPOT_CAMPAIGN,
-                    confidence=confidence,
-                    status=LINK_ACTIVE,
-                    created_by=post_links.LINKER,
-                )
-            )
-            created += 1
+        if post_id in seen:
             continue
-        if link.method == LINK_MANUAL:
-            continue
-        if link.status == LINK_REMOVED and link.removed_by != post_links.LINKER:
-            skipped_person += 1
-            continue
-        if link.status != LINK_ACTIVE:
-            link.status = LINK_ACTIVE
-            link.removed_by = None
-            link.removed_at = None
-            reactivated += 1
-        link.method = LINK_HUBSPOT_CAMPAIGN
-        link.confidence = confidence
-    await db.flush()
-    return created, reactivated, skipped_person
+        seen.add(post_id)
+        unique_ids.append(post_id)
+    proposals = [
+        post_links.Proposal(post_id, campaign.id, LINK_HUBSPOT_CAMPAIGN)
+        for post_id in unique_ids
+    ]
+    applied = await post_links.apply_proposals(
+        db, proposals, overwrite_method=False
+    )
+    return applied.created, applied.reactivated, applied.skipped_person
 
 
 async def ingest_campaign_hubspot_social(
@@ -584,7 +764,7 @@ async def ingest_campaign_hubspot_social(
         return stats
 
     snapshot = parse_hubspot_social_snapshot(campaign.hubspot_raw_data)
-    if snapshot is None or not snapshot.posts:
+    if snapshot is None:
         stats.skipped = "no_social_payload"
         return stats
 
@@ -602,12 +782,39 @@ async def ingest_campaign_hubspot_social(
             snapshot.hubspot_campaign_id,
         )
     hubspot_campaign_id = guid
-    metric_date = snapshot.reporting_period_end or _utc_today(now)
     rows = list(snapshot.posts)
+    keep_provider_ids = {row.provider_post_id for row in rows}
+
+    if not rows:
+        # Empty social payload — detach every post still stamped with this GUID.
+        stats.detached = await _detach_posts_no_longer_in_snapshot(
+            db,
+            campaign_id=campaign.id,
+            guid=hubspot_campaign_id,
+            keep_provider_ids=set(),
+        )
+        await db.flush()
+        stats.skipped = "no_social_payload"
+        return stats
+
+    # Stamp freshness from Platform sync time — not the nightly job clock.
+    as_of = _ingest_as_of(campaign, campaign.hubspot_raw_data, now)
+    metric_date = snapshot.reporting_period_end or _utc_today(as_of)
+
+    if campaign.hubspot_synced_at is not None and await _hubspot_snapshot_already_applied(
+        db,
+        guid=hubspot_campaign_id,
+        provider_ids=keep_provider_ids,
+        synced_at=campaign.hubspot_synced_at,
+    ):
+        stats.skipped = "snapshot_unchanged"
+        return stats
+
     by_exact, by_hubspot_provider_id = await _load_posts_for_hubspot_rows(db, rows)
 
     metric_rows: list[tuple[str, date, dict[str, Any]]] = []
     post_ids: list[str] = []
+    seen_post_ids: set[str] = set()
     for row in rows:
         key = (row.platform, row.provider_post_id)
         post, orphans = _resolve_post_for_row(
@@ -616,12 +823,22 @@ async def ingest_campaign_hubspot_social(
         for orphan in orphans:
             _clear_hubspot_campaign_metadata(orphan)
 
+        foreign_owned = bool(
+            post is not None and post.source and post.source != POST_SOURCE_HUBSPOT
+        )
+
         if post is None:
             post = _new_hubspot_post(row, hubspot_campaign_id=hubspot_campaign_id)
             db.add(post)
             by_exact[key] = post
             by_hubspot_provider_id[row.provider_post_id] = [post]
             stats.created += 1
+        elif foreign_owned:
+            # Foreign-owned: metrics only — never overwrite fields or stamp GUID
+            # (GUID would make EXTRA_RULE / ensure-links claim the post).
+            stats.updated += 1
+            metric_rows.append((post.id, metric_date, _metric_payload(row)))
+            continue
         else:
             stats.updated += 1
             if post.platform != row.platform:
@@ -636,22 +853,18 @@ async def ingest_campaign_hubspot_social(
                 post.content_url = row.content_url
             if row.posted_at is not None:
                 post.posted_at = row.posted_at
-            if post.source != POST_SOURCE_HUBSPOT and post.source:
-                # Keep non-hubspot provenance; still attach HubSpot metadata + metrics.
-                pass
-            else:
-                post.source = POST_SOURCE_HUBSPOT
-                post.content_type = post.content_type or "social"
-                by_hubspot_provider_id[row.provider_post_id] = [post] + [
-                    p
-                    for p in (by_hubspot_provider_id.get(row.provider_post_id) or [])
-                    if p.id != post.id
-                ]
+            post.source = POST_SOURCE_HUBSPOT
+            post.content_type = post.content_type or "social"
+            by_hubspot_provider_id[row.provider_post_id] = [post] + [
+                p
+                for p in (by_hubspot_provider_id.get(row.provider_post_id) or [])
+                if p.id != post.id
+            ]
 
         meta = dict(post.platform_metadata or {})
+        _stamp_hubspot_guids(meta, hubspot_campaign_id)
         meta.update(
             {
-                "hubspotCampaignId": hubspot_campaign_id,
                 "channelKey": row.channel_key,
                 "network": row.network_label,
                 "facebookClicks": row.facebook_clicks,
@@ -661,22 +874,31 @@ async def ingest_campaign_hubspot_social(
             }
         )
         post.platform_metadata = meta
-        post.stats_synced_at = now
+        post.stats_synced_at = as_of
         # Need id before metrics; new posts get id at construction.
         metric_rows.append((post.id, metric_date, _metric_payload(row)))
-        post_ids.append(post.id)
+        if post.id not in seen_post_ids:
+            seen_post_ids.add(post.id)
+            post_ids.append(post.id)
 
     await db.flush()
     stats.posts = len(rows)
-    stats.metric_rows = await _upsert_hubspot_metrics(db, metric_rows, now=now)
+    stats.metric_rows = await _upsert_hubspot_metrics(db, metric_rows, now=as_of)
     (
         stats.links_created,
         stats.links_reactivated,
         stats.links_skipped_person,
     ) = await _ensure_hubspot_links(db, campaign, post_ids)
+    stats.detached = await _detach_posts_no_longer_in_snapshot(
+        db,
+        campaign_id=campaign.id,
+        guid=hubspot_campaign_id,
+        keep_provider_ids=keep_provider_ids,
+    )
+    await db.flush()
     log.info(
         "hubspot_social_ingest campaign=%s posts=%s created=%s updated=%s metrics=%s "
-        "links_created=%s links_reactivated=%s links_skipped_person=%s",
+        "links_created=%s links_reactivated=%s links_skipped_person=%s detached=%s",
         campaign.id,
         stats.posts,
         stats.created,
@@ -685,6 +907,7 @@ async def ingest_campaign_hubspot_social(
         stats.links_created,
         stats.links_reactivated,
         stats.links_skipped_person,
+        stats.detached,
     )
     return stats
 
@@ -711,6 +934,9 @@ async def ingest_all_campaigns_with_hubspot(
     """Backfill HubSpot social from stored ``hubspot_raw_data`` (no HubSpot HTTP).
 
     Soft per-campaign errors — one bad campaign does not stop the rest.
+    Each campaign runs inside a savepoint (``begin_nested``) so a flush/DB
+    failure rolls back only that campaign and leaves the session usable for
+    later campaigns, ``sync_platform_metrics`` commit, and relink.
     """
     register_hubspot_link_rule()
     now = now or datetime.now(timezone.utc)
@@ -728,7 +954,8 @@ async def ingest_all_campaigns_with_hubspot(
     for campaign in campaigns:
         stats.campaigns += 1
         try:
-            result = await ingest_campaign_hubspot_social(db, campaign, now=now)
+            async with db.begin_nested():
+                result = await ingest_campaign_hubspot_social(db, campaign, now=now)
         except Exception as exc:
             log.exception(
                 "hubspot_social_backfill_failed campaign_id=%s", campaign.id
