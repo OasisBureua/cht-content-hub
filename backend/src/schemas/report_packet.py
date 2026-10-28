@@ -173,6 +173,14 @@ class ReportInputPacketOut(ApiModel):
     input_completeness: dict[str, SourceCompletenessOut]
 
 
+class SocialPostCountOut(ApiModel):
+    """CPR-61: a channel's linked posts, and how many have metrics in the window."""
+
+    channel: str
+    linked: int
+    with_metrics: int
+
+
 class ReportInputsOut(ApiModel):
     """CPR-51 — what Generate would find for a campaign and window.
 
@@ -190,3 +198,5 @@ class ReportInputsOut(ApiModel):
     attended_count: int | None = None
     # Attendees with a specialty or institution; the rest print "Not provided".
     attendees_with_profile: int | None = None
+    # CPR-61: per channel with linked posts. Null when no social source is on.
+    social_posts: list[SocialPostCountOut] | None = None

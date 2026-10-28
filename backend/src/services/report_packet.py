@@ -98,6 +98,27 @@ async def build_report_packet(
     sources: list[str] | None = None,
     transcript_store: TranscriptStore | None = None,
 ) -> ReportInputPacketOut:
+    packet, _ = await _build_packet(
+        db,
+        campaign_id,
+        window_start=window_start,
+        window_end=window_end,
+        sources=sources,
+        transcript_store=transcript_store,
+    )
+    return packet
+
+
+async def _build_packet(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    window_start: date | None,
+    window_end: date | None,
+    sources: list[str] | None,
+    transcript_store: TranscriptStore | None,
+) -> tuple[ReportInputPacketOut, social_performance.SocialPerformanceResult]:
+    """The packet, plus the social result report-inputs also needs."""
     campaign = await campaign_service._get_campaign_row(db, campaign_id)
 
     requested = normalize_requested_sources(sources)
@@ -301,7 +322,7 @@ async def build_report_packet(
         status=SourceStatus.OK if template else SourceStatus.MISSING,
     )
 
-    return ReportInputPacketOut(
+    packet = ReportInputPacketOut(
         campaign_id=campaign.id,
         campaign_name=campaign.name,
         window_start=window_start,
@@ -331,6 +352,7 @@ async def build_report_packet(
         ),
         input_completeness=input_completeness,
     )
+    return packet, social
 
 
 class _StoredTranscriptMarker:
@@ -353,7 +375,7 @@ async def build_report_inputs(
     Built from the same packet cht-reports receives, so the preview and the
     report agree. Never downloads transcripts.
     """
-    packet = await build_report_packet(
+    packet, social = await _build_packet(
         db,
         campaign_id,
         window_start=window_start,
@@ -384,6 +406,7 @@ async def build_report_inputs(
         registered_count=packet.registered_count,
         attended_count=packet.attended_count,
         attendees_with_profile=with_profile,
+        social_posts=social.post_counts,
     )
 
 

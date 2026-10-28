@@ -109,8 +109,9 @@ async def test_channels_totals_sources_and_top_posts(client: AsyncClient, db_ses
     assert [c.channel for c in perf.channels] == ["youtube", "linkedin", "facebook"]
     youtube, linkedin, facebook = perf.channels
 
-    # Latest in-window snapshot (Oct 20), not the Nov 5 one; gained only for yt1.
-    assert youtube.organic == {"views": 1600.0, "likes": 16.0, "comments": 3.0, "viewsGained": 600.0}
+    # Latest in-window snapshot (Oct 20), not the Nov 5 one. Gained only for
+    # yt1, so the channel has no gained total.
+    assert youtube.organic == {"views": 1600.0, "likes": 16.0, "comments": 3.0}
     assert youtube.as_of == date(2026, 10, 20)
     assert [p.post_id for p in youtube.top_posts] == ["yt1", "yt2"]
     assert youtube.top_posts[0].metrics["viewsGained"] == 600.0
@@ -161,11 +162,15 @@ async def test_last_good_row_and_empty_window(client: AsyncClient, db_session: A
     await _seed(db_session, campaign_id)
 
     # Window ends before the latest sync: the last row inside it is used.
+    # Only yt1 has a row in it, with a baseline: the channel has a gained total.
     early = await build_social_performance(
         db_session, campaign_id, requested={"youtube"},
         window_start=date(2026, 10, 1), window_end=date(2026, 10, 12),
     )
-    assert early.performance.channels[0].organic["views"] == 1000.0
+    assert early.performance.channels[0].organic == {
+        "views": 1000.0, "likes": 10.0, "comments": 2.0, "viewsGained": 100.0,
+    }
+    assert early.performance.notes == []
 
     # Nothing in the window: no block, completeness missing.
     empty = await build_social_performance(
@@ -174,6 +179,10 @@ async def test_last_good_row_and_empty_window(client: AsyncClient, db_session: A
     )
     assert empty.performance is None
     assert (empty.completeness.status, empty.completeness.row_count) == ("missing", 0)
+    # Posts are still linked: the preview says so.
+    assert [(c.channel, c.linked, c.with_metrics) for c in empty.post_counts] == [
+        ("youtube", 3, 0), ("linkedin", 2, 0), ("facebook", 1, 0),
+    ]
 
 
 @pytest.mark.asyncio
@@ -197,6 +206,12 @@ async def test_packet_and_report_inputs_carry_social(client: AsyncClient, db_ses
         )
     ).json()
     assert inputs["inputCompleteness"]["socialPosts"]["status"] == "ok"
+    # Linked per channel, excluded and removed links aside; one YouTube post has no metrics.
+    assert inputs["socialPosts"] == [
+        {"channel": "youtube", "linked": 3, "withMetrics": 2},
+        {"channel": "linkedin", "linked": 2, "withMetrics": 2},
+        {"channel": "facebook", "linked": 1, "withMetrics": 1},
+    ]
 
     off = (
         await client.get(
@@ -207,3 +222,11 @@ async def test_packet_and_report_inputs_carry_social(client: AsyncClient, db_ses
     ).json()
     assert off["socialPerformance"] is None
     assert "socialPosts" not in off["inputCompleteness"]
+    off_inputs = (
+        await client.get(
+            f"/api/admin/campaigns/{campaign_id}/report-inputs",
+            headers=api_headers(),
+            params={**params, "sources": ["sessions"]},
+        )
+    ).json()
+    assert off_inputs["socialPosts"] is None

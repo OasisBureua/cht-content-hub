@@ -22,6 +22,7 @@ from models.social import BASIS_DAILY, LINK_ACTIVE, PostCampaignLink, PostMetric
 from schemas.report_packet import (
     SocialChannelOut,
     SocialPerformanceOut,
+    SocialPostCountOut,
     SocialPostSummaryOut,
     SourceCompletenessOut,
     SourceStatus,
@@ -77,6 +78,8 @@ class _PostValues:
 class SocialPerformanceResult:
     performance: SocialPerformanceOut | None
     completeness: SourceCompletenessOut | None
+    # Per channel with linked posts, for the Generate preview.
+    post_counts: list[SocialPostCountOut] | None = None
 
 
 def _channel(platform: str) -> str:
@@ -187,7 +190,8 @@ def _channel_out(channel: str, posts: list[_PostValues]) -> SocialChannelOut:
         for metric, number in values.metrics.items():
             bucket[metric] = bucket.get(metric, 0.0) + number
             metric_sources.setdefault(f"{prefix}.{metric}", set()).add(values.sources[metric])
-    if gained:
+    # Only when every post has a baseline: a partial sum would undercount.
+    if gained and len(gained) == len(posts):
         organic["viewsGained"] = sum(gained)
     if paid.get("impressions"):
         paid["ctr"] = round(paid.get("clicks", 0.0) / paid["impressions"], 4)
@@ -214,7 +218,7 @@ async def build_social_performance(
 ) -> SocialPerformanceResult:
     """Social block and its ``socialPosts`` completeness entry.
 
-    Both are None when no social toggle is requested.
+    All None when no social toggle is requested.
     """
     if not any(wants_source(requested, toggle) for toggle in SOCIAL_TOGGLES):
         return SocialPerformanceResult(None, None)
@@ -268,8 +272,20 @@ async def build_social_performance(
         row_count=with_metrics,
         status=SourceStatus.OK if with_metrics else SourceStatus.MISSING,
     )
+    linked: dict[str, int] = {}
+    for post in posts:
+        linked[_channel(post.platform)] = linked.get(_channel(post.platform), 0) + 1
+    post_counts = [
+        SocialPostCountOut(
+            channel=channel,
+            linked=linked[channel],
+            with_metrics=len(by_channel.get(channel, [])),
+        )
+        for channel in CHANNEL_ORDER
+        if channel in linked
+    ]
     if not with_metrics:
-        return SocialPerformanceResult(None, completeness)
+        return SocialPerformanceResult(None, completeness, post_counts)
 
     notes: list[str] = []
     youtube = by_channel.get("youtube", [])
@@ -290,4 +306,5 @@ async def build_social_performance(
             notes=notes,
         ),
         completeness,
+        post_counts,
     )
