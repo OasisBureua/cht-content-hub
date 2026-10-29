@@ -2,10 +2,13 @@
 
 Each post contributes each metric from one source only, the first in
 ``SOURCE_PRIORITY`` that has it, so channel totals never add the same post's
-number twice. Lifetime sources (YouTube, HubSpot) use the post's latest row
-inside the window; when the latest sync failed, that is the last good row.
-Daily sources (LinkedIn Ads) sum the window's days. Ad spend is not
-included: it stays internal.
+number twice. YouTube uses the post's latest snapshot inside the window;
+when the latest sync failed, that is the last good row. Daily sources
+(LinkedIn Ads) sum the window's days. HubSpot keeps one lifetime row per
+post, dated by the end of the campaign's reporting period rather than by
+sync day, so its latest row counts when that period reaches the window,
+even when it ends after the window. Ad spend is not included: it stays
+internal.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.post import Post
@@ -41,9 +44,20 @@ SOURCE_METRICS: dict[str, dict[str, str]] = {
         "video_views": "videoViews",
         "video_completions": "videoCompletions",
     },
-    "hubspot": {"clicks": "clicks"},
+}
+# HubSpot stores clicks per network plus their total; a post counts its own
+# network's. Instagram has no click key. The total is for posts whose
+# network HubSpot did not name (posts.platform "hubspot").
+HUBSPOT_CLICK_FIELDS = {
+    "linkedin": "linkedinClicks",
+    "facebook": "facebookClicks",
+    "x": "twitterClicks",
+    "hubspot": "clicks",
 }
 SOURCE_PRIORITY = ("youtube", "linkedin_ads", "hubspot")
+# One lifetime row per post, dated by the end of the source's reporting
+# period: read it when that date is on or after the window's start.
+PERIOD_SOURCES = frozenset({"hubspot"})
 
 # Report source toggle that must be on for a source's numbers to count.
 SOURCE_TOGGLE = {"youtube": "youtube", "linkedin_ads": "linkedin", "hubspot": "hubspot"}
@@ -101,6 +115,14 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _source_fields(source: str, platform: str) -> dict[str, str]:
+    """Metrics row field -> report metric name for one post."""
+    if source == "hubspot":
+        field_name = HUBSPOT_CLICK_FIELDS.get(platform)
+        return {field_name: "clicks"} if field_name else {}
+    return SOURCE_METRICS[source]
+
+
 def _post_values(
     post: Post,
     rows: list[PostMetricDaily],
@@ -110,6 +132,7 @@ def _post_values(
     window_end: date | None,
 ) -> _PostValues:
     values = _PostValues(post=post)
+    posted = post.posted_at.date() if post.posted_at else None
     in_window = [
         r
         for r in rows
@@ -117,7 +140,19 @@ def _post_values(
         and (window_end is None or r.metric_date <= window_end)
     ]
     for source in sources:
-        source_rows = [r for r in in_window if r.source == source]
+        if source in PERIOD_SOURCES:
+            # A post published after the window is not part of it.
+            if window_end is not None and posted is not None and posted > window_end:
+                continue
+            # The row counts when its period reaches the window, even when
+            # the period ends after it (a campaign still running).
+            source_rows = [
+                r
+                for r in rows
+                if r.source == source and (window_start is None or r.metric_date >= window_start)
+            ]
+        else:
+            source_rows = [r for r in in_window if r.source == source]
         if not source_rows:
             continue
         daily = source_rows[0].basis == BASIS_DAILY
@@ -134,7 +169,7 @@ def _post_values(
                 k: n for k, v in (latest.metrics or {}).items() if (n := _number(v)) is not None
             }
         used = False
-        for field_name, metric in SOURCE_METRICS[source].items():
+        for field_name, metric in _source_fields(source, post.platform).items():
             if metric in values.metrics or field_name not in totals:
                 continue
             values.metrics[metric] = totals[field_name]
@@ -142,10 +177,15 @@ def _post_values(
             used = True
         if not used:
             continue
-        last = max(source_rows, key=lambda r: r.metric_date)
-        if values.as_of is None or last.metric_date > values.as_of:
-            values.as_of = last.metric_date
         fetched = max(r.fetched_at for r in source_rows)
+        # A period row's date is the reporting period's end, which can be in
+        # the future: the numbers are as of when they were fetched.
+        if source in PERIOD_SOURCES:
+            last = fetched.date()
+        else:
+            last = max(r.metric_date for r in source_rows)
+        if values.as_of is None or last > values.as_of:
+            values.as_of = last
         if values.fetched_at is None or fetched > values.fetched_at:
             values.fetched_at = fetched
         if source == "youtube" and window_start is not None and "views" in values.metrics:
@@ -154,6 +194,9 @@ def _post_values(
                 base = _number((max(before, key=lambda r: r.metric_date).metrics or {}).get("views"))
                 if base is not None:
                     values.views_gained = max(0.0, values.metrics["views"] - base)
+            elif posted is not None and posted >= window_start:
+                # Published inside the window: every view so far came in it.
+                values.views_gained = values.metrics["views"]
     return values
 
 
@@ -246,7 +289,12 @@ async def build_social_performance(
             PostMetricDaily.source.in_(sources),
         )
         if window_end is not None:
-            query = query.where(PostMetricDaily.metric_date <= window_end)
+            query = query.where(
+                or_(
+                    PostMetricDaily.metric_date <= window_end,
+                    PostMetricDaily.source.in_(PERIOD_SOURCES),
+                )
+            )
         for row in (await db.execute(query)).scalars():
             rows_by_post.setdefault(row.post_id, []).append(row)
 
@@ -292,7 +340,13 @@ async def build_social_performance(
     if youtube and any(v.views_gained is None for v in youtube):
         notes.append(
             "YouTube views are lifetime totals as of the date shown; views gained in the "
-            "window need a snapshot from before the window starts."
+            "window need a snapshot from before the window starts or a publish date inside it."
+        )
+    all_values = [v for channel_posts in by_channel.values() for v in channel_posts]
+    if any("hubspot" in v.sources.values() for v in all_values):
+        notes.append(
+            "HubSpot clicks are lifetime totals as of the date shown; HubSpot does not report "
+            "clicks by day."
         )
     return SocialPerformanceResult(
         SocialPerformanceOut(

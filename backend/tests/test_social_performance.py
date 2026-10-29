@@ -25,7 +25,16 @@ async def _campaign(client: AsyncClient, name: str = "Social campaign") -> int:
     return response.json()["id"]
 
 
-def _post(db: AsyncSession, post_id: str, platform: str, source: str, *, title: str = "", excluded=False) -> Post:
+def _post(
+    db: AsyncSession,
+    post_id: str,
+    platform: str,
+    source: str,
+    *,
+    title: str = "",
+    excluded=False,
+    posted_at: datetime | None = None,
+) -> Post:
     post = Post(
         id=post_id,
         platform=platform,
@@ -34,6 +43,7 @@ def _post(db: AsyncSession, post_id: str, platform: str, source: str, *, title: 
         title=title or post_id,
         content_url=f"https://example.com/{post_id}",
         excluded=excluded,
+        posted_at=posted_at,
     )
     db.add(post)
     return post
@@ -81,7 +91,7 @@ async def _seed(db: AsyncSession, campaign_id: int) -> None:
     # Facebook post through HubSpot.
     _post(db, "fb1", "facebook", "hubspot", title="FB post")
     _link(db, "fb1", campaign_id)
-    _metric(db, "fb1", date(2026, 10, 20), "hubspot", {"clicks": 3})
+    _metric(db, "fb1", date(2026, 10, 20), "hubspot", {"clicks": 3, "facebookClicks": 3})
     # Ignored: excluded post, removed link, linked post without metrics.
     _post(db, "gone", "youtube", "youtube_api", excluded=True)
     _link(db, "gone", campaign_id)
@@ -183,6 +193,79 @@ async def test_last_good_row_and_empty_window(client: AsyncClient, db_session: A
     assert [(c.channel, c.linked, c.with_metrics) for c in empty.post_counts] == [
         ("youtube", 3, 0), ("linkedin", 2, 0), ("facebook", 1, 0),
     ]
+
+
+@pytest.mark.asyncio
+async def test_views_gained_for_video_published_in_window(client: AsyncClient, db_session: AsyncSession):
+    campaign_id = await _campaign(client)
+    # No snapshot before the window, but published inside it: all its views are gained.
+    _post(db_session, "new", "youtube", "youtube_api", posted_at=datetime(2026, 10, 12, tzinfo=timezone.utc))
+    _link(db_session, "new", campaign_id)
+    _metric(db_session, "new", date(2026, 10, 20), "youtube", {"views": 300})
+    # Published before the window with a baseline: the difference.
+    _post(db_session, "old", "youtube", "youtube_api", posted_at=datetime(2026, 9, 1, tzinfo=timezone.utc))
+    _link(db_session, "old", campaign_id)
+    _metric(db_session, "old", date(2026, 9, 30), "youtube", {"views": 900})
+    _metric(db_session, "old", date(2026, 10, 20), "youtube", {"views": 1500})
+    await db_session.flush()
+
+    result = await build_social_performance(db_session, campaign_id, requested={"youtube"}, **WINDOW)
+    youtube = result.performance.channels[0]
+    assert youtube.organic["viewsGained"] == 900.0
+    assert {p.post_id: p.metrics["viewsGained"] for p in youtube.top_posts} == {"old": 600.0, "new": 300.0}
+    assert result.performance.notes == []
+
+
+@pytest.mark.asyncio
+async def test_hubspot_clicks_follow_the_post_network(client: AsyncClient, db_session: AsyncSession):
+    campaign_id = await _campaign(client)
+    # One broadcast merged onto its LinkedIn post: LinkedIn's clicks, not the total.
+    _post(db_session, "li", "linkedin", "hubspot")
+    _link(db_session, "li", campaign_id)
+    _metric(db_session, "li", date(2026, 10, 20), "hubspot", {"clicks": 7, "linkedinClicks": 5, "facebookClicks": 2})
+    # Instagram has no click key.
+    _post(db_session, "ig", "instagram", "hubspot")
+    _link(db_session, "ig", campaign_id)
+    _metric(db_session, "ig", date(2026, 10, 20), "hubspot", {"clicks": 4})
+    # Network not named by HubSpot: the total.
+    _post(db_session, "unknown", "hubspot", "hubspot")
+    _link(db_session, "unknown", campaign_id)
+    _metric(db_session, "unknown", date(2026, 10, 20), "hubspot", {"clicks": 2})
+    await db_session.flush()
+
+    result = await build_social_performance(db_session, campaign_id, requested=None, **WINDOW)
+    channels = {c.channel: c for c in result.performance.channels}
+    assert set(channels) == {"linkedin", "other"}
+    assert channels["linkedin"].organic == {"clicks": 5.0}
+    assert channels["other"].organic == {"clicks": 2.0}
+    assert [(c.channel, c.linked, c.with_metrics) for c in result.post_counts] == [
+        ("linkedin", 1, 1), ("instagram", 1, 0), ("other", 1, 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hubspot_lifetime_row_counts_when_its_period_reaches_the_window(client: AsyncClient, db_session: AsyncSession):
+    campaign_id = await _campaign(client)
+    # Dated by a reporting period that ends after the window.
+    _post(db_session, "running", "linkedin", "hubspot", posted_at=datetime(2026, 10, 3, tzinfo=timezone.utc))
+    _link(db_session, "running", campaign_id)
+    _metric(db_session, "running", date(2026, 12, 31), "hubspot", {"clicks": 9, "linkedinClicks": 9})
+    # Published after the window: not part of it.
+    _post(db_session, "later", "linkedin", "hubspot", posted_at=datetime(2026, 11, 10, tzinfo=timezone.utc))
+    _link(db_session, "later", campaign_id)
+    _metric(db_session, "later", date(2026, 12, 31), "hubspot", {"clicks": 4, "linkedinClicks": 4})
+    # Period ended before the window started: not part of it.
+    _post(db_session, "ended", "linkedin", "hubspot")
+    _link(db_session, "ended", campaign_id)
+    _metric(db_session, "ended", date(2026, 9, 15), "hubspot", {"clicks": 6, "linkedinClicks": 6})
+    await db_session.flush()
+
+    result = await build_social_performance(db_session, campaign_id, requested=None, **WINDOW)
+    linkedin = result.performance.channels[0]
+    assert (linkedin.channel, linkedin.posts, linkedin.organic) == ("linkedin", 1, {"clicks": 9.0})
+    # As of when it was fetched, not the period's end.
+    assert linkedin.as_of == FETCHED.date()
+    assert any("HubSpot clicks are lifetime totals" in note for note in result.performance.notes)
 
 
 @pytest.mark.asyncio
