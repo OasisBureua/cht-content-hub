@@ -85,6 +85,8 @@ sync_jobs_enabled = {
   platform_export_ingest = true
   # CPR-9 S3 VTT → warehouse. Platform-tool wires notify after this ARN exists.
   vtt_object_ingest = true
+  # CPR-15 — daily YouTube posts + metrics, post links, LinkedIn Ads (13:30 UTC).
+  platform_metrics_sync = true
 }
 
 platform_export_transcript_bucket = "cht-platform-session-assets"
